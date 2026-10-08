@@ -55,7 +55,8 @@ const HORIZON = 0xbfe9ff, ZENITH = 0x2f8fff;
 scene.background = new THREE.Color(HORIZON);
 scene.fog = new THREE.Fog(HORIZON, 140, 420);
 const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 1000);
-scene.add(new THREE.HemisphereLight(0xd8efff, 0x7a6a48, 1.25));
+const hemi = new THREE.HemisphereLight(0xd8efff, 0x7a6a48, 1.25);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 1.9);
 const SUN_DIR = new THREE.Vector3(-0.45, 1, 0.35).normalize();
 sun.castShadow = true;
@@ -674,7 +675,8 @@ function pointsToast(text) {
 function renderSeason() {
   const s = season.stats, w = season.wallet, t = season.tierInfo(season.tier);
   $('lbpts').textContent = s.points.toLocaleString('en');
-  $('season').innerHTML = `<div class="sh"><b>Season 1</b><span>${s.points.toLocaleString('en')} pts</span></div>
+  if (!playing) renderPlayerCard();
+  $('season').innerHTML = `<div class="sh"><b>Level ${Math.floor(s.points / 500) + 1}</b><span>${s.points.toLocaleString('en')} pts</span></div>
     <div class="sg"><div><b>${s.kills}</b>kills</div><div><b>${s.wins}</b>wins</div><div><b>${s.chests}</b>chests</div><div><b>${s.rounds}</b>drops</div></div>`;
   const row = document.createElement('div');
   row.className = 'sw';
@@ -854,6 +856,7 @@ function start() {
   setTimeout(() => {
     loadWorld(worldId);
     if (hero) { scene.remove(hero); hero = null; }
+    setMood('game');
     playing = true;
     camera.rotation.set(0, 0, 0, 'YXZ');
     spawn(false);
@@ -868,7 +871,14 @@ function start() {
     startNet();
   }, 20);
 }
-$('go').addEventListener('click', start);
+// PLAY: вспышка и «вылет» из лобби, затем матч.
+$('go').addEventListener('click', () => {
+  if (playing || $('go').disabled) return;
+  $('go').disabled = true;
+  $('flashout').classList.add('on');
+  $('lobby').classList.add('leaving');
+  setTimeout(start, 480);
+});
 
 $('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
@@ -889,6 +899,7 @@ function setMode(m) {
   mode = m;
   $('m-new').classList.toggle('on', m === 'new');
   $('m-join').classList.toggle('on', m === 'join');
+  $('seg').classList.toggle('join', m === 'join');
   $('code').hidden = m !== 'join';
   if (m === 'join') $('code').focus();
   previewSoon();
@@ -899,17 +910,28 @@ $('m-join').addEventListener('click', () => setMode('join'));
 let previewTimer = 0;
 function previewSoon() {
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(() => { if (!playing) loadWorld(lobbyId()); }, 500);
+  previewTimer = setTimeout(() => { if (!playing) { loadWorld(lobbyId()); renderPois(); } }, 500);
 }
 $('code').addEventListener('input', previewSoon);
 setMode(mode);
 
+// Вкладки: белый «ползунок» переезжает под выбранную.
+function moveTabInd() {
+  const b = document.querySelector('#tabs button.on'), ind = document.querySelector('#tabs .ind');
+  if (!b || !ind) return;
+  ind.style.width = `${b.offsetWidth}px`;
+  ind.style.transform = `translateX(${b.offsetLeft}px)`;
+}
 for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
+    $('lobby').classList.toggle('paneled', b.dataset.tab !== 'play');
+    moveTabInd();
   });
 }
+document.fonts?.ready.then(moveTabInd);
+addEventListener('resize', moveTabInd);
 
 // Персонаж в лобби: тот же мультяшный аватар с киркой, имя — над головой.
 let hero = null, heroTimer = 0;
@@ -917,6 +939,7 @@ function makeHero() {
   if (playing) return;
   if (hero) scene.remove(hero);
   hero = avatar(($('nick').value.trim() || nick).slice(0, 16));
+  hero.remove(hero.children.find((c) => c.isSprite));        // ник — в карточке игрока, над головой не нужен
   const pk = weaponModel('pickaxe');
   pk.position.set(0.34, 1.12, -0.25);
   pk.rotation.x = 1.0;
@@ -930,28 +953,118 @@ function makeHero() {
   hero.add(pad, rim);
   scene.add(hero);
 }
-$('nick').addEventListener('input', () => { clearTimeout(heroTimer); heroTimer = setTimeout(makeHero, 300); });
+$('nick').addEventListener('input', () => { renderPlayerCard(); clearTimeout(heroTimer); heroTimer = setTimeout(makeHero, 300); });
 
-const V_HERO = new THREE.Vector3();
+// ---------- Атмосфера лобби: «золотой час», контровой свет, параллакс ----------
+
+const MOODS = {
+  game: { top: 0x2f8fff, bottom: 0xbfe9ff, sun: 0xfff0d8, sunI: 1.9, sky: 0xd8efff, ground: 0x7a6a48, hemiI: 1.25, dir: [-0.45, 1, 0.35], near: 140, far: 420 },
+  lobby: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sunI: 2.2, sky: 0xcdbbff, ground: 0x8a5a48, hemiI: 1.15, dir: [0.55, 0.42, -0.72], near: 120, far: 380 },
+};
+const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
+const fillLight = new THREE.PointLight(0x8b6bff, 18, 12, 1.6);     // фиолетовая подсветка спереди-слева
+scene.add(rimLight, fillLight);
+function setMood(name) {
+  const m = MOODS[name];
+  sky.material.uniforms.top.value.set(m.top);
+  sky.material.uniforms.bottom.value.set(m.bottom);
+  scene.fog.color.set(m.bottom);
+  scene.fog.near = m.near; scene.fog.far = m.far;
+  scene.background.set(m.bottom);
+  sun.color.set(m.sun); sun.intensity = m.sunI;
+  hemi.color.set(m.sky); hemi.groundColor.set(m.ground); hemi.intensity = m.hemiI;
+  SUN_DIR.set(...m.dir).normalize();
+  rimLight.visible = fillLight.visible = name === 'lobby';
+}
+
+const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
+addEventListener('mousemove', (e) => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = e.clientY / innerHeight * 2 - 1; });
+
+const V_HERO = new THREE.Vector3(), V_TMP = new THREE.Vector3();
 function lobbyFrame(dt, t) {
-  const a = t * 0.04;
-  camera.position.set(MAP / 2 + Math.cos(a) * 150, 62, MAP / 2 + Math.sin(a) * 150);
-  camera.lookAt(MAP / 2, 6, MAP / 2);
+  // мягко догоняем мышь — камера чуть смещается, остров «дышит»
+  mouse.sx += (mouse.x - mouse.sx) * Math.min(1, dt * 3);
+  mouse.sy += (mouse.y - mouse.sy) * Math.min(1, dt * 3);
+  const a = t * 0.035 + 0.6;
+  const r = 128;
+  camera.position.set(MAP / 2 + Math.cos(a) * r + mouse.sx * 4, 46 - mouse.sy * 3, MAP / 2 + Math.sin(a) * r);
+  camera.lookAt(MAP / 2, 14, MAP / 2);
   camera.updateMatrixWorld();
   if (hero) {
-    hero.position.copy(camera.localToWorld(V_HERO.set(1.1, -1.75, -5.2)));
+    hero.position.copy(camera.localToWorld(V_HERO.set(0.55 + mouse.sx * 0.15, -1.55, -5.4)));
     const v = camera.position.clone().sub(hero.position);
-    hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.8) * 0.25;
+    hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.7) * 0.22 + mouse.sx * 0.35;
+    hero.position.y += Math.sin(t * 1.6) * 0.04;
+    rimLight.position.copy(camera.localToWorld(V_TMP.set(1.6, 0.6, -7.4)));
+    fillLight.position.copy(camera.localToWorld(V_TMP.set(-1.8, -0.2, -3.6)));
+  }
+  drawMotes(dt);
+}
+
+// Светящиеся пылинки поверх сцены (2D-холст, дёшево).
+const motesCv = $('motes'), motesCx = motesCv.getContext('2d');
+const motes = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), r: 0.6 + Math.random() * 2.2, v: 0.008 + Math.random() * 0.025, ph: Math.random() * 6.28, w: (Math.random() - 0.5) * 0.01 }));
+function drawMotes(dt) {
+  const w = motesCv.clientWidth, h = motesCv.clientHeight;
+  if (motesCv.width !== w || motesCv.height !== h) { motesCv.width = w; motesCv.height = h; }
+  motesCx.clearRect(0, 0, w, h);
+  for (const m of motes) {
+    m.y -= m.v * dt; m.x += m.w * dt; m.ph += dt * 1.5;
+    if (m.y < -0.02) { m.y = 1.02; m.x = Math.random(); }
+    const px = m.x * w + mouse.sx * 12 * m.r, py = m.y * h + mouse.sy * 8 * m.r;
+    const al = 0.35 + 0.35 * Math.sin(m.ph);
+    const g = motesCx.createRadialGradient(px, py, 0, px, py, m.r * 4);
+    g.addColorStop(0, `rgba(255,226,170,${al})`); g.addColorStop(1, 'rgba(255,180,120,0)');
+    motesCx.fillStyle = g;
+    motesCx.beginPath(); motesCx.arc(px, py, m.r * 4, 0, 6.283); motesCx.fill();
   }
 }
+
+// Карточка игрока: инициал на градиенте цвета ника, уровень сезона (500 очков на уровень).
+function renderPlayerCard() {
+  const n = ($('nick').value.trim() || nick || '?');
+  $('ava').textContent = n[0].toUpperCase();
+  $('ava').style.setProperty('--c1', colorOf(n));
+  const pts = season.stats.points, lvl = Math.floor(pts / 500) + 1, cur = pts % 500;
+  $('lvl').textContent = lvl;
+  $('lvlring').style.setProperty('--p', (cur / 5).toFixed(1));
+  $('xplbl').textContent = `LV ${lvl}`;
+  $('xpnum').textContent = `${cur} / 500`;
+  requestAnimationFrame(() => { $('xpbar').style.width = `${cur / 5}%`; });
+}
+
+// Локации острова и «горячая точка» — меняется каждые несколько секунд.
+let hotIdx = 0;
+function renderPois() {
+  if (!world) return;
+  $('pois').innerHTML = world.pois.map((p) => `<span>📍 ${p.name}</span>`).join('');
+  $('hotdrop').textContent = world.pois[hotIdx % world.pois.length]?.name || '—';
+}
+setInterval(() => {
+  if (playing || !world) return;
+  hotIdx++;
+  $('hotdrop').style.opacity = 0;
+  setTimeout(() => { $('hotdrop').textContent = world.pois[hotIdx % world.pois.length].name; $('hotdrop').style.opacity = 1; }, 300);
+}, 3500);
+
+// Приглашения: ссылка на матч, который сейчас выбран в лобби.
+const inviteLink = () => `${location.origin}${location.pathname}?w=${lobbyId()}`;
+$('copyinv').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(inviteLink()); $('status').textContent = '✓ Invite link copied — send it to friends'; } catch (e) { $('status').textContent = inviteLink(); }
+});
+$('shareinv').addEventListener('click', () => {
+  const text = `Drop into my ${NAME} match 🪂⛏🌪 — loot, build, outrun the storm. Last one standing wins. Open and play, no install`;
+  open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(inviteLink())}`, '_blank', 'noopener');
+});
 
 // Состояние раунда в лобби: можно ли высадиться прямо сейчас.
 function updateRoundInfo() {
   if (playing) return;
   const into = Date.now() % ROUND_MS, left = ROUND_MS - into;
+  $('tring').style.strokeDashoffset = (125.66 * into / ROUND_MS).toFixed(1);
   $('roundinfo').innerHTML = left > 90e3
-    ? `🟢 Match live · <b>drop in now</b> · round ends in ${mmss(left / 1000)}`
-    : `⏳ Final circle · next drop in <b>${mmss(left / 1000)}</b>`;
+    ? `<b class="live">● Match live</b>Drop in now · round ends in ${mmss(left / 1000)}`
+    : `<b class="wait">Final circle</b>Next drop in ${mmss(left / 1000)}`;
 }
 setInterval(updateRoundInfo, 500);
 
@@ -1021,8 +1134,12 @@ $('leave').addEventListener('click', () => { location.href = `${location.pathnam
 
 // Остров для лобби — сразу при открытии страницы.
 if (!params.has('shot')) {
-  $('status').textContent = 'Loading the island…';
-  setTimeout(() => { loadWorld(lobbyId()); makeHero(); renderSeason(); updateRoundInfo(); $('status').textContent = ''; }, 30);
+  setMood('lobby');
+  setTimeout(() => {
+    loadWorld(lobbyId());
+    makeHero(); renderSeason(); renderPlayerCard(); renderPois(); updateRoundInfo(); moveTabInd();
+    setTimeout(() => $('splash').classList.add('done'), 350);
+  }, 60);
 }
 
 // ---------- Цикл ----------
