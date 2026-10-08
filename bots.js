@@ -11,8 +11,20 @@ import * as THREE from 'three';
 import { WEAPONS } from './combat.js';
 import { SKINS } from './skins.js';
 
-const COUNT = 3, SIGHT = 45, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
-const NAMES = ['Bot Shrimp', 'Bot Degen', 'Bot Ape', 'Bot Whale', 'Bot Pepe'];
+const COUNT = 5, SIGHT = 50, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
+
+// Ники ботов — случайные из крипто-дегенского сленга (свои приколы — сюда).
+const NICK_A = ['Ape', 'Rug', 'Moon', 'Gas', 'Pump', 'Dump', 'Wagmi', 'Ngmi', 'Fomo', 'Rekt', 'Shill', 'Bag', 'Diamond', 'Paper', 'Degen', 'Whale', 'Shrimp', 'Lambo', 'Hodl', 'Copium', 'Alpha', 'Exit', 'Floor', 'Mint', 'Airdrop'];
+const NICK_B = ['Lord', 'Goblin', 'Chad', 'Boi', 'Wizard', 'Maxi', 'Holder', 'Hunter', 'Farmer', 'Sniper', 'Andy', 'King', 'Gremlin', 'Ninja', 'Pilled', 'Enjoyer', 'Liquidated', 'Dev', 'Jeet', 'Ser'];
+function degenNick(taken) {
+  for (let i = 0; i < 20; i++) {
+    const a = NICK_A[Math.floor(Math.random() * NICK_A.length)], b = NICK_B[Math.floor(Math.random() * NICK_B.length)];
+    const style = Math.random();
+    const n = style < 0.35 ? `${a}${b}` : style < 0.6 ? `${a}_${b}` : style < 0.8 ? `${a}${b}${Math.floor(Math.random() * 99) + 1}` : `0x${a}${b}`.slice(0, 14);
+    if (!taken.has(n) && n.length <= 16) { taken.add(n); return n; }
+  }
+  return `Degen${Math.floor(Math.random() * 9000) + 1000}`;
+}
 const GUNS = ['pistol', 'smg', 'ar', 'shotgun'];
 
 export function createBots(ctx) {
@@ -35,12 +47,13 @@ export function createBots(ctx) {
 
   function spawnAll() {
     bots.clear();
-    const skins = SKINS.filter((s) => !s.holder);
+    const skins = SKINS.filter((s) => !s.holder && !s.shop);
+    const taken = new Set([ctx.me().nick]);
     for (let i = 0; i < COUNT; i++) {
       const p = zonePoint(0.7);
       const gun = GUNS[Math.floor(Math.random() * GUNS.length)];
       bots.set(i, {
-        id: i, name: NAMES[i % NAMES.length], skin: skins[Math.floor(Math.random() * skins.length)].id,
+        id: i, name: degenNick(taken), skin: skins[Math.floor(Math.random() * skins.length)].id,
         pos: new THREE.Vector3(p.x, ctx.world().height(p.x, p.z) + rnd(45, 70), p.z), vy: 0, onGround: false, gliding: true,
         hp: 100, alive: true, gun, rarity: Math.floor(rnd(0, 3)), yaw: 0,
         way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + rnd(2, 4), target: null,
@@ -136,20 +149,20 @@ export function createBots(ctx) {
     if (!h || now < b.nextShot) return;
     if (h.bot && !h.bot.alive) { b.victim = b.target = null; return; }
     const spec = WEAPONS[b.gun];
-    b.nextShot = now + Math.max(0.35, spec.rate * 3) + Math.random() * 0.6;
+    b.nextShot = now + Math.max(0.3, spec.rate * 2.4) + Math.random() * 0.45;
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
     const aim = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
     const d = eye.distanceTo(aim);
     b.yaw = Math.atan2(-(aim.x - eye.x), -(aim.z - eye.z));
-    // по игрокам — помягче, друг по другу — злее (чтобы перестрелки ботов заканчивались)
-    const chance = Math.max(0.12, 0.6 - d / 90) + (h.bot ? 0.2 : 0);
+    // меткие: вблизи почти не мажут, издалека — примерно каждый третий; друг по другу — ещё злее
+    const chance = Math.min(0.95, Math.max(0.3, 0.85 - d / 110) + (h.bot ? 0.1 : 0));
     const hit = Math.random() < chance;
     const end = hit ? aim : aim.clone().add(new THREE.Vector3(rnd(-2, 2), rnd(-1, 1.5), rnd(-2, 2)));
     const shot = { w: b.gun, o: eye.toArray().map((v) => +v.toFixed(2)), e: [end.toArray().map((v) => +v.toFixed(2))] };
     ctx.combat().onShot('bot', shot);                 // трассер и звук у себя
     ctx.net()?.shot(shot);                            // и у всех
     if (!hit) return;
-    const dmg = Math.round((spec.pellets > 1 ? spec.dmg * 4 : spec.dmg) * (h.bot ? 1.1 : 0.7));
+    const dmg = Math.round((spec.pellets > 1 ? spec.dmg * 4 : spec.dmg) * (h.bot ? 1.1 : 0.85));
     if (h.id === null) ctx.combat().takeDamage(dmg, b.name, b.gun);
     else if (h.bot) damage(h.bot.id, { dmg, by: b.name, w: b.gun });     // бот по боту — считаем здесь же
     else ctx.net()?.hit({ dmg, by: b.name, w: b.gun }, h.id);
