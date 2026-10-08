@@ -24,6 +24,7 @@ import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
 import { createWater } from './water.js';
 import { createBots } from './bots.js';
+import { createLobbyScene } from './lobby.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
@@ -1112,6 +1113,7 @@ function start() {
   setTimeout(() => {
     loadWorld(worldId);
     if (hero) { scene.remove(hero); hero = null; }
+    lobbyScene.visible = false;
     setMood('game');
     playing = true;
     camera.rotation.set(0, 0, 0, 'YXZ');
@@ -1222,11 +1224,11 @@ function makeHero() {
   hero.userData.rig.a2.add(pk);
   // круглая платформа под ногами, как в лобби
   const ps = SHOP.find((x) => x.id === ranked.pad);
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 32), toon(ps ? ps.color : 0x4fb4ff, { emissive: ps ? new THREE.Color(ps.color).multiplyScalar(0.25) : 0x0b3a7a }));
-  pad.position.y = -0.08;
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.0, 0.06, 32), toon(ps ? ps.color : 0x4fb4ff, { emissive: ps ? new THREE.Color(ps.color).multiplyScalar(0.25) : 0x0b3a7a }));
+  pad.position.y = 0.03;                                 // лежит на земле
   const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.05, 8, 40), new THREE.MeshBasicMaterial({ color: ps ? ps.rim : 0xffd81a }));
   rim.rotation.x = Math.PI / 2;
-  rim.position.y = 0.01;
+  rim.position.y = 0.065;
   hero.add(pad, rim);
   scene.add(hero);
 }
@@ -1236,7 +1238,7 @@ $('nick').addEventListener('input', () => { renderPlayerCard(); clearTimeout(her
 
 const MOODS = {
   game: { top: 0x2f8fff, bottom: 0xbfe9ff, sun: 0xfff0d8, sunI: 1.9, sky: 0xd8efff, ground: 0x7a6a48, hemiI: 1.25, dir: [-0.45, 1, 0.35], near: 140, far: 420 },
-  lobby: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sunI: 2.2, sky: 0xcdbbff, ground: 0x8a5a48, hemiI: 1.15, dir: [0.55, 0.42, -0.72], near: 120, far: 380 },
+  lobby: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sunI: 2.2, sky: 0xcdbbff, ground: 0x8a5a48, hemiI: 1.15, dir: [0.55, 0.42, -0.72], near: 180, far: 950 },
 };
 const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
 const fillLight = new THREE.PointLight(0x8b6bff, 18, 12, 1.6);     // фиолетовая подсветка спереди-слева
@@ -1258,25 +1260,24 @@ const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
 addEventListener('mousemove', (e) => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = e.clientY / innerHeight * 2 - 1; });
 
 const V_HERO = new THREE.Vector3(), V_TMP = new THREE.Vector3();
-let heroShift = 0.55;                // во вкладке Locker персонаж отъезжает вправо, освобождая место сетке
+let heroShift = 0;                   // во вкладках Locker/Shop камера отъезжает, персонаж — правее сетки
+// Лобби: островок-сцена (lobby.js) — герой стоит на земле, камера перед ним, за спиной остров матча.
+const lobbyScene = createLobbyScene(scene, MAP / 2);
 function lobbyFrame(dt, t) {
-  // мягко догоняем мышь — камера чуть смещается, остров «дышит»
+  // мягко догоняем мышь — камера чуть смещается (параллакс)
   mouse.sx += (mouse.x - mouse.sx) * Math.min(1, dt * 3);
   mouse.sy += (mouse.y - mouse.sy) * Math.min(1, dt * 3);
-  const a = t * 0.035 + 0.6;
-  const r = 128;
-  camera.position.set(MAP / 2 + Math.cos(a) * r + mouse.sx * 4, 46 - mouse.sy * 3, MAP / 2 + Math.sin(a) * r);
-  camera.lookAt(MAP / 2, 14, MAP / 2);
+  heroShift += ((document.getElementById('lobby').classList.contains('lockered') ? 1.8 : 0) - heroShift) * Math.min(1, dt * 4);
+  lobbyScene.cameraPose(camera, t, heroShift, mouse.sx, mouse.sy);
   camera.updateMatrixWorld();
+  lobbyScene.tick(t);
   if (hero) {
-    heroShift += ((document.getElementById('lobby').classList.contains('lockered') ? 1.35 : 0.55) - heroShift) * Math.min(1, dt * 4);
-    hero.position.copy(camera.localToWorld(V_HERO.set(heroShift + mouse.sx * 0.15, -1.55, -5.0)));
+    lobbyScene.heroPos(hero.position);
     const v = camera.position.clone().sub(hero.position);
-    hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.7) * 0.22 + mouse.sx * 0.35;
+    hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.7) * 0.12 + mouse.sx * 0.3;
     animateCharacter(hero, t, 'idle');
-    hero.position.y += Math.sin(t * 1.6) * 0.04;
-    rimLight.position.copy(camera.localToWorld(V_TMP.set(1.6, 0.6, -7.4)));
-    fillLight.position.copy(camera.localToWorld(V_TMP.set(-1.8, -0.2, -3.6)));
+    rimLight.position.copy(camera.localToWorld(V_TMP.set(1.6, 0.6, -9.5)));
+    fillLight.position.copy(camera.localToWorld(V_TMP.set(-1.8, -0.2, -4.6)));
   }
   drawMotes(dt);
 }
