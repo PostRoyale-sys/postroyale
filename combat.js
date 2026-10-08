@@ -130,7 +130,7 @@ export function createCombat(ctx) {
   const changed = () => ctx.onInventory();
 
   function takeDamage(dmg, by, w) {
-    if (hp <= 0) return;
+    if (hp <= 0 || !ctx.canPlay()) return;               // наблюдателя не бьют
     const toShield = Math.min(shield, dmg);
     shield -= toShield;
     hp = Math.max(0, hp - (dmg - toShield));
@@ -139,7 +139,7 @@ export function createCombat(ctx) {
     changed();
   }
 
-  // Смерть: всё оружие и патроны падают на землю, возрождаемся с пустыми руками.
+  // Смерть: всё оружие и патроны падают на землю; дальше решает раунд (royale.js) — выбыл до конца раунда.
   function die(by, w) {
     ctx.net()?.dead({ n: ctx.nick(), by, w });
     ctx.killfeed(by, ctx.nick(), w);
@@ -150,7 +150,7 @@ export function createCombat(ctx) {
     hp = 100;
     shield = 0;
     reloadUntil = 0;
-    ctx.respawn();
+    ctx.died(by, w);
     changed();
   }
 
@@ -159,6 +159,7 @@ export function createCombat(ctx) {
   function targets() {
     const list = [];
     for (const [peerId, o] of ctx.others) {
+      if (o.target?.a === false) continue;               // наблюдатель — не цель
       const p = o.group.position;
       list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + 1.95, p.z + 0.4) });
     }
@@ -347,11 +348,18 @@ export function createCombat(ctx) {
     get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
 
     reset() { hp = 100; shield = 0; changed(); },
+    // Новый раунд: пустые руки, ни патронов, ни щита.
+    resetAll() {
+      slots.fill(null);
+      for (const k of Object.keys(ammo)) ammo[k] = 0;
+      hp = 100; shield = 0; reloadUntil = 0; nextShot = 0;
+      changed();
+    },
 
     // Выстрел из слота i. Возвращает true, если выстрелил.
     fire(i, now) {
       const w = slots[i];
-      if (!w || now < nextShot) return false;
+      if (!w || now < nextShot || !ctx.canPlay()) return false;
       if (reloadUntil) return false;
       const spec = WEAPONS[w.type];
       if (w.mag <= 0) { startReload(i); return false; }

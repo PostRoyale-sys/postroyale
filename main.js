@@ -10,8 +10,10 @@ import { connect } from './net.js';
 import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
+import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
+import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 
-const NAME = 'PostCraft';                     // рабочее название — менять здесь (и в <title> index.html)
+const NAME = 'PostRoyale';                     // рабочее название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
 const GRAVITY = 30, JUMP = 8.6, WALK = 4.6, RUN = 7.5, FLY = 11, REACH = 6;
 const POSE_HZ = 10;
@@ -239,8 +241,9 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   // Руки/блоки: сначала сундук под прицелом, потом блоки.
   if (e.button === 0) {
     const chest = loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
-    if (chest) { loot.open(chest); return; }
+    if (chest) { openChest(chest); return; }
   }
+  if (!royale.alive) return;                                     // наблюдатель мир не трогает
   const hit = target();
   if (!hit) return;
   if (e.button === 0) {
@@ -339,7 +342,7 @@ function nameSprite(text, color) {
   return s;
 }
 
-function avatar(name) {
+function avatar(name, tier = -1) {
   const color = colorOf(name);
   const g = new THREE.Group();
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.35), new THREE.MeshLambertMaterial({ color }));
@@ -350,20 +353,23 @@ function avatar(name) {
   eyes.position.set(0, 1.8, -0.26);
   const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.3), new THREE.MeshLambertMaterial({ color: 0x2b3140 }));
   legs.position.y = 0.2;
-  g.add(body, head, eyes, legs, nameSprite(name, color));
+  const t = TIERS[tier];
+  g.add(body, head, eyes, legs, nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
   return g;
 }
 
 function upsertOther(peerId, d) {
   let o = others.get(peerId);
-  if (!o || o.name !== d.n) {
+  const tier = d.h ?? -1;
+  if (!o || o.name !== d.n || o.tier !== tier) {
     if (o) scene.remove(o.group);
-    o = { group: avatar(d.n), name: d.n, target: d };
+    o = { group: avatar(d.n, tier), name: d.n, tier, target: d };
     o.group.position.set(d.x, d.y, d.z);
     scene.add(o.group);
     others.set(peerId, o);
   }
   o.target = d;
+  o.group.visible = d.a !== false;              // наблюдателей не видно
   // Оружие в руках у игрока: тип g и редкость q из pose.
   const gk = d.g ? `${d.g}:${d.q}` : '';
   if (o.gunKey !== gk) {
@@ -398,12 +404,12 @@ function say(name, text) {
   while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
 }
 
-const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀' };
+const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪' };
 function killfeed(by, victim, w) {
   const line = document.createElement('div');
   line.className = 'kill';
   const icon = KILL_ICON[w] || '💀';
-  line.textContent = by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
+  line.textContent = w === 'storm' ? `${victim} ${icon} got caught in the storm` : by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
   $('chatlog').appendChild(line);
   while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
 }
@@ -450,7 +456,15 @@ const ctx = {
   toast, killfeed,
   scoped: () => isScoped(),
   moving: () => moving,
-  respawn: () => spawn(true),
+  canPlay: () => royale.alive,
+  died: (by) => royale.eliminate(by),
+  // Раунд (royale.js)
+  onRoundStart, onEliminated, onWinner,
+  stormHud,
+  stormDamage: (d) => combat.takeDamage(d, 'Storm', 'storm'),
+  points: (k) => season.add(k),
+  // Сезон (season.js)
+  pointsToast, onSeason: renderSeason,
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
   hitmarker: () => { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); },
@@ -462,7 +476,108 @@ const ctx = {
 };
 const combat = createCombat(ctx);
 const loot = createLoot(ctx);
+const royale = createRoyale(ctx);
+const season = createSeason(ctx);
 const vm = createViewmodel(renderer, camera);
+
+// ---------- Раунд и сезон ----------
+
+let goldenKeyRound = -1;         // золотой ключ держателя: +1 к редкости одного сундука за раунд
+function openChest(chest) {
+  if (!royale.alive) return;
+  const key = season.tier >= 0 && goldenKeyRound !== royale.round;
+  if (!loot.open(chest, key ? 1 : 0)) return;
+  if (key) { goldenKeyRound = royale.round; toast('🔑 Golden key: +1 rarity'); }
+  season.add('chest');
+}
+
+let bannerTimer = 0;
+function banner(title, sub = '', ms = 3500) {
+  $('banner').innerHTML = '';
+  const h = document.createElement('b'); h.textContent = title;
+  const p = document.createElement('span'); p.textContent = sub;
+  $('banner').append(h, p);
+  $('banner').hidden = false;
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { $('banner').hidden = true; }, ms);
+}
+
+function onRoundStart(r, alive) {
+  loot.resetRound(r, r * ROUND_MS);
+  combat.resetAll();
+  goldenKeyRound = -1;
+  if (alive) {
+    flying = false;
+    spawn(true);
+    season.roundStarted();
+    banner('DROP!', 'Grab weapons from chests — the storm closes in 30s');
+  } else {
+    flying = true;
+    const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
+    banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · F fly`, 5000);
+  }
+}
+
+function onEliminated(place, by) {
+  flying = true;
+  vel.set(0, 0, 0);
+  feet.y += 6;
+  season.placed(place);
+  banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
+}
+
+function onWinner(name, me) {
+  if (me) season.add('win');
+  banner(me ? '🏆 VICTORY ROYALE' : `🏆 ${name} wins`, me ? 'Last one standing — share the clip!' : 'Next drop at the top of the round', 6000);
+  say('🏆', ` ${name} won the round`);
+}
+
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, '0')}`;
+let lastStorm = '';
+function stormHud({ t, storm, alive, outside, spectating, drop }) {
+  const left = drop ? (DROP_MS - t) / 1000 : storm.left;
+  const what = drop ? 'Storm in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
+  const txt = `${spectating ? '👁 Spectating · ' : ''}👥 ${alive} alive · 🌪 ${what} ${mmss(left)}`;
+  if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; }
+  $('storm').classList.toggle('danger', outside);
+  $('stormtint').classList.toggle('on', outside);
+}
+
+let ptsTimer = 0;
+function pointsToast(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  $('pts').appendChild(d);
+  while ($('pts').children.length > 4) $('pts').firstChild.remove();
+  clearTimeout(ptsTimer);
+  ptsTimer = setTimeout(() => { $('pts').textContent = ''; }, 2500);
+}
+
+function renderSeason() {
+  const s = season.stats, w = season.wallet, t = season.tierInfo(season.tier);
+  $('season').innerHTML = `<div class="sh"><b>Season 1</b><span>${s.points.toLocaleString('en')} pts</span></div>
+    <div class="sg"><div><b>${s.kills}</b>kills</div><div><b>${s.wins}</b>wins</div><div><b>${s.chests}</b>chests</div><div><b>${s.rounds}</b>drops</div></div>`;
+  const row = document.createElement('div');
+  row.className = 'sw';
+  if (w) {
+    const label = document.createElement('span');
+    label.textContent = `${w.pubkey.slice(0, 4)}…${w.pubkey.slice(-4)} · ${t ? `★ ${t.name}` : TOKEN_MINT ? 'no tokens' : 'linked'}`;
+    if (t) label.style.color = t.color;
+    const off = document.createElement('button');
+    off.textContent = 'Unlink';
+    off.onclick = () => season.disconnect();
+    row.append(label, off);
+  } else {
+    const on = document.createElement('button');
+    on.textContent = 'Link Solana wallet';
+    on.onclick = () => season.connect(nick);
+    row.append(on);
+  }
+  $('season').appendChild(row);
+  const note = document.createElement('p');
+  note.textContent = 'Points are for fun and the leaderboard — no cash value. Holders get cosmetics + a golden key (+1 rarity on one chest per match).';
+  $('season').appendChild(note);
+}
 
 // ---------- Сеть ----------
 
@@ -495,7 +610,12 @@ function startNet() {
       chat(peerId, d) { say(d.n, d.t); },
       shot(peerId, d) { combat.onShot(peerId, d); },
       hit(peerId, d) { combat.onHit(peerId, d); },
-      dead(peerId, d) { combat.onDead(peerId, d); },
+      dead(peerId, d) {
+        combat.onDead(peerId, d);
+        royale.onPeerDead();
+        if (d.by === nick && d.n !== nick && royale.alive) season.add('kill');
+      },
+      win(peerId, d) { royale.onWin(peerId, d); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
@@ -510,7 +630,8 @@ function startNet() {
 
 function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
-  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick };
+  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick, a: royale.alive, rr: royale.round };
+  if (season.tier >= 0) d.h = season.tier;
   const w = currentWeapon();
   if (w) { d.g = w.type; d.q = w.rarity; }
   return d;
@@ -535,20 +656,20 @@ addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
   if (!world || !controls.isLocked) return;
-  if (e.code === 'KeyF') { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
+  if (e.code === 'KeyF' && !royale.alive) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }   // полёт — только наблюдателю
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
-    if (chest) loot.open(chest);
+    if (chest) openChest(chest);
   }
   if (e.code === 'KeyR') { const en = ENTRIES[slot]; if (en.weapon !== undefined) combat.reload(en.weapon); }
-  if (e.code === 'KeyG' && swapCandidate) {
+  if (e.code === 'KeyG' && swapCandidate && royale.alive) {
     const en = ENTRIES[slot];
     const into = en.weapon !== undefined ? en.weapon : 0;
     loot.swap(swapCandidate, into, combat);
     pick(into);
   }
-  if (e.code === 'KeyQ') {
+  if (e.code === 'KeyQ' && royale.alive) {
     const en = ENTRIES[slot];
     if (en.weapon !== undefined && combat.slots[en.weapon]) {
       const w = combat.take(en.weapon);
@@ -574,7 +695,7 @@ renderer.domElement.addEventListener('click', () => { if (world && !controls.isL
 const link = () => `${location.origin}${location.pathname}?w=${worldId}`;
 $('share').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(link()); toast('Link copied'); } catch (e) { /* без буфера — просто откроем X */ }
-  const text = `Drop into my ${NAME} world 🧱🔫 — loot chests, build, fight. Open and play, no install`;
+  const text = `Drop into my ${NAME} match 🔫🌪 — loot chests, outrun the storm, last one standing wins. Open and play, no install`;
   open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(link())}`, '_blank', 'noopener');
 });
 
@@ -596,12 +717,12 @@ function start() {
     } catch (e) { /* битое сохранение — начнём с чистого мира */ }
     rebuildAll();
     spawn();
-    loot.init();
-    combat.reset();
+    royale.init();              // раунд по часам: сундуки, шторм, жив/наблюдаешь
     pick(0);
     $('wname').textContent = `🌍 ${worldId}`;
     $('intro').hidden = true;
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo']) $(id).hidden = false;
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm']) $(id).hidden = false;
+    renderSeason();
     $('pause').hidden = false;
     document.title = `${worldId} — ${NAME}`;
     startNet();
@@ -625,11 +746,12 @@ renderer.setAnimationLoop((now) => {
     if (mouseDown && controls.isLocked && w && WEAPONS[w.type].auto) combat.fire(en.weapon, now / 1000);
     combat.update(dt);
     loot.update(dt, now);
+    royale.update(dt);
 
     // Подбор лута и подсказки.
-    swapCandidate = loot.pickupNear(feet, combat);
+    swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
     const eyePos = camera.getWorldPosition(new THREE.Vector3());
-    const chest = controls.isLocked ? loot.chestNear(eyePos, camera.getWorldDirection(new THREE.Vector3())) : null;
+    const chest = controls.isLocked && royale.alive ? loot.chestNear(eyePos, camera.getWorldDirection(new THREE.Vector3())) : null;
     const prompt = chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     const rl = combat.reloading;
@@ -683,7 +805,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit,
-  combat, loot, pick,
+  combat, loot, pick, royale, season,
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
   tp(x, z, up = 0) { feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01 + up, z); player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },

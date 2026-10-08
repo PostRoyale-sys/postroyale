@@ -9,12 +9,13 @@
 //   shot — выстрел (для трассера/ракеты и звука у всех);
 //   hit  — попадание по конкретному игроку (шлём только ему);
 //   dead — игрок погиб (лента убийств у всех);
-//   chest — сундук открыт (индекс, время); loot — предметы на земле; take — предмет подобрали.
+//   chest — сундук открыт (индекс, время); loot — предметы на земле; take — предмет подобрали;
+//   win — последний живой в раунде (баннер у всех).
 
 import { joinRoom, selfId } from 'trystero';
 
-const APP_ID = 'postcraft-v2';      // v2: мир 192×192 — со старыми клиентами не смешиваемся
-const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take'];
+const APP_ID = 'postroyale-v1';     // PostRoyale: раунды и шторм — со старыми клиентами PostCraft не смешиваемся
+const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win'];
 
 export function connect(worldId, on) {
   const room = joinRoom({ appId: APP_ID }, worldId);

@@ -1,14 +1,13 @@
 // Лут как в Fortnite: золотые сундуки по острову → случайное оружие разной редкости, патроны к нему, броня, аптечки.
-// Места сундуков определяются id мира (у всех одинаковые). Открытый сундук пропадает у всех и через CHEST_RESPAWN
-// появляется снова. Предметы на земле — общие: кто первый подошёл, тот и забрал (take — у всех исчезает).
-// Ничего не сохраняется: лут — это «раунд», а не постройки.
+// Места сундуков — из id мира и номера раунда (у всех одинаковые, каждый раунд новые). Открытый сундук пропадает у всех
+// до конца раунда. Предметы на земле — общие: кто первый подошёл, тот и забрал (take — у всех исчезает).
+// Новый раунд (royale.js) — всё заново: сундуки закрыты, предметы с земли убраны, пакеты прошлого раунда игнорируются.
 
 import * as THREE from 'three';
 import { SX, SZ, WATER_Y, rng, seedOf } from './voxel.js';
 import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 
 const CHESTS = 42;                     // мир 192×192 — сундуков больше
-const CHEST_RESPAWN = 180 * 1000;       // мс
 const OPEN_RANGE = 4;
 const PICK_RANGE = 1.5;
 
@@ -23,9 +22,10 @@ function weighted(table, rand = Math.random) {
   return entries[0][0];
 }
 
-export function rollChest() {
+// bonus — +к редкости (золотой ключ держателя токена).
+export function rollChest(bonus = 0) {
   let type = weighted(WEAPON_WEIGHTS);
-  let rarity = +weighted(Object.fromEntries(RARITY_WEIGHTS.map((w, i) => [i, w])));
+  let rarity = Math.min(RARITY.length - 1, +weighted(Object.fromEntries(RARITY_WEIGHTS.map((w, i) => [i, w]))) + bonus);
   const min = WEAPONS[type].minRarity || 0;
   if (rarity < min) rarity = min;
   const spec = WEAPONS[type];
@@ -118,12 +118,14 @@ export function createLoot(ctx) {
   const { scene } = ctx;
   const chests = [];                // { i, pos, group, openedAt }
   const items = new Map();          // id → { ...item, id, pos, group }
-  let seq = 0;
+  let seq = 0, round = 0, roundStart = 0;
 
-  // Места сундуков — из сида мира: на суше, не на кронах деревьев.
+  // Места сундуков — из сида мира и номера раунда: на суше, не на кронах деревьев.
   function placeChests() {
+    for (const c of chests) scene.remove(c.group);
+    chests.length = 0;
     const w = ctx.world();
-    const rand = rng(seedOf(w.id) ^ 0x51ed);
+    const rand = rng(seedOf(w.id) ^ 0x51ed ^ Math.imul(round + 1, 2246822519));
     for (let tries = 0; chests.length < CHESTS && tries < 2000; tries++) {
       const x = 4 + Math.floor(rand() * (SX - 8)), z = 4 + Math.floor(rand() * (SZ - 8));
       const y = w.surfaceY(x, z);
@@ -139,7 +141,7 @@ export function createLoot(ctx) {
     }
   }
 
-  const isOpen = (c) => c.openedAt && Date.now() - c.openedAt < CHEST_RESPAWN;
+  const isOpen = (c) => c.openedAt >= roundStart && c.openedAt > 0;
 
   function setOpened(i, t) {
     const c = chests[i];
@@ -149,7 +151,7 @@ export function createLoot(ctx) {
   }
 
   function spawn(it, from) {
-    if (items.has(it.id)) return;
+    if (items.has(it.id) || (it.rr !== undefined && it.rr !== round)) return;   // предмет из прошлого раунда
     const group = itemModel(it);
     const pos = new THREE.Vector3(it.x, it.y, it.z);
     group.position.copy(pos);
@@ -174,7 +176,7 @@ export function createLoot(ctx) {
       const x = Math.max(1, Math.min(SX - 1, center.x + Math.cos(ang) * r));
       const z = Math.max(1, Math.min(SZ - 1, center.z + Math.sin(ang) * r));
       const y = w.surfaceY(Math.floor(x), Math.floor(z)) + 0.45;
-      const full = { ...it, id: `${ctx.selfId()}:${seq++}`, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) };
+      const full = { ...it, id: `${ctx.selfId()}:${seq++}`, rr: round, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) };
       spawn(full);
       out.push(full);
     });
@@ -184,7 +186,13 @@ export function createLoot(ctx) {
   const pub = (it) => { const { pos, group, born, from, ...rest } = it; return rest; };
 
   return {
-    init() { placeChests(); },
+    // Новый раунд: сундуки на новых местах и закрыты, предметы с земли убраны.
+    resetRound(r, start) {
+      round = r;
+      roundStart = start;
+      for (const it of [...items.values()]) remove(it.id);
+      placeChests();
+    },
     get chests() { return chests; },        // для отладки/тестов
     get items() { return items; },
 
@@ -202,13 +210,13 @@ export function createLoot(ctx) {
       return best;
     },
 
-    open(c) {
-      if (!c || isOpen(c)) return;
+    open(c, bonus = 0) {
+      if (!c || isOpen(c)) return false;
       const t = Date.now();
       setOpened(c.i, t);
-      ctx.net()?.chest({ list: [[c.i, t]] });
-      ctx.sound?.('pickup');
-      drop(c.pos, rollChest());
+      ctx.net()?.chest({ list: [[c.i, t]], rr: round });
+      drop(c.pos, rollChest(bonus));
+      return true;
     },
 
     drop,
@@ -241,18 +249,18 @@ export function createLoot(ctx) {
     // Новичку — открытые сундуки и всё, что лежит на земле.
     syncTo(peerId) {
       const opened = chests.filter(isOpen).map((c) => [c.i, c.openedAt]);
-      if (opened.length) ctx.net()?.chest({ list: opened }, peerId);
+      if (opened.length) ctx.net()?.chest({ list: opened, rr: round }, peerId);
       if (items.size) ctx.net()?.loot({ items: [...items.values()].map(pub) }, peerId);
     },
 
-    onChest(peerId, d) { for (const [i, t] of d.list || []) setOpened(i, t); },
+    onChest(peerId, d) { if (d.rr !== undefined && d.rr !== round) return; for (const [i, t] of d.list || []) setOpened(i, t); },
     onLoot(peerId, d) { for (const it of d.items || []) spawn(it, peerId); },
     onTake(peerId, d) { remove(d.id); },
 
     update(dt, now) {
       for (const c of chests) {
         const open = isOpen(c);
-        if (c.group.visible === open) c.group.visible = !open;            // сундук вернулся через CHEST_RESPAWN
+        if (c.group.visible === open) c.group.visible = !open;
         if (!open) c.group.userData.glow.material.opacity = 0.6 + Math.sin(now / 300 + c.i) * 0.3;
       }
       for (const it of items.values()) {

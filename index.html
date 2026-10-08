@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PostCraft — build together from a post</title>
+<title>PostRoyale — battle royale in a post</title>
 <meta name="description" content="Make a voxel world, post the link on X — everyone who opens it builds with you, live.">
 <meta property="og:title" content="Come build in my world">
 <meta property="og:description" content="Open the link and play together — no install, no account.">
@@ -73,6 +73,24 @@
   #cross[data-mode="bazooka"] .l, #cross[data-mode="bazooka"] .r { width: 14px; }
   #cross[data-mode="bazooka"] .l { left: calc(-1 * var(--gap) - 14px); }
   #cross[data-mode="off"] { display: none; }
+  #storm { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); font-weight: 800; white-space: nowrap; transition: background .25s, color .25s; }
+  #storm.danger { background: #9b4dff; color: #fff; }
+  #stormtint { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle, transparent 45%, rgba(155,77,255,.38)); opacity: 0; transition: opacity .3s; }
+  #stormtint.on { opacity: 1; }
+  #banner { position: fixed; top: 22%; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; text-shadow: 0 2px 12px rgba(0,0,0,.6); animation: pop .35s cubic-bezier(.2,.9,.3,1.3); }
+  #banner b { display: block; font-size: 52px; font-weight: 900; letter-spacing: -1px; color: #fff; }
+  #banner span { display: block; margin-top: 4px; font-size: 16px; font-weight: 700; color: #e7e9ea; }
+  @keyframes pop { from { opacity: 0; transform: translateX(-50%) scale(.85); } }
+  #pts { position: fixed; right: 20px; top: 40%; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
+  #pts div { font-weight: 900; color: #ffc83d; text-shadow: 0 1px 6px rgba(0,0,0,.7); animation: pop .3s ease-out; }
+  #season { margin: 4px 0 14px; padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,.06); text-align: left; }
+  #season .sh { display: flex; justify-content: space-between; align-items: baseline; }
+  #season .sh span { font-weight: 900; color: #ffc83d; }
+  #season .sg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; font-size: 12px; color: #8b98a5; text-align: center; }
+  #season .sg b { display: block; font-size: 18px; color: #e7e9ea; }
+  #season .sw { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+  #season .sw button { padding: 6px 12px; font-size: 13px; }
+  #season p { margin: 8px 0 0; font-size: 11px; color: #8b98a5; }
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: #e7e9ea; color: #0f1419; font-weight: 800; }
 </style>
 <script type="importmap">
@@ -89,9 +107,9 @@
 
 <div id="intro">
   <div class="box">
-    <h1><span class="name">PostCraft</span><br>build <em>together</em>.</h1>
-    <p class="sub" id="introsub">Make a world, post the link on X — everyone who opens it drops in with you: loot chests, build, fight. No install, no account.</p>
-    <div class="row"><input id="nick" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false"><button class="primary" id="go">Create a world</button></div>
+    <h1><span class="name">PostRoyale</span><br>last one <em>standing</em>.</h1>
+    <p class="sub" id="introsub">Make a match, post the link on X — everyone who opens it drops in with you: loot chests, outrun the storm, be the last one alive. New round every 8 minutes. No install, no account.</p>
+    <div class="row"><input id="nick" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false"><button class="primary" id="go">Create a match</button></div>
     <div id="status"></div>
   </div>
 </div>
@@ -101,7 +119,11 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>Find golden chests 🎁 · E open · Esc menu · T chat</div>
+<div id="hint" hidden>Loot chests 🎁 · stay inside the storm circle 🌪 · E open · Esc menu · T chat</div>
+<div id="storm" class="pill" hidden></div>
+<div id="stormtint"></div>
+<div id="banner" hidden></div>
+<div id="pts"></div>
 <div id="chatlog"></div>
 <div id="chatbox" hidden><input id="chatin" maxlength="140" placeholder="Say something… (Enter)" autocomplete="off"></div>
 <div id="blockname"></div>
@@ -121,10 +143,11 @@
 <div id="pause" hidden>
   <div class="card">
     <h2>Paused</h2>
-    <p>Click to keep building</p>
+    <p>Click to jump back in</p>
+    <div id="season"></div>
     <div class="keys">
       <b>WASD</b><span>move · Shift run · Space jump</span>
-      <b>F</b><span>fly (Space up, C down)</span>
+      <b>F</b><span>fly — spectators only (Space up, C down)</span>
       <b>1–3</b><span>weapons (empty = hands) · 4–9 blocks</span>
       <b>E</b><span>open chest</span>
       <b>Left click</b><span>shoot (hold for SMG / AR)</span>
