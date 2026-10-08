@@ -23,6 +23,7 @@ import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
 import { createWater } from './water.js';
+import { createBots } from './bots.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
 
@@ -398,7 +399,7 @@ function swingPickaxe(now) {
     if (p.target?.a === false) continue;
     const c = p.group.position;
     const t = rayBox(o, d, new THREE.Vector3(c.x - 0.45, c.y, c.z - 0.45), new THREE.Vector3(c.x + 0.45, c.y + 1.9, c.z + 0.45));
-    if (t < PICK_REACH) { net?.hit({ dmg: 20, by: nick, w: 'pickaxe' }, peerId); hitmarker(); combat.sfx('chop'); return; }
+    if (t < PICK_REACH) { sendHit(peerId, { dmg: 20, by: nick, w: 'pickaxe' }); hitmarker(); combat.sfx('chop'); return; }
   }
   const hit = structures.raycast(o, d, PICK_REACH);
   if (hit?.e) {
@@ -753,6 +754,13 @@ const ctx = {
   moving: () => moving,
   canPlay: () => royale.alive && !royale.ended,
   inMatch: () => playing,
+  sendHit: (id, d) => sendHit(id, d),
+  // боты (bots.js)
+  royale: () => royale, combat: () => combat, loot: () => loot,
+  me: () => ({ alive: royale.alive, riding, nick, feet }),
+  upsert: (k, d) => upsertOther(k, d),
+  removeBots, isHost, hostId,
+  onBotKilled: (by) => { if (by === nick && royale.alive) season.add('kill'); },
   riding: () => riding,
   onRoundEnd,
   died: (by) => royale.eliminate(by),
@@ -778,6 +786,19 @@ const loot = createLoot(ctx);
 const royale = createRoyale(ctx);
 const season = createSeason(ctx);
 const vm = createViewmodel(renderer, camera);
+const bots = createBots(ctx);
+
+// Попадание: по боту — хосту ботов (или себе, если хост ты), по игроку — ему по сети.
+function sendHit(id, d) {
+  if (id.startsWith('bot:')) bots.hit(id, d);
+  else net?.hit(d, id);
+}
+// Хост ботов — игрок с наименьшим сетевым id (оффлайн — ты).
+function hostId() { return net ? [net.selfId, ...peers].sort()[0] : 'me'; }
+function isHost() { return !net || hostId() === net.selfId; }
+function removeBots() {
+  for (const [k, o] of [...others]) if (k.startsWith('bot:')) { scene.remove(o.group); others.delete(k); }
+}
 
 // ---------- Раунд и сезон ----------
 
@@ -804,6 +825,7 @@ function banner(title, sub = '', ms = 3500) {
 function onRoundStart(r, alive) {
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
+  bots.roundStart(r);
   loot.resetRound(r, r * ROUND_MS);
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
@@ -954,6 +976,8 @@ let startNet = function () {
         if (d.by === nick && d.n !== nick && royale.alive) season.add('kill');
       },
       win(peerId, d) { royale.onWin(peerId, d); },
+      bots(peerId, d) { bots.onBots(peerId, d); },
+      bothit(peerId, d) { bots.onBotHit(peerId, d); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
@@ -1439,6 +1463,7 @@ renderer.setAnimationLoop((now) => {
     }
     combat.update(dt);
     loot.update(dt, now);
+    bots.update(dt);
     royale.update(dt);
     updateFx(dt);
     updatePlan();
@@ -1547,7 +1572,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, season, structures, mats, bots, sendHit, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: () => jumpOut(),

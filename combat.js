@@ -205,7 +205,7 @@ export function createCombat(ctx) {
     const r2 = (v) => v.toArray().map((x) => +x.toFixed(2));
     ctx.net()?.shot({ w: w.type, o: r2(muzzle), e: ends.map(r2) });
     for (const [t, dmg] of dmgBy) {
-      ctx.net()?.hit({ dmg: Math.round(dmg), by: ctx.nick(), w: w.type }, t.id);
+      ctx.sendHit(t.id, { dmg: Math.round(dmg), by: ctx.nick(), w: w.type });
       ctx.hitmarker();
     }
     for (const [k, dmg] of dmgBuild) ctx.damageStructure(k, Math.round(dmg), false);
@@ -263,7 +263,7 @@ export function createCombat(ctx) {
       const d = c.distanceTo(p);
       if (d > BLAST_R) continue;
       const dmg = Math.round(BLAST_DMG * mult * (1 - d / BLAST_R));
-      ctx.net()?.hit({ dmg, by: ctx.nick(), w: 'bazooka' }, t.id);
+      ctx.sendHit(t.id, { dmg, by: ctx.nick(), w: 'bazooka' });
       ctx.hitmarker();
     }
     const me = ctx.feet().clone().add(new THREE.Vector3(0, 0.9, 0));

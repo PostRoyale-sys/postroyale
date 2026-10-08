@@ -10,12 +10,13 @@
 //   hit  — попадание по конкретному игроку (шлём только ему);
 //   dead — игрок погиб (лента убийств у всех);
 //   chest — сундук открыт (индекс, время); loot — предметы на земле; take — предмет подобрали;
-//   win — последний живой в раунде (баннер у всех).
+//   win — последний живой в раунде (баннер у всех);
+//   bots — позиции ботов от хоста; bothit — попадание по боту (хосту).
 
 import { joinRoom, selfId } from 'trystero';
 
 const APP_ID = 'postroyale-v1';     // PostRoyale: раунды и шторм — со старыми клиентами PostCraft не смешиваемся
-const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win'];
+const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win', 'bots', 'bothit'];
 
 export function connect(worldId, on) {
   const room = joinRoom({ appId: APP_ID }, worldId);
