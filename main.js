@@ -569,7 +569,9 @@ const ctx = {
   toast, killfeed,
   scoped: () => isScoped(),
   moving: () => moving,
-  canPlay: () => royale.alive,
+  canPlay: () => royale.alive && !royale.ended,
+  inMatch: () => playing,
+  onRoundEnd,
   died: (by) => royale.eliminate(by),
   damageStructure,
   // Раунд (royale.js)
@@ -647,15 +649,41 @@ function onEliminated(place, by) {
 
 function onWinner(name, me) {
   if (me) season.add('win');
-  banner(me ? '🏆 VICTORY ROYALE' : `🏆 ${name} wins`, me ? 'Last one standing — share the clip!' : 'Next drop at the top of the round', 6000);
+  banner(me ? '🏆 VICTORY ROYALE' : `🏆 ${name} wins`, me ? 'Last one standing!' : 'Last one standing', 6000);
   say('🏆', ` ${name} won the round`);
+}
+
+// Конец раунда (досрочно — последний живой, или по таймеру — все, кто дожил): итоги и возврат в лобби.
+const LOBBY_DELAY = 7;
+function onRoundEnd({ me, winners, early }) {
+  if (!early) {
+    const others = winners.filter((n) => n !== nick);
+    if (me) banner('🏆 VICTORY ROYALE', others.length ? `You survived the storm — winners: ${winners.join(', ')}` : 'You survived the storm!', LOBBY_DELAY * 1000);
+    else if (winners.length) banner(`🏆 ${winners.join(', ')}`, `${winners.length > 1 ? 'survived the storm and win' : 'survived the storm and wins'}`, LOBBY_DELAY * 1000);
+    else banner('Round over', 'No survivors — the storm took everyone', LOBBY_DELAY * 1000);
+    if (winners.length) say('🏆', ` ${winners.join(', ')} won the round`);
+  }
+  buildType = null;
+  structures.ghost(null);
+  let left = LOBBY_DELAY;
+  const tick = () => {
+    $('prompt').hidden = false;
+    $('prompt').textContent = `Back to the lobby in ${left}…`;
+    if (left-- <= 0) {
+      const q = new URLSearchParams({ w: worldId, r: me ? 'win' : 'end', ws: winners.slice(0, 4).join(',') });
+      location.href = `${location.pathname}?${q}`;
+      return;
+    }
+    setTimeout(tick, 1000);
+  };
+  tick();
 }
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, '0')}`;
 let lastStorm = '';
 function stormHud({ t, storm, alive, outside, spectating, drop }) {
   const left = drop ? (DROP_MS - t) / 1000 : storm.left;
-  const what = drop ? 'Storm in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
+  const what = drop ? 'Storm in' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
   const txt = `${spectating ? '👁 Spectating · ' : ''}👥 ${alive} alive · 🌪 ${what} ${mmss(left)}`;
   if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; }
   $('storm').classList.toggle('danger', outside);
@@ -890,6 +918,13 @@ const lobbyNewId = randId();
 let mode = worldId ? 'join' : 'new';
 const cleanCode = (v) => v.trim().toLowerCase().replace(/^.*[?&]w=/, '').replace(/[^a-z0-9_-]/g, '').slice(0, 24);
 const lobbyId = () => (mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
+// Итог прошлого раунда (возврат из матча): ?r=win|end&ws=имена.
+if (params.get('r')) {
+  const ws = (params.get('ws') || '').split(',').filter(Boolean);
+  $('status').textContent = params.get('r') === 'win' ? '🏆 Victory Royale — you won the last round!' : ws.length ? `Last round: 🏆 ${ws.join(', ')}` : 'Last round: no survivors';
+  $('status').classList.add('result');
+  history.replaceState(null, '', `?w=${params.get('w')}`);
+}
 if (worldId) {
   $('code').value = worldId;
   $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and hit Play — you drop in with everyone who opened the link.`;
@@ -1171,7 +1206,7 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
+    const prompt = royale.ended ? $('prompt').textContent : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     const rl = combat.reloading;
     const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';

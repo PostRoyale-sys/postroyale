@@ -128,6 +128,7 @@
   .primary.big:disabled { filter: grayscale(.4) brightness(.9); }
   .primary.big.rise { animation: rise .8s cubic-bezier(.2,.9,.25,1) calc(var(--d, 0) * 90ms + 150ms) forwards, glow 2.4s ease-in-out 1.2s infinite; }
   @keyframes glow { 50% { box-shadow: 0 8px 0 #b86400, 0 18px 60px rgba(255,170,40,.85), inset 0 2px 0 rgba(255,255,255,.7); } }
+  #status.result { order: -1; padding: 8px 16px; border-radius: 14px; background: rgba(255,210,26,.16); box-shadow: inset 0 0 0 1px rgba(255,216,26,.5); font: 400 20px var(--display); letter-spacing: .02em; color: var(--yellow); animation: rise .8s cubic-bezier(.2,.9,.25,1) both; }
   #status { min-height: 18px; font-weight: 700; font-size: 13px; color: #e6e1ff; text-align: right; }
 
   /* Остальные вкладки — панель по центру */

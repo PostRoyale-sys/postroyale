@@ -2,7 +2,9 @@
 // один и тот же раунд, одна и та же зона-шторм и её центр — без единого сообщения по сети.
 //
 // Раунд ROUND_MS: первые DROP_MS — высадка (шторма нет), дальше зона сужается по фазам, урон снаружи растёт.
-// Умер — выбыл до конца раунда (наблюдатель). Последний живой из тех, кто играл раунд, — победитель.
+// Финальный круг не схлопывается: держится радиусом FINAL_R до конца раунда.
+// Умер — выбыл до конца раунда (наблюдатель). Конец раунда: последний живой — досрочно, иначе по таймеру —
+// все, кто дожил, победители; после итогов игра возвращает в лобби (ctx.onRoundEnd).
 // Зашёл в середине раунда — высаживаешься сразу; только в последние LATE_CUTOFF мс (зона почти схлопнулась) — ждёшь следующей высадки.
 
 import * as THREE from 'three';
@@ -12,6 +14,7 @@ const SX = MAP, SZ = MAP;
 
 export const ROUND_MS = 8 * 60e3;
 export const DROP_MS = 30e3;
+export const FINAL_R = 8;
 const LATE_CUTOFF = 90e3;
 
 // [начало, конец (с), радиус от → до, урон/с снаружи]
@@ -26,14 +29,14 @@ const PHASES = [
   [260, 310, 70, 35, 4],
   [310, 350, 35, 35, 5],
   [350, 400, 35, 14, 8],
-  [400, 440, 14, 4, 10],
-  [440, 480, 4, 0, 15],
+  [400, 440, 14, FINAL_R, 10],
+  [440, 480, FINAL_R, FINAL_R, 10],
 ];
 
 export function createRoyale(ctx) {
   const { scene } = ctx;
   let round = -1, roundStart = 0, center = { x: SX / 2, z: SZ / 2 };
-  let alive = false, maxAliveSeen = 0, won = false, place = 0;
+  let alive = false, maxAliveSeen = 0, won = false, place = 0, ended = false;
   let surviveAcc = 0, stormAcc = 0;
 
   // Стена шторма: открытый цилиндр.
@@ -59,7 +62,7 @@ export function createRoyale(ctx) {
     const s = t / 1000;
     const ph = PHASES.find((p) => s >= p[0] && s < p[1]) || PHASES[PHASES.length - 1];
     const k = Math.min(1, Math.max(0, (s - ph[0]) / (ph[1] - ph[0])));
-    return { r: ph[2] + (ph[3] - ph[2]) * k, dps: ph[4], shrinking: ph[2] !== ph[3], left: ph[1] - s, idx: PHASES.indexOf(ph) };
+    return { r: ph[2] + (ph[3] - ph[2]) * k, dps: ph[4], shrinking: ph[2] !== ph[3], left: ph[1] - s, idx: PHASES.indexOf(ph), final: ph === PHASES[PHASES.length - 1] };
   }
 
   function aliveOthers() {
@@ -67,6 +70,7 @@ export function createRoyale(ctx) {
     for (const o of ctx.others.values()) if (o.target?.a && o.target.rr === round) n++;
     return n;
   }
+  const survivorNames = () => [...ctx.others.values()].filter((o) => o.target?.a && o.target.rr === round).map((o) => o.name);
 
   return {
     get round() { return round; },
@@ -109,11 +113,27 @@ export function createRoyale(ctx) {
     // Соперник погиб в этом раунде — значит, живых было как минимум двое (даже если кадры стояли в фоне).
     onPeerDead() { if (alive) maxAliveSeen = Math.max(maxAliveSeen, 2); },
 
-    onWin(peerId, d) { if (d.r === round) ctx.onWinner(d.n, false); },
+    onWin(peerId, d) {
+      if (d.r !== round || ended) return;
+      ended = true;
+      ctx.onWinner(d.n, false);
+      ctx.onRoundEnd({ me: false, winners: [d.n], early: true });
+    },
+
+    get ended() { return ended; },
 
     update(dt) {
+      if (ended) return;                  // итоги показаны — ждём возврата в лобби
       const now = Date.now();
       const r = roundOf(now);
+      // Таймер вышел: все живые — победители, затем лобби. Новый раунд в матче не начинается.
+      if (r !== round && round >= 0 && ctx.inMatch?.()) {
+        ended = true;
+        const winners = [...(alive ? [ctx.nick()] : []), ...survivorNames()];
+        if (alive) ctx.points('win');
+        ctx.onRoundEnd({ me: alive, winners, early: false });
+        return;
+      }
       if (r !== round) {
         round = r;
         roundStart = r * ROUND_MS;
@@ -154,8 +174,10 @@ export function createRoyale(ctx) {
       maxAliveSeen = Math.max(maxAliveSeen, n);
       if (!won && t > DROP_MS && maxAliveSeen >= 2 && n === 1) {
         won = true;
+        ended = true;
         ctx.net()?.win({ n: ctx.nick(), r: round });
         ctx.onWinner(ctx.nick(), true);
+        ctx.onRoundEnd({ me: true, winners: [ctx.nick()], early: true });
       }
     },
   };
