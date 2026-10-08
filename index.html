@@ -264,6 +264,7 @@
   #season .sw { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
   #season .sw button { padding: 6px 12px; font-size: 13px; }
   #season p { margin: 8px 0 0; font-size: 11px; color: #8b98a5; }
+  #prompt.ride { top: 76%; padding: 12px 26px; font: 400 26px var(--display); letter-spacing: .04em; background: rgba(255,210,26,.92); color: #2a1400; box-shadow: 0 6px 0 #b86400, 0 12px 30px rgba(0,0,0,.35); animation: glow 2s ease-in-out infinite; }
   #fps { position: fixed; right: 14px; top: 66px; z-index: 40; padding: 4px 9px; border-radius: 8px; background: rgba(11,13,18,.6); font: 700 11.5px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
   #fps.good { color: #7dffb0; } #fps.ok { color: #ffd81a; } #fps.bad { color: #ff6b6b; }
   body.shot #fps { display: none !important; }
@@ -332,7 +333,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',

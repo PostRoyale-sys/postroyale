@@ -88,6 +88,7 @@ export function createRoyale(ctx) {
 
   return {
     get round() { return round; },
+    get center() { return center; },
     get roundStart() { return roundStart; },
     get alive() { return alive; },
     get won() { return won; },
@@ -100,6 +101,12 @@ export function createRoyale(ctx) {
       setCenter(round);
       alive = now - roundStart < ROUND_MS - LATE_CUTOFF;
       ctx.onRoundStart(round, alive);
+    },
+
+    // Радиус, внутри которого безопасно сейчас и после текущего сжатия.
+    safeRadius() {
+      const s = storm(Date.now() - roundStart);
+      return Math.min(s.r, PHASES[s.idx][3]);
     },
 
     // Точка высадки — внутри зоны, в которую шторм сжимается сейчас (чтобы не умереть сразу после приземления).
@@ -171,7 +178,7 @@ export function createRoyale(ctx) {
 
       if (!alive) return;
       // Урон шторма копим и снимаем целыми единицами.
-      if (outside && s.dps) {
+      if (outside && s.dps && !ctx.riding?.()) {
         stormAcc += s.dps * dt;
         if (stormAcc >= 1) { const d = Math.floor(stormAcc); stormAcc -= d; ctx.stormDamage(d); }
       } else stormAcc = 0;

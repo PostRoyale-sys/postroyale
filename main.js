@@ -12,7 +12,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
-import { GameMap, MAP, WATER_Y } from './map.js';
+import { GameMap, MAP, WATER_Y, rng, seedOf } from './map.js';
 import { toonGradient, toon } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
@@ -23,6 +23,7 @@ import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter } from './skins.js';
 import { createGrass } from './grass.js';
+import { buildHeli } from './heli.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
@@ -177,6 +178,74 @@ function spawn(drop = true) {
   feet.set(x, drop ? Math.max(g, 30) + 70 : g + 0.05, z);
   vel.set(0, 0, 0);
   gliding = drop;
+}
+
+// ---------- Высадка с вертолёта ----------
+// Вертолёт пролетает над островом через центр зоны на высоте HELI_Y. У тех, кто начал раунд вместе, маршрут
+// одинаковый (от сида мира и номера раунда) — летят вместе; опоздавшему — свой маршрут через текущую зону.
+// Space или клик — прыжок; в конце маршрута выбрасывает сам. Камера — вокруг вертолёта, крутится мышью.
+
+const HELI_Y = 85, HELI_SPEED = 15;
+const heli = buildHeli();
+heli.visible = false;
+scene.add(heli);
+let flight = null;            // { a, b, dir, t0, dur } — маршрут вертолёта (виден, пока летит)
+let riding = false;           // ты внутри
+
+function startRide(late) {
+  const c = royale.center;
+  const r = late ? null : rng(seedOf(worldId) ^ Math.imul(royale.round + 7, 2654435761));
+  const ang = (r ? r() : Math.random()) * Math.PI * 2;
+  const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
+  // опоздавший пролетает только над безопасной частью зоны — и выпрыгнет (или его выбросит) внутри неё
+  const L = late ? Math.max(15, Math.min(90, royale.safeRadius() * 0.8)) : 230;
+  const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -L);
+  const b = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, L);
+  // общий вылет — от начала раунда (у всех одинаково), личный — от сейчас
+  const t0 = late ? Date.now() / 1000 : royale.roundStart / 1000;
+  flight = { a, b, dir, t0, dur: (2 * L) / HELI_SPEED };
+  riding = true;
+  gliding = false;
+  vel.set(0, 0, 0);
+  heli.visible = true;
+  camera.rotation.set(-0.25, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
+}
+
+function heliPos(out) {
+  const u = Math.min(1, Math.max(0, (Date.now() / 1000 - flight.t0) / flight.dur));
+  return out.copy(flight.a).lerp(flight.b, u);
+}
+
+function jumpOut() {
+  if (!riding) return;
+  riding = false;
+  const p = heliPos(new THREE.Vector3());
+  feet.set(p.x, p.y - 2.5, p.z);
+  vel.set(0, 0, 0);
+  knockVel.copy(flight.dir).multiplyScalar(6);
+  gliding = true;
+  combat.sfx('swing');
+}
+
+const V_HELI = new THREE.Vector3(), V_LOOK = new THREE.Vector3();
+function updateHeli(t) {
+  if (!flight) return;
+  heliPos(V_HELI);
+  heli.position.copy(V_HELI);
+  heli.position.y += Math.sin(t * 1.3) * 0.4;
+  heli.rotation.set(0.06, Math.atan2(-flight.dir.x, -flight.dir.z), Math.sin(t * 0.9) * 0.04);
+  heli.userData.tick(t);
+  const done = Date.now() / 1000 - flight.t0 >= flight.dur;
+  if (riding) {
+    if (done) jumpOut();
+    else {
+      feet.copy(V_HELI);
+      // камера на орбите вокруг вертолёта: направление — от мыши
+      camera.getWorldDirection(V_LOOK);
+      player.position.copy(V_HELI).addScaledVector(V_LOOK, -20).add(new THREE.Vector3(0, 5, 0));
+    }
+  }
+  if (done && !riding && Date.now() / 1000 - flight.t0 > flight.dur + 3) { flight = null; heli.visible = false; }
 }
 
 function step(dt) {
@@ -344,6 +413,7 @@ function spectatorNotice() {
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !playing) return;
   if (!royale.alive) { spectatorNotice(); return; }
+  if (riding) { if (e.button === 0) jumpOut(); return; }
   const w = currentWeapon();
   if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
   if (e.button === 2 && buildType) { exitBuild(); return; }
@@ -493,7 +563,7 @@ function upsertOther(peerId, d) {
     others.set(peerId, o);
   }
   o.target = d;
-  o.group.visible = d.a !== false;              // наблюдателей не видно
+  o.group.visible = d.a !== false && !d.rd;     // наблюдателей и сидящих в вертолёте не видно
   // Что в руках: тип g и редкость q из pose.
   const gk = d.g ? `${d.g}:${d.q}` : '';
   if (o.gunKey !== gk) {
@@ -585,6 +655,7 @@ const ctx = {
   moving: () => moving,
   canPlay: () => royale.alive && !royale.ended,
   inMatch: () => playing,
+  riding: () => riding,
   onRoundEnd,
   died: (by) => royale.eliminate(by),
   damageStructure,
@@ -641,10 +712,10 @@ function onRoundStart(r, alive) {
   goldenKeyRound = -1;
   renderHotbar();
   if (alive) {
-    spawn(true);
+    startRide(Date.now() - r * ROUND_MS > 20e3);
     season.roundStarted();
     const late = Date.now() - r * ROUND_MS > DROP_MS;
-    banner('DROP!', late ? 'Match in progress — glide down, loot fast, watch the storm' : 'Glide down, grab weapons from chests — the storm starts closing in 90s');
+    banner('DROP!', late ? 'Match in progress — press SPACE to jump out, loot fast, watch the storm' : 'Press SPACE to jump out of the chopper — the storm starts closing in 90s');
   } else {
     gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
@@ -801,6 +872,7 @@ function poseData() {
   if (w) { d.g = w.type; d.q = w.rarity; }
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
+  if (riding) d.rd = 1;
   return d;
 }
 
@@ -824,6 +896,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (!playing || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+  if (riding) { if (e.code === 'Space') jumpOut(); return; }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(eye(), look());
@@ -858,7 +931,7 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 
-controls.addEventListener('lock', () => { $('pause').hidden = true; $('cross').hidden = false; });
+controls.addEventListener('lock', () => { $('pause').hidden = true; $('cross').hidden = !playing; });
 controls.addEventListener('unlock', () => {
   keys.clear(); mouseDown = false; scopeHeld = false;
   if ($('chatbox').hidden) $('pause').hidden = false;
@@ -910,7 +983,8 @@ function start() {
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats']) $(id).hidden = false;
     renderSeason();
-    $('pause').hidden = false;
+    $('pause').hidden = controls.isLocked;          // мышь захвачена кликом по PLAY — сразу в игру, без паузы
+    $('cross').hidden = !controls.isLocked;
     document.title = `${worldId} — ${NAME}`;
     startNet();
   }, 20);
@@ -919,6 +993,8 @@ function start() {
 $('go').addEventListener('click', () => {
   if (playing || $('go').disabled) return;
   $('go').disabled = true;
+  // захват мыши — прямо в обработчике клика (нужен жест пользователя); не дали — после старта откроется пауза
+  try { renderer.domElement.requestPointerLock()?.catch?.(() => {}); } catch (e) { /* без захвата */ }
   $('flashout').classList.add('on');
   $('lobby').classList.add('leaving');
   setTimeout(start, 480);
@@ -1244,7 +1320,9 @@ renderer.setAnimationLoop((now) => {
   const t = now / 1000;
   if (!playing && world) lobbyFrame(dt, t);
   if (playing) {
-    if (controls.isLocked) step(dt);
+    updateHeli(t);
+    if (riding) { /* камеру ставит updateHeli */ }
+    else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + EYE, feet.z);
 
     // Зажатая ЛКМ: автоматическое оружие стреляет, кирка машет, стройка ставит детали.
@@ -1264,8 +1342,9 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
+    const prompt = royale.ended ? $('prompt').textContent : riding ? 'SPACE — jump out' : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
+    $('prompt').classList.toggle('ride', riding);
     const rl = combat.reloading;
     const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
     if ($('reload').textContent !== rtext) $('reload').textContent = rtext;
@@ -1295,7 +1374,7 @@ renderer.setAnimationLoop((now) => {
   if (playing) grass.update(feet, t);              // в лобби камера высоко — траву не видно, не считаем
   if (settings.bloom) composer.render(); else renderer.render(scene, camera);
   countFps(now);
-  if (playing && (controls.isLocked || debugView)) {
+  if (playing && !riding && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
@@ -1316,6 +1395,7 @@ if (params.has('shot')) {
     player.position.set(feet.x, feet.y + EYE, feet.z);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
     gliding = false;
+    riding = false; flight = null; heli.visible = false;     // в съёмке без вертолёта
   }, 60);
 }
 
@@ -1351,7 +1431,7 @@ window.__pc = {
   combat, loot, pick, royale, season, structures, mats, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
-  get feet() { return feet; }, step: (dt) => step(dt), keys, controls,
+  get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; },
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
   tp(x, z, up = 0, y = 999) { feet.set(x, structures.ground(x, z, y) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
