@@ -1,36 +1,43 @@
-// Оружие, здоровье, взрывы, эффекты и звуки.
-//   Пистолет — мгновенный выстрел (hitscan) с трассером, 25 урона, блоки не ломает.
-//   Ракетница — летящая ракета; взрыв радиусом EXPLODE_R выносит блоки и бьёт всех рядом (и тебя тоже).
+// Бой: оружие разной редкости, патроны, магазин и перезарядка, здоровье и щит (броня), взрывы, эффекты, звуки.
+// Оружие не выдаётся — его находят в сундуках (loot.js). У игрока 3 слота под оружие и запас патронов по типам.
 // Кто стрелял, тот и считает попадания и разрушения: шлёт hit тому, в кого попал, и пачку правок блоков всем.
-// Остальные по сообщению shot рисуют трассер/ракету и слышат звук.
 
 import * as THREE from 'three';
 import { SY, WATER_Y, raycast } from './voxel.js';
 
-export const TOOLS = [
-  { id: 'pistol', name: 'Pistol', icon: '🔫' },
-  { id: 'rocket', name: 'Rocket launcher', icon: '🚀' },
-  { id: 'car', name: 'Car (right click to place, E to drive)', icon: '🚗' },
+// ---------- Справочники ----------
+
+export const RARITY = [
+  { name: 'Common', color: '#b0b6bf', mult: 1.0 },
+  { name: 'Uncommon', color: '#3fc85a', mult: 1.1 },
+  { name: 'Rare', color: '#3d9bff', mult: 1.2 },
+  { name: 'Epic', color: '#b45cff', mult: 1.32 },
+  { name: 'Legendary', color: '#ffb020', mult: 1.45 },
 ];
 
-const PISTOL = { dmg: 25, cooldown: 0.22, range: 70 };
-const ROCKET = { speed: 32, gravity: 5, cooldown: 1.0, life: 4 };
-const EXPLODE_R = 2.6;        // радиус разрушения блоков
-const BLAST_R = 4.5;          // радиус урона
-const BLAST_DMG = 80;
+// dmg — за пулю/дробину (до множителя редкости); rate — секунд между выстрелами; spread — разброс (радианы).
+export const WEAPONS = {
+  pistol: { name: 'Pistol', tag: 'PST', ammo: 'light', dmg: 22, pellets: 1, mag: 12, rate: 0.2, reload: 1.2, spread: 0.012, range: 70 },
+  smg: { name: 'SMG', tag: 'SMG', ammo: 'light', dmg: 13, pellets: 1, mag: 30, rate: 0.075, reload: 1.8, spread: 0.04, range: 50, auto: true },
+  ar: { name: 'Assault Rifle', tag: 'AR', ammo: 'medium', dmg: 27, pellets: 1, mag: 25, rate: 0.13, reload: 2.0, spread: 0.02, range: 90, auto: true },
+  shotgun: { name: 'Shotgun', tag: 'SG', ammo: 'shells', dmg: 10, pellets: 9, mag: 5, rate: 0.85, reload: 2.4, spread: 0.09, range: 25 },
+  sniper: { name: 'Sniper', tag: 'SNP', ammo: 'heavy', dmg: 95, pellets: 1, mag: 1, rate: 1.4, reload: 2.2, spread: 0, range: 200, scope: true },
+  rocket: { name: 'Rocket Launcher', tag: 'RPG', ammo: 'rockets', mag: 1, rate: 1.0, reload: 2.6, rocket: true, minRarity: 2 },
+};
 
-export function toolIcon(t) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  g.fillStyle = '#2b3140';
-  g.fillRect(0, 0, 64, 64);
-  g.font = '40px "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  g.fillText(t.icon, 32, 36);
-  return c.toDataURL();
-}
+export const AMMO = {
+  light: { name: 'Light ammo', color: '#d9d9d9', pack: 30 },
+  medium: { name: 'Medium ammo', color: '#7fc4ff', pack: 30 },
+  shells: { name: 'Shells', color: '#f4212e', pack: 10 },
+  heavy: { name: 'Heavy ammo', color: '#4a4a4a', pack: 6 },
+  rockets: { name: 'Rockets', color: '#ff7a1a', pack: 3 },
+};
+
+export const MAX_SHIELD = 100;
+const ROCKET = { speed: 32, gravity: 5, life: 4 };
+const EXPLODE_R = 2.6, BLAST_R = 4.5, BLAST_DMG = 80;
+
+export const weaponLabel = (w) => `${RARITY[w.rarity].name} ${WEAPONS[w.type].name}`;
 
 // Пересечение луча с AABB: расстояние или Infinity.
 export function rayBox(o, d, min, max) {
@@ -48,9 +55,12 @@ export function rayBox(o, d, min, max) {
 
 export function createCombat(ctx) {
   const { scene, camera } = ctx;
-  let hp = 100, cooldownUntil = 0;
-  const fx = [];          // { obj, age, life, tick(k) }
-  const rockets = [];     // { mesh, pos, vel, own, age }
+  let hp = 100, shield = 0;
+  const slots = [null, null, null];           // { type, rarity, mag }
+  const ammo = Object.fromEntries(Object.keys(AMMO).map((k) => [k, 0]));
+  let nextShot = 0, reloadUntil = 0, reloadSlot = -1;
+  const fx = [];
+  const rockets = [];
 
   // ---------- Звук (синтез, без файлов) ----------
 
@@ -75,12 +85,18 @@ export function createCombat(ctx) {
     src.connect(f).connect(gain).connect(a.destination);
     src.start();
   }
-  const volAt = (p) => Math.max(0, 1 - camera.getWorldPosition(new THREE.Vector3()).distanceTo(p) / 60);
-  const sound = {
-    pistol: (p) => noise(0.12, 2500, 0.35 * volAt(p), 'highpass'),
-    rocket: (p) => noise(0.35, 600, 0.3 * volAt(p)),
-    boom: (p) => noise(0.9, 400, 0.9 * volAt(p)),
+  const volAt = (p) => Math.max(0, 1 - camera.getWorldPosition(new THREE.Vector3()).distanceTo(p) / 70);
+  const SOUNDS = {
+    pistol: (v) => noise(0.12, 2500, 0.35 * v, 'highpass'),
+    smg: (v) => noise(0.07, 3200, 0.25 * v, 'highpass'),
+    ar: (v) => noise(0.11, 1800, 0.35 * v, 'highpass'),
+    shotgun: (v) => noise(0.3, 900, 0.6 * v),
+    sniper: (v) => noise(0.45, 1200, 0.7 * v),
+    rocket: (v) => noise(0.35, 600, 0.3 * v),
+    boom: (v) => noise(0.9, 400, 0.9 * v),
+    pickup: (v) => noise(0.05, 5000, 0.15 * v, 'highpass'),
   };
+  const sound = (kind, p) => SOUNDS[kind]?.(p ? volAt(p) : 1);
 
   // ---------- Эффекты ----------
 
@@ -90,55 +106,60 @@ export function createCombat(ctx) {
   }
 
   function tracer(a, b, color = 0xffe066) {
-    const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true }));
-    addFx(line, 0.14, (k) => { line.material.opacity = 1 - k; });
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color, transparent: true }));
+    addFx(line, 0.12, (k) => { line.material.opacity = 1 - k; });
   }
 
   function explosionFx(p) {
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10),
-      new THREE.MeshBasicMaterial({ color: 0xffa31a, transparent: true }));
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffa31a, transparent: true }));
     ball.position.copy(p);
     addFx(ball, 0.5, (k) => { ball.scale.setScalar(0.5 + k * BLAST_R); ball.material.opacity = 1 - k; });
-    // Обломки-кубики.
     for (let i = 0; i < 14; i++) {
-      const cube = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.25),
-        new THREE.MeshLambertMaterial({ color: i % 2 ? 0x6b5a45 : 0x8a8a90 }));
+      const cube = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.25), new THREE.MeshLambertMaterial({ color: i % 2 ? 0x6b5a45 : 0x8a8a90 }));
       cube.position.copy(p);
       const v = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.4, Math.random() - 0.5).multiplyScalar(14);
       addFx(cube, 0.9, (k, dt) => { v.y -= 30 * dt; cube.position.addScaledVector(v, dt); cube.rotation.x += dt * 8; });
     }
-    sound.boom(p);
+    sound('boom', p);
     const d = camera.getWorldPosition(new THREE.Vector3()).distanceTo(p);
     if (d < 14) ctx.shake(0.5 * (1 - d / 14));
   }
 
-  // ---------- Здоровье ----------
+  // ---------- Здоровье, щит, смерть ----------
 
-  function renderHp() {
-    ctx.hpBar(hp);
-  }
+  const changed = () => ctx.onInventory();
 
   function takeDamage(dmg, by, w) {
     if (hp <= 0) return;
-    hp = Math.max(0, hp - dmg);
-    ctx.flash();
-    if (hp <= 0) {
-      ctx.net()?.dead({ n: ctx.nick(), by, w });
-      ctx.killfeed(by, ctx.nick(), w);
-      hp = 100;
-      ctx.respawn();
-    }
-    renderHp();
+    const toShield = Math.min(shield, dmg);
+    shield -= toShield;
+    hp = Math.max(0, hp - (dmg - toShield));
+    ctx.flash(toShield > 0 && hp > 0 ? 'shield' : 'hp');
+    if (hp <= 0) die(by, w);
+    changed();
+  }
+
+  // Смерть: всё оружие и патроны падают на землю, возрождаемся с пустыми руками.
+  function die(by, w) {
+    ctx.net()?.dead({ n: ctx.nick(), by, w });
+    ctx.killfeed(by, ctx.nick(), w);
+    const items = [];
+    slots.forEach((s, i) => { if (s) items.push({ k: 'weapon', w: s.type, r: s.rarity, a: s.mag }); slots[i] = null; });
+    for (const [k, n] of Object.entries(ammo)) if (n > 0) { items.push({ k: 'ammo', w: k, a: n }); ammo[k] = 0; }
+    ctx.dropItems(ctx.feet().clone(), items);
+    hp = 100;
+    shield = 0;
+    reloadUntil = 0;
+    ctx.respawn();
+    changed();
   }
 
   // ---------- Цели ----------
 
-  // Боксы других игроков и машин: [{ kind, id, min, max }].
   function targets() {
     const list = [];
     for (const [peerId, o] of ctx.others) {
-      if (o.target?.v) continue;           // сидит в машине — бьём машину
+      if (o.target?.v) continue;
       const p = o.group.position;
       list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + 1.95, p.z + 0.4) });
     }
@@ -152,27 +173,40 @@ export function createCombat(ctx) {
     return rayBox(o, d, new THREE.Vector3(hit.x, hit.y, hit.z), new THREE.Vector3(hit.x + 1, hit.y + 1, hit.z + 1));
   }
 
-  // ---------- Пистолет ----------
+  // ---------- Стрельба ----------
 
-  function shootPistol() {
+  function hitscan(w, spec) {
+    const mult = RARITY[w.rarity].mult;
     const o = camera.getWorldPosition(new THREE.Vector3());
-    const d = camera.getWorldDirection(new THREE.Vector3());
-    let tBest = blockDistance(o, d, PISTOL.range), best = null;
-    for (const t of targets()) {
-      if (ctx.cars.driving()?.id === t.id) continue;   // не стреляем в свою машину изнутри
-      const tt = rayBox(o, d, t.min, t.max);
-      if (tt < tBest) { tBest = tt; best = t; }
+    const base = camera.getWorldDirection(new THREE.Vector3());
+    const scoped = spec.scope && ctx.scoped();
+    const spread = scoped ? 0 : spec.spread * (ctx.moving() ? 1.6 : 1);
+    const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
+    const ends = [];
+    const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
+    const tlist = targets().filter((t) => ctx.cars.driving()?.id !== t.id);
+    for (let i = 0; i < spec.pellets; i++) {
+      const d = base.clone();
+      if (spread) d.add(new THREE.Vector3((Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread)).normalize();
+      let tBest = blockDistance(o, d, spec.range), best = null;
+      for (const t of tlist) {
+        const tt = rayBox(o, d, t.min, t.max);
+        if (tt < tBest) { tBest = tt; best = t; }
+      }
+      const end = o.clone().addScaledVector(d, Math.min(tBest, spec.range));
+      ends.push(end);
+      tracer(muzzle, end, spec.pellets > 1 ? 0xffd38a : 0xffe066);
+      if (best) dmgBy.set(best, (dmgBy.get(best) || 0) + spec.dmg * mult);
     }
-    const muzzle = o.clone().addScaledVector(d, 0.6).add(new THREE.Vector3(0, -0.15, 0));
-    const end = o.clone().addScaledVector(d, Math.min(tBest, PISTOL.range));
-    tracer(muzzle, end);
-    sound.pistol(o);
-    ctx.net()?.shot({ w: 'pistol', o: muzzle.toArray().map((v) => +v.toFixed(2)), e: end.toArray().map((v) => +v.toFixed(2)) });
-    if (best?.kind === 'player') ctx.net()?.hit({ dmg: PISTOL.dmg, by: ctx.nick(), w: 'pistol' }, best.id);
-    if (best?.kind === 'car') ctx.cars.damage(best.id, 10);
+    sound(w.type, null);
+    const r2 = (v) => v.toArray().map((x) => +x.toFixed(2));
+    ctx.net()?.shot({ w: w.type, o: r2(muzzle), e: ends.map(r2) });
+    for (const [t, dmg] of dmgBy) {
+      if (t.kind === 'player') ctx.net()?.hit({ dmg: Math.round(dmg), by: ctx.nick(), w: w.type }, t.id);
+      else ctx.cars.damage(t.id, dmg * 0.5);
+      ctx.hitmarker();
+    }
   }
-
-  // ---------- Ракеты ----------
 
   function spawnRocket(o, v, own) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.7), new THREE.MeshLambertMaterial({ color: 0xdddddd, emissive: 0x552200 }));
@@ -180,21 +214,22 @@ export function createCombat(ctx) {
     mesh.lookAt(o.clone().add(v));
     scene.add(mesh);
     rockets.push({ mesh, pos: o.clone(), vel: v.clone(), own, age: 0 });
-    sound.rocket(o);
+    sound('rocket', o);
   }
 
-  function fireRocket() {
+  function fireRocket(w) {
     const o = camera.getWorldPosition(new THREE.Vector3());
     const d = camera.getWorldDirection(new THREE.Vector3());
     const start = o.clone().addScaledVector(d, 0.9);
     const v = d.clone().multiplyScalar(ROCKET.speed);
     spawnRocket(start, v, true);
-    ctx.net()?.shot({ w: 'rocket', o: start.toArray().map((x) => +x.toFixed(2)), v: v.toArray().map((x) => +x.toFixed(2)) });
+    rockets[rockets.length - 1].mult = RARITY[w.rarity].mult;
+    ctx.net()?.shot({ w: 'rocket', o: start.toArray().map((x) => +x.toFixed(2)), v: v.toArray().map((x) => +x.toFixed(2)), m: RARITY[w.rarity].mult });
   }
 
-  function explode(p, own) {
+  function explode(p, own, mult = 1) {
     explosionFx(p);
-    if (!own) return;                      // разрушения и урон считает только стрелявший
+    if (!own) return;
     const w = ctx.world();
     const list = [];
     const r = Math.ceil(EXPLODE_R);
@@ -205,12 +240,11 @@ export function createCombat(ctx) {
       list.push([bx, by, bz]);
     }
     ctx.destroyBlocks(list);
-    // Урон игрокам (по центру тела) и себе — да, ракетный прыжок больно.
     for (const t of targets()) {
       const c = t.min.clone().add(t.max).multiplyScalar(0.5);
       const d = c.distanceTo(p);
       if (d > BLAST_R) continue;
-      const dmg = Math.round(BLAST_DMG * (1 - d / BLAST_R));
+      const dmg = Math.round(BLAST_DMG * mult * (1 - d / BLAST_R));
       if (t.kind === 'player') ctx.net()?.hit({ dmg, by: ctx.nick(), w: 'rocket' }, t.id);
       else ctx.cars.damage(t.id, dmg * 1.5);
     }
@@ -228,16 +262,16 @@ export function createCombat(ctx) {
       const r = rockets[i];
       r.age += dt;
       r.vel.y -= ROCKET.gravity * dt;
-      const stepLen = r.vel.length() * dt;
-      const n = Math.max(1, Math.ceil(stepLen / 0.4));
+      const n = Math.max(1, Math.ceil((r.vel.length() * dt) / 0.4));
       let boom = r.age > ROCKET.life;
       for (let k = 0; k < n && !boom; k++) {
         r.pos.addScaledVector(r.vel, dt / n);
         if (w.solid(Math.floor(r.pos.x), Math.floor(r.pos.y), Math.floor(r.pos.z)) || r.pos.y < WATER_Y + 0.85) boom = true;
         else if (r.own && r.age > 0.08) {
           for (const t of targets()) {
+            if (ctx.cars.driving()?.id === t.id) continue;
             if (r.pos.x > t.min.x - 0.2 && r.pos.x < t.max.x + 0.2 && r.pos.y > t.min.y - 0.2 && r.pos.y < t.max.y + 0.2 &&
-                r.pos.z > t.min.z - 0.2 && r.pos.z < t.max.z + 0.2 && ctx.cars.driving()?.id !== t.id) { boom = true; break; }
+                r.pos.z > t.min.z - 0.2 && r.pos.z < t.max.z + 0.2) { boom = true; break; }
           }
         }
       }
@@ -246,36 +280,109 @@ export function createCombat(ctx) {
       if (boom) {
         scene.remove(r.mesh);
         rockets.splice(i, 1);
-        explode(r.pos.clone(), r.own);
+        explode(r.pos.clone(), r.own, r.mult || 1);
       }
     }
+  }
+
+  // ---------- Перезарядка ----------
+
+  function startReload(i) {
+    const w = slots[i];
+    if (!w) return false;
+    const spec = WEAPONS[w.type];
+    if (w.mag >= spec.mag || ammo[spec.ammo] <= 0 || reloadUntil) return false;
+    reloadSlot = i;
+    reloadUntil = performance.now() / 1000 + spec.reload;
+    changed();
+    return true;
+  }
+
+  function finishReload() {
+    const w = slots[reloadSlot];
+    reloadUntil = 0;
+    if (!w) return;
+    const spec = WEAPONS[w.type];
+    const take = Math.min(spec.mag - w.mag, ammo[spec.ammo]);
+    w.mag += take;
+    ammo[spec.ammo] -= take;
+    changed();
   }
 
   // ---------- Публичное ----------
 
   return {
     get hp() { return hp; },
-    reset() { hp = 100; renderHp(); },
-    use(tool, now) {
-      if (now < cooldownUntil) return false;
-      if (tool === 'pistol') { shootPistol(); cooldownUntil = now + PISTOL.cooldown; return true; }
-      if (tool === 'rocket') { fireRocket(); cooldownUntil = now + ROCKET.cooldown; return true; }
+    get shield() { return shield; },
+    slots, ammo,
+    get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
+
+    reset() { hp = 100; shield = 0; changed(); },
+
+    // Выстрел из слота i. Возвращает true, если выстрелил.
+    fire(i, now) {
+      const w = slots[i];
+      if (!w || now < nextShot) return false;
+      if (reloadUntil) return false;
+      const spec = WEAPONS[w.type];
+      if (w.mag <= 0) { startReload(i); return false; }
+      w.mag--;
+      nextShot = now + spec.rate;
+      if (spec.rocket) fireRocket(w); else hitscan(w, spec);
+      if (w.mag <= 0) startReload(i);
+      changed();
+      return true;
+    },
+    reload(i) { return startReload(i); },
+    cancelReload() { if (reloadUntil) { reloadUntil = 0; changed(); } },
+
+    // Подобрать предмет. Возвращает true, если взяли (иначе он остаётся лежать).
+    give(item, slotHint) {
+      if (item.k === 'ammo') { ammo[item.w] += item.a; sound('pickup'); changed(); return true; }
+      if (item.k === 'armor') {
+        if (shield >= MAX_SHIELD) return false;
+        shield = Math.min(MAX_SHIELD, shield + item.a);
+        sound('pickup'); changed(); return true;
+      }
+      if (item.k === 'med') {
+        if (hp >= 100) return false;
+        hp = Math.min(100, hp + item.a);
+        sound('pickup'); changed(); return true;
+      }
+      if (item.k === 'weapon') {
+        const free = slotHint ?? slots.findIndex((s) => !s);
+        if (free < 0) return false;
+        slots[free] = { type: item.w, rarity: item.r, mag: item.a ?? WEAPONS[item.w].mag };
+        sound('pickup'); changed(); return true;
+      }
       return false;
     },
+    // Вынуть оружие из слота (для выброса/замены).
+    take(i) {
+      const w = slots[i];
+      slots[i] = null;
+      if (reloadSlot === i) reloadUntil = 0;
+      changed();
+      return w;
+    },
+
     takeDamage,
     explodeAt(p, own) { explode(p, own); },
+
     onShot(peerId, d) {
-      if (d.w === 'pistol') {
-        const a = new THREE.Vector3(...d.o), b = new THREE.Vector3(...d.e);
-        tracer(a, b);
-        sound.pistol(a);
-      } else if (d.w === 'rocket') {
+      if (d.w === 'rocket') {
         spawnRocket(new THREE.Vector3(...d.o), new THREE.Vector3(...d.v), false);
+        return;
       }
+      const a = new THREE.Vector3(...d.o);
+      for (const e of d.e || []) tracer(a, new THREE.Vector3(...e), (d.e.length > 1) ? 0xffd38a : 0xffe066);
+      sound(d.w, a);
     },
     onHit(peerId, d) { if (!ctx.cars.driving()) takeDamage(d.dmg, d.by, d.w); else ctx.cars.damageMine(d.dmg); },
     onDead(peerId, d) { ctx.killfeed(d.by, d.n, d.w); },
+
     update(dt) {
+      if (reloadUntil && performance.now() / 1000 >= reloadUntil) finishReload();
       updateRockets(dt);
       for (let i = fx.length - 1; i >= 0; i--) {
         const f = fx[i];

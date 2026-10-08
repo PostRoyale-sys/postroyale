@@ -1,18 +1,21 @@
-// PostCraft — общий воксельный мир по ссылке. Создал мир → ссылка ?w=<id> → кинул в X → все, кто открыл, строят вместе.
+// PostCraft — общий воксельный мир по ссылке. Создал мир → ссылка ?w=<id> → кинул в X → все, кто открыл, играют вместе.
 // Мир генерируется из id (у всех одинаковый), поверх — правки игроков: синхронизация по P2P (net.js),
-// у каждого копия правок в localStorage — мир не пропадает, пока его хранит хоть кто-то из игроков.
+// у каждого копия правок в localStorage — постройки не пропадают, пока их хранит хоть кто-то из игроков.
+// Оружие — только из сундуков (loot.js), бой — combat.js, машины — cars.js.
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World, SX, SY, SZ, WATER_Y, BLOCKS, HOTBAR, makeMaterials, buildMeshes, raycast, iconUrl } from './voxel.js';
 import { connect } from './net.js';
-import { createCombat, TOOLS, toolIcon, rayBox } from './combat.js';
+import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, rayBox, weaponLabel } from './combat.js';
 import { createCars } from './cars.js';
+import { createLoot, itemLabel } from './loot.js';
 
 const NAME = 'PostCraft';                     // рабочее название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
 const GRAVITY = 30, JUMP = 8.6, WALK = 4.6, RUN = 7.5, FLY = 11, REACH = 6;
 const POSE_HZ = 10;
+const FOV = 75, SCOPE_FOV = 22;
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.name').forEach((n) => { n.textContent = NAME; });
@@ -30,7 +33,7 @@ $('nick').value = nick;
 
 if (worldId) {
   $('go').textContent = 'Join world';
-  $('introsub').textContent = `You were invited to world “${worldId}”. Pick a name and jump in — everyone here builds together.`;
+  $('introsub').textContent = `You were invited to world “${worldId}”. Pick a name and jump in — loot chests, build, fight.`;
 }
 
 // ---------- Сцена ----------
@@ -45,7 +48,7 @@ const scene = new THREE.Scene();
 const SKY = 0x8fc3ff;
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 50, 140);
-const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 300);
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 300);
 scene.add(new THREE.HemisphereLight(0xdfefff, 0x5a4a3a, 1.15));
 const sun = new THREE.DirectionalLight(0xffffff, 1.3);
 sun.position.set(-40, 100, 30);
@@ -66,7 +69,6 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// Подсветка блока под прицелом.
 const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
   new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55 }));
 outline.visible = false;
@@ -105,8 +107,10 @@ function rebuild() {
 // ---------- Физика (AABB игрока против сетки) ----------
 
 const vel = new THREE.Vector3();
-let onGround = false, flying = false;
+let onGround = false, flying = false, moving = false;
 const keys = new Set();
+const feet = new THREE.Vector3();          // позиция ног; камера — на высоте глаз
+const knockVel = new THREE.Vector3();
 
 function collides(px, py, pz) {
   for (let x = Math.floor(px - HALF); x <= Math.floor(px + HALF); x++) {
@@ -119,9 +123,6 @@ function collides(px, py, pz) {
   return false;
 }
 
-// feet — позиция ног; камера — на высоте глаз.
-const feet = new THREE.Vector3();
-
 function moveAxis(axis, d) {
   if (!d) return false;
   const steps = Math.ceil(Math.abs(d) / 0.25);
@@ -133,14 +134,22 @@ function moveAxis(axis, d) {
   return false;
 }
 
-function spawn() {
-  const x = SX / 2 + 0.5, z = SZ / 2 + 0.5;
+// Первый вход — в центре; после смерти — в случайной точке суши, чтобы не «кемперили» спавн.
+function spawn(random = false) {
+  let x = SX / 2 + 0.5, z = SZ / 2 + 0.5;
+  if (random) {
+    for (let i = 0; i < 200; i++) {
+      const rx = 6 + Math.random() * (SX - 12), rz = 6 + Math.random() * (SZ - 12);
+      if (world.surfaceY(Math.floor(rx), Math.floor(rz)) > WATER_Y + 1) { x = rx; z = rz; break; }
+    }
+  }
   feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01, z);
   vel.set(0, 0, 0);
 }
 
 function step(dt) {
-  const speed = flying ? FLY : keys.has('ShiftLeft') || keys.has('ShiftRight') ? RUN : WALK;
+  const scoped = isScoped();
+  const speed = flying ? FLY : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd);
   fwd.y = 0;
@@ -151,6 +160,7 @@ function step(dt) {
   if (keys.has('KeyS') || keys.has('ArrowDown')) move.sub(fwd);
   if (keys.has('KeyD') || keys.has('ArrowRight')) move.add(right);
   if (keys.has('KeyA') || keys.has('ArrowLeft')) move.sub(right);
+  moving = move.lengthSq() > 0 || !onGround;
   if (move.lengthSq()) move.normalize().multiplyScalar(speed * dt);
 
   // Отброс от взрыва гасится за полсекунды.
@@ -166,17 +176,16 @@ function step(dt) {
     vel.y = Math.max(vel.y - GRAVITY * dt, -40);
     const hit = moveAxis('y', vel.y * dt);
     if (hit) { if (vel.y < 0) onGround = true; vel.y = 0; } else onGround = false;
-    // В воде — медленнее падаем и можно всплыть.
     if (feet.y < WATER_Y + 1) { vel.y = Math.max(vel.y, -2.5); if (keys.has('Space')) vel.y = 3.5; }
   }
-  if (feet.y < -20) spawn();
+  if (feet.y < -20) spawn(true);
   player.position.set(feet.x, feet.y + EYE, feet.z);
 }
 
-// ---------- Ломать / ставить ----------
+// ---------- Хотбар: 3 слота оружия, машина, блоки ----------
+// Клавиши: 1–3 — оружие (пустой слот — руки: ломать блоки), 4 — машина, 5–9 — первые блоки, колесо — всё по кругу.
 
-// Хотбар: сначала предметы (пушки, машина), потом блоки.
-const ENTRIES = [...TOOLS.map((t) => ({ tool: t })), ...HOTBAR.map((b) => ({ block: b }))];
+const ENTRIES = [{ weapon: 0 }, { weapon: 1 }, { weapon: 2 }, { tool: 'car' }, ...HOTBAR.map((b) => ({ block: b }))];
 let slot = 0;
 const lookDir = new THREE.Vector3();
 
@@ -195,19 +204,40 @@ function edit(x, y, z, b) {
   }
 }
 
+// Взрыв: стрелявший разом убирает блоки и шлёт их всем одной пачкой.
+function destroyBlocks(list) {
+  const t = Date.now(), batch = [];
+  for (const [x, y, z] of list) {
+    const i = world.idx(x, y, z);
+    if (applyEdit(i, 0, t)) batch.push([i, 0, t]);
+  }
+  if (batch.length) { net?.sync({ e: batch }); saveSoon(); }
+}
+
+const currentWeapon = () => { const e = ENTRIES[slot]; return e.weapon !== undefined ? combat.slots[e.weapon] : null; };
+let scopeHeld = false;
+const isScoped = () => scopeHeld && !!currentWeapon() && !!WEAPONS[currentWeapon().type].scope;
+let mouseDown = false;
+
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !world || cars.driving()) return;
   const entry = ENTRIES[slot];
-  if (entry.tool) {
-    if (e.button === 0) combat.use(entry.tool.id, performance.now() / 1000);
-    if (e.button === 2 && entry.tool.id === 'car') placeCar();
-    return;
+  const w = currentWeapon();
+  if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
+  if (e.button === 0) mouseDown = true;
+  if (w) { if (e.button === 0) combat.fire(entry.weapon, performance.now() / 1000); return; }
+
+  // Руки/блоки/машина: сначала сундук под прицелом, потом блоки.
+  if (e.button === 0) {
+    const chest = loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
+    if (chest) { loot.open(chest); return; }
   }
+  if (entry.tool === 'car') { if (e.button === 2) placeCar(); return; }
   const hit = target();
   if (!hit) return;
   if (e.button === 0) {
     if (hit.y > 0) edit(hit.x, hit.y, hit.z, 0);                 // бедрок (y=0) не ломаем
-  } else if (e.button === 2) {
+  } else if (e.button === 2 && entry.block) {
     const x = hit.x + hit.normal[0], y = hit.y + hit.normal[1], z = hit.z + hit.normal[2];
     if (world.get(x, y, z) || y >= SY) return;
     world.set(x, y, z, 1);                                       // проверка: не ставим блок в себя
@@ -216,8 +246,12 @@ renderer.domElement.addEventListener('mousedown', (e) => {
     if (!inside) edit(x, y, z, entry.block);
   }
 });
+addEventListener('mouseup', (e) => {
+  if (e.button === 0) mouseDown = false;
+  if (e.button === 2) scopeHeld = false;
+});
+addEventListener('contextmenu', (e) => e.preventDefault());
 
-// Машина — на поверхность в паре блоков перед игроком, носом туда же, куда смотрим.
 function placeCar() {
   const d = camera.getWorldDirection(new THREE.Vector3());
   d.y = 0;
@@ -229,48 +263,68 @@ function placeCar() {
   cars.place(x, y, z, Math.atan2(-d.x, -d.z));
 }
 
-// Взрыв: стрелявший разом убирает блоки и шлёт их всем одной пачкой.
-function destroyBlocks(list) {
-  const t = Date.now(), batch = [];
-  for (const [x, y, z] of list) {
-    const i = world.idx(x, y, z);
-    if (applyEdit(i, 0, t)) batch.push([i, 0, t]);
-  }
-  if (batch.length) { net?.sync({ e: batch }); saveSoon(); }
-}
-addEventListener('contextmenu', (e) => e.preventDefault());
-
-// ---------- Хотбар ----------
+// ---------- HUD ----------
 
 function renderHotbar() {
   const bar = $('hotbar');
   bar.textContent = '';
   ENTRIES.forEach((entry, i) => {
     const d = document.createElement('div');
-    d.className = i === slot ? 'on' : '';
-    const img = document.createElement('img');
-    img.src = entry.tool ? toolIcon(entry.tool) : iconUrl(mats[entry.block]);
-    d.appendChild(img);
+    d.className = (i === slot ? 'on ' : '') + (entry.weapon !== undefined ? 'wslot' : '');
+    if (entry.weapon !== undefined) {
+      const w = combat.slots[entry.weapon];
+      if (w) {
+        const spec = WEAPONS[w.type];
+        d.style.setProperty('--rar', RARITY[w.rarity].color);
+        d.innerHTML = `<b>${spec.tag}</b><small>${w.mag}/${combat.ammo[spec.ammo]}</small>`;
+        d.title = weaponLabel(w);
+      } else {
+        d.innerHTML = '<b class="empty">✋</b>';
+        d.title = 'Hands — break blocks, open chests';
+      }
+    } else if (entry.tool === 'car') {
+      d.innerHTML = '<b class="emoji">🚗</b>';
+    } else {
+      const img = document.createElement('img');
+      img.src = iconUrl(mats[entry.block]);
+      d.appendChild(img);
+    }
     if (i < 9) { const s = document.createElement('span'); s.textContent = i + 1; d.appendChild(s); }
     d.addEventListener('click', () => pick(i));
     bar.appendChild(d);
   });
 }
+
 let nameTimer = 0;
 function pick(i) {
+  scopeHeld = false;
+  combat.cancelReload();
   slot = (i + ENTRIES.length) % ENTRIES.length;
   [...$('hotbar').children].forEach((d, j) => d.classList.toggle('on', j === slot));
   const entry = ENTRIES[slot];
-  $('blockname').textContent = entry.tool ? entry.tool.name : BLOCKS[entry.block].name;
+  const w = currentWeapon();
+  $('blockname').textContent = entry.weapon !== undefined ? (w ? weaponLabel(w) : 'Hands') : entry.tool === 'car' ? 'Car — right click to place, E to drive' : BLOCKS[entry.block].name;
+  $('blockname').style.color = w ? RARITY[w.rarity].color : '';
   $('blockname').style.opacity = 1;
   clearTimeout(nameTimer);
-  nameTimer = setTimeout(() => { $('blockname').style.opacity = 0; }, 1200);
+  nameTimer = setTimeout(() => { $('blockname').style.opacity = 0; }, 1400);
 }
 addEventListener('wheel', (e) => { if (controls.isLocked) pick(slot + Math.sign(e.deltaY)); }, { passive: true });
 
+function renderStatus() {
+  $('hpfill').style.width = `${combat.hp}%`;
+  $('hpfill').className = combat.hp < 35 ? 'low' : '';
+  $('hptext').textContent = combat.hp;
+  $('shfill').style.width = `${(combat.shield / MAX_SHIELD) * 100}%`;
+  $('shtext').textContent = combat.shield;
+  $('ammo').innerHTML = Object.entries(AMMO).map(([k, a]) =>
+    `<div class="${combat.ammo[k] ? '' : 'zero'}"><i style="background:${a.color}"></i>${a.name}<b>${combat.ammo[k]}</b></div>`).join('');
+  if (world) renderHotbar();
+}
+
 // ---------- Другие игроки ----------
 
-const others = new Map();     // peerId → { group, target: {x,y,z,r}, name }
+const others = new Map();     // peerId → { group, target: {x,y,z,r,v}, name }
 
 function nameSprite(text, color) {
   const c = document.createElement('canvas');
@@ -312,7 +366,6 @@ function upsertOther(peerId, d) {
     o.group.position.set(d.x, d.y, d.z);
     scene.add(o.group);
     others.set(peerId, o);
-    updateCount();
   }
   o.target = d;
   o.group.visible = !d.v;          // сидит в машине — аватар прячем, видно машину
@@ -321,9 +374,100 @@ function upsertOther(peerId, d) {
 const peers = new Set();       // подключённые игроки (по onPeerJoin), даже если их позиция ещё не пришла
 
 function updateCount() {
-  const n = peers.size + 1;
-  $('net').textContent = net ? `${n} online` : 'offline';
+  $('net').textContent = net ? `${peers.size + 1} online` : 'offline';
   $('net').className = `pill ${net ? 'on' : 'off'}`;
+}
+
+// ---------- Чат и лента убийств ----------
+
+function say(name, text) {
+  const line = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = name;
+  b.style.color = colorOf(name);
+  line.append(b, text);
+  $('chatlog').appendChild(line);
+  while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
+}
+
+const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', rocket: '🚀', car: '🚗' };
+function killfeed(by, victim, w) {
+  const line = document.createElement('div');
+  line.className = 'kill';
+  const icon = KILL_ICON[w] || '💀';
+  line.textContent = by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
+  $('chatlog').appendChild(line);
+  while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
+}
+
+function openChat() {
+  $('chatbox').hidden = false;
+  controls.unlock();
+  setTimeout(() => $('chatin').focus(), 0);
+}
+$('chatin').addEventListener('keydown', (e) => {
+  e.stopPropagation();
+  if (e.key === 'Enter') {
+    const t = $('chatin').value.trim().slice(0, 140);
+    if (t) { say(nick, t); net?.chat({ n: nick, t }); }
+    $('chatin').value = '';
+    $('chatbox').hidden = true;
+    controls.lock();
+  } else if (e.key === 'Escape') {
+    $('chatbox').hidden = true;
+  }
+});
+
+let toastTimer = 0;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
+}
+
+// ---------- Бой, лут, машины ----------
+
+let shakeAmt = 0;
+let swapCandidate = null;
+
+const ctx = {
+  scene, camera,
+  world: () => world,
+  feet: () => feet,
+  others,
+  net: () => net,
+  selfId: () => net?.selfId || 'me',
+  nick: () => nick,
+  toast, killfeed,
+  scoped: () => isScoped(),
+  moving: () => moving,
+  respawn: () => { if (cars.driving()) cars.toggle(feet); spawn(true); },
+  onInventory: () => renderStatus(),
+  flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
+  hitmarker: () => { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); },
+  shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
+  knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
+  destroyBlocks,
+  dropItems: (pos, items) => loot.drop(pos, items),
+  explodeFx: (p) => combat.explodeAt(p, false),
+  exitCar: (p) => { feet.set(p.x, Math.max(p.y, world.surfaceY(Math.floor(p.x), Math.floor(p.z))) + 0.05, p.z); vel.set(0, 0, 0); },
+};
+const combat = createCombat(ctx);
+const cars = createCars(ctx);
+const loot = createLoot(ctx);
+ctx.cars = cars;
+
+// Камера при езде: сзади-сверху машины, мышью можно оглядываться; если сзади блоки — подъезжает ближе.
+function carCamera() {
+  const car = cars.driving();
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  const center = car.pos.clone().add(new THREE.Vector3(0, 2.2, 0));
+  const back = dir.clone().negate();
+  const hit = raycast(world, center, back, 7);
+  const dist = hit ? Math.max(1.5, rayBox(center, back, new THREE.Vector3(hit.x, hit.y, hit.z), new THREE.Vector3(hit.x + 1, hit.y + 1, hit.z + 1)) - 0.4) : 7;
+  player.position.copy(center.clone().addScaledVector(back, dist));
+  feet.copy(car.pos);
 }
 
 // ---------- Сеть ----------
@@ -336,10 +480,10 @@ function startNet() {
     net = connect(worldId, {
       join(peerId) {
         peers.add(peerId);
-        // Новичку — все правки мира и где мы стоим (сразу, не дожидаясь кадра).
         if (edits.size) net.sync({ e: [...edits].map(([i, e]) => [i, e.b, e.t]) }, peerId);
         net.pose(poseData(), peerId);
         cars.syncTo(peerId);
+        loot.syncTo(peerId);
         updateCount();
       },
       leave(peerId) {
@@ -361,6 +505,9 @@ function startNet() {
       hit(peerId, d) { combat.onHit(peerId, d); },
       dead(peerId, d) { combat.onDead(peerId, d); },
       car(peerId, d) { cars.onCar(peerId, d); },
+      chest(peerId, d) { loot.onChest(peerId, d); },
+      loot(peerId, d) { loot.onLoot(peerId, d); },
+      take(peerId, d) { loot.onTake(peerId, d); },
     });
     updateCount();
   } catch (e) {
@@ -387,125 +534,56 @@ function sendPose(now) {
   net.pose(d);
 }
 
-// Пульс раз в 1.5 с — таймер работает и в фоновой вкладке (кадровый цикл там на паузе),
-// чтобы стоящий на месте или свернувший вкладку игрок не «пропадал» у других.
+// Пульс раз в 1.5 с — таймер работает и в фоновой вкладке (кадровый цикл там на паузе).
 setInterval(() => { if (net && world) net.pose(poseData()); }, 1500);
-
-// ---------- Чат ----------
-
-function say(name, text) {
-  const line = document.createElement('div');
-  const b = document.createElement('b');
-  b.textContent = name;
-  b.style.color = colorOf(name);
-  line.append(b, text);
-  $('chatlog').appendChild(line);
-  while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
-}
-
-function openChat() {
-  $('chatbox').hidden = false;
-  controls.unlock();
-  setTimeout(() => $('chatin').focus(), 0);
-}
-$('chatin').addEventListener('keydown', (e) => {
-  e.stopPropagation();
-  if (e.key === 'Enter') {
-    const t = $('chatin').value.trim().slice(0, 140);
-    if (t) { say(nick, t); net?.chat({ n: nick, t }); }
-    $('chatin').value = '';
-    $('chatbox').hidden = true;
-    controls.lock();
-  } else if (e.key === 'Escape') {
-    $('chatbox').hidden = true;
-  }
-});
 
 // ---------- Клавиши и пауза ----------
 
 addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
-  if (!world) return;
+  if (!world || !controls.isLocked) return;
   if (e.code === 'KeyF' && !cars.driving()) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
-  if (e.code === 'KeyE' && controls.isLocked) cars.toggle(feet);
-  if (e.code === 'KeyT' && controls.isLocked) { e.preventDefault(); openChat(); }
+  if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+  if (e.code === 'KeyE') {
+    // E: сундук под прицелом важнее машины.
+    const chest = !cars.driving() && loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
+    if (chest) loot.open(chest); else cars.toggle(feet);
+  }
+  if (e.code === 'KeyR') { const en = ENTRIES[slot]; if (en.weapon !== undefined) combat.reload(en.weapon); }
+  if (e.code === 'KeyG' && swapCandidate) {
+    const en = ENTRIES[slot];
+    const into = en.weapon !== undefined ? en.weapon : 0;
+    loot.swap(swapCandidate, into, combat);
+    pick(into);
+  }
+  if (e.code === 'KeyQ') {
+    const en = ENTRIES[slot];
+    if (en.weapon !== undefined && combat.slots[en.weapon]) {
+      const w = combat.take(en.weapon);
+      loot.drop(feet.clone(), [{ k: 'weapon', w: w.type, r: w.rarity, a: w.mag }]);
+    }
+  }
   const n = e.code.match(/^Digit([1-9])$/);
   if (n) pick(+n[1] - 1);
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 
 controls.addEventListener('lock', () => { $('pause').hidden = true; $('cross').hidden = false; });
-controls.addEventListener('unlock', () => { keys.clear(); if ($('chatbox').hidden) $('pause').hidden = false; $('cross').hidden = true; });
+controls.addEventListener('unlock', () => {
+  keys.clear(); mouseDown = false; scopeHeld = false;
+  if ($('chatbox').hidden) $('pause').hidden = false;
+  $('cross').hidden = true;
+});
 $('resume').addEventListener('click', () => controls.lock());
 renderer.domElement.addEventListener('click', () => { if (world && !controls.isLocked) controls.lock(); });
-
-let toastTimer = 0;
-function toast(text) {
-  $('toast').textContent = text;
-  $('toast').hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
-}
-
-// ---------- Бой и машины ----------
-
-let shakeAmt = 0;
-const knockVel = new THREE.Vector3();
-
-function killfeed(by, victim, w) {
-  const icon = { pistol: '🔫', rocket: '🚀', car: '🚗' }[w] || '💀';
-  const line = document.createElement('div');
-  line.className = 'kill';
-  line.textContent = by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
-  $('chatlog').appendChild(line);
-  while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
-}
-
-const ctx = {
-  scene, camera,
-  world: () => world,
-  feet: () => feet,
-  others,
-  net: () => net,
-  selfId: () => net?.selfId || 'me',
-  nick: () => nick,
-  toast,
-  killfeed,
-  respawn: () => { if (cars.driving()) cars.toggle(feet); spawn(); },
-  hpBar: (hp) => { $('hpfill').style.width = `${hp}%`; $('hpfill').className = hp < 35 ? 'low' : ''; $('hptext').textContent = hp; },
-  flash: () => { $('flash').classList.remove('on'); void $('flash').offsetWidth; $('flash').classList.add('on'); },
-  shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
-  knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
-  destroyBlocks,
-  explodeFx: (p) => combat.explodeAt(p, false),
-  exitCar: (p) => { feet.set(p.x, Math.max(p.y, world.surfaceY(Math.floor(p.x), Math.floor(p.z))) + 0.05, p.z); vel.set(0, 0, 0); },
-};
-ctx.cars = null;
-const combat = createCombat(ctx);
-const cars = createCars(ctx);
-ctx.cars = cars;
-
-// Камера при езде: сзади-сверху машины, мышью можно оглядываться вокруг.
-function carCamera() {
-  const car = cars.driving();
-  const dir = camera.getWorldDirection(new THREE.Vector3());
-  const center = car.pos.clone().add(new THREE.Vector3(0, 2.2, 0));
-  // Если сзади стена или дерево — камера подъезжает ближе, чтобы не смотреть сквозь блоки.
-  const back = dir.clone().negate();
-  const hit = raycast(world, center, back, 7);
-  const dist = hit ? Math.max(1.5, rayBox(center, back, new THREE.Vector3(hit.x, hit.y, hit.z), new THREE.Vector3(hit.x + 1, hit.y + 1, hit.z + 1)) - 0.4) : 7;
-  const cam = center.clone().addScaledVector(back, dist);
-  player.position.copy(cam);
-  feet.copy(car.pos);
-}
 
 // ---------- Поделиться ----------
 
 const link = () => `${location.origin}${location.pathname}?w=${worldId}`;
 $('share').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(link()); toast('Link copied'); } catch (e) { /* без буфера — просто откроем X */ }
-  const text = `Come build in my ${NAME} world 🧱 — open and play, no install`;
+  const text = `Drop into my ${NAME} world 🧱🔫 — loot chests, build, fight. Open and play, no install`;
   open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(link())}`, '_blank', 'noopener');
 });
 
@@ -527,12 +605,12 @@ function start() {
     } catch (e) { /* битое сохранение — начнём с чистого мира */ }
     rebuild();
     spawn();
-    renderHotbar();
+    loot.init();
+    combat.reset();
     pick(0);
     $('wname').textContent = `🌍 ${worldId}`;
     $('intro').hidden = true;
-    $('top').hidden = $('hotbar').hidden = $('hint').hidden = $('hp').hidden = false;
-    combat.reset();
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo']) $(id).hidden = false;
     $('pause').hidden = false;
     document.title = `${worldId} — ${NAME}`;
     startNet();
@@ -548,17 +626,39 @@ renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (world) {
-    if (cars.driving()) { if (controls.isLocked) cars.update(dt, keys, now); carCamera(); }
+    const driving = cars.driving();
+    if (driving) { if (controls.isLocked) cars.update(dt, keys, now); carCamera(); }
     else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + EYE, feet.z);
-    if (!cars.driving() || !controls.isLocked) cars.update(dt, controls.isLocked ? keys : new Set(), now);
+    if (!driving || !controls.isLocked) cars.update(dt, controls.isLocked ? keys : new Set(), now);
+
+    // Автоматическое оружие стреляет, пока зажата ЛКМ.
+    const en = ENTRIES[slot], w = currentWeapon();
+    if (mouseDown && controls.isLocked && w && WEAPONS[w.type].auto && !driving) combat.fire(en.weapon, now / 1000);
     combat.update(dt);
+    loot.update(dt, now);
+
+    // Подбор лута и подсказки.
+    swapCandidate = !driving ? loot.pickupNear(feet, combat) : null;
+    const eyePos = camera.getWorldPosition(new THREE.Vector3());
+    const chest = controls.isLocked && !driving ? loot.chestNear(eyePos, camera.getWorldDirection(new THREE.Vector3())) : null;
+    const prompt = chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : '';
+    if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
+    const rl = combat.reloading;
+    const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
+    if ($('reload').textContent !== rtext) $('reload').textContent = rtext;
+
+    // Прицел снайперки.
+    const fov = isScoped() ? SCOPE_FOV : FOV;
+    if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 14); camera.updateProjectionMatrix(); }
+    $('scope').hidden = !isScoped();
+
     if (shakeAmt > 0.001) {
       player.position.add(new THREE.Vector3((Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt));
       shakeAmt *= Math.max(0, 1 - 6 * dt);
     }
     if (dirty && now - lastRebuild > 80) { lastRebuild = now; rebuild(); }
-    const hit = controls.isLocked && !cars.driving() && ENTRIES[slot].block ? target() : null;
+    const hit = controls.isLocked && !driving && !w && !chest ? target() : null;
     outline.visible = !!hit;
     if (hit) outline.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
     for (const o of others.values()) {
@@ -571,9 +671,10 @@ renderer.setAnimationLoop((now) => {
   renderer.render(scene, camera);
 });
 
-// Для отладки: window.__pc.world, .edits, .net
+// Для отладки и тестов.
 window.__pc = {
-  get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit, combat, cars, pick,
+  get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit,
+  combat, cars, loot, pick,
   tp(x, z, up = 0) { feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01 + up, z); player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
 };

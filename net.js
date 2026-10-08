@@ -9,12 +9,13 @@
 //   shot — выстрел (для трассера/ракеты и звука у всех);
 //   hit  — попадание по конкретному игроку (шлём только ему);
 //   dead — игрок погиб (лента убийств у всех);
-//   car  — состояние машины (едет водитель, стоит — владелец раз в пару секунд; gone — машину взорвали).
+//   car  — состояние машины (едет водитель, стоит — владелец раз в пару секунд; gone — машину взорвали);
+//   chest — сундук открыт (индекс, время); loot — предметы на земле; take — предмет подобрали.
 
 import { joinRoom, selfId } from 'trystero';
 
 const APP_ID = 'postcraft-v1';
-const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'car'];
+const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'car', 'chest', 'loot', 'take'];
 
 export function connect(worldId, on) {
   const room = joinRoom({ appId: APP_ID }, worldId);
