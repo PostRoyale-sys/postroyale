@@ -22,7 +22,7 @@ export const WEAPONS = {
   ar: { name: 'Assault Rifle', tag: 'AR', ammo: 'medium', dmg: 27, pellets: 1, mag: 25, rate: 0.13, reload: 2.0, spread: 0.02, range: 90, auto: true },
   shotgun: { name: 'Shotgun', tag: 'SG', ammo: 'shells', dmg: 10, pellets: 9, mag: 5, rate: 0.85, reload: 2.4, spread: 0.09, range: 25 },
   sniper: { name: 'Sniper', tag: 'SNP', ammo: 'heavy', dmg: 95, pellets: 1, mag: 1, rate: 1.4, reload: 2.2, spread: 0, range: 200, scope: true },
-  rocket: { name: 'Rocket Launcher', tag: 'RPG', ammo: 'rockets', mag: 1, rate: 1.0, reload: 2.6, rocket: true, minRarity: 2 },
+  bazooka: { name: 'Bazooka', tag: 'BZK', ammo: 'rockets', mag: 1, rate: 1.0, reload: 2.4, rocket: true, minRarity: 1 },
 };
 
 export const AMMO = {
@@ -30,12 +30,12 @@ export const AMMO = {
   medium: { name: 'Medium ammo', color: '#7fc4ff', pack: 30 },
   shells: { name: 'Shells', color: '#f4212e', pack: 10 },
   heavy: { name: 'Heavy ammo', color: '#4a4a4a', pack: 6 },
-  rockets: { name: 'Rockets', color: '#ff7a1a', pack: 3 },
+  rockets: { name: 'Rockets', color: '#ff7a1a', pack: 4 },
 };
 
 export const MAX_SHIELD = 100;
-const ROCKET = { speed: 32, gravity: 5, life: 4 };
-const EXPLODE_R = 2.6, BLAST_R = 4.5, BLAST_DMG = 80;
+const ROCKET = { speed: 34, gravity: 3, life: 5 };
+const EXPLODE_R = 3.2, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус разрушения, радиус и сила урона
 
 export const weaponLabel = (w) => `${RARITY[w.rarity].name} ${WEAPONS[w.type].name}`;
 
@@ -92,7 +92,7 @@ export function createCombat(ctx) {
     ar: (v) => noise(0.11, 1800, 0.35 * v, 'highpass'),
     shotgun: (v) => noise(0.3, 900, 0.6 * v),
     sniper: (v) => noise(0.45, 1200, 0.7 * v),
-    rocket: (v) => noise(0.35, 600, 0.3 * v),
+    bazooka: (v) => noise(0.45, 500, 0.45 * v),
     boom: (v) => noise(0.9, 400, 0.9 * v),
     pickup: (v) => noise(0.05, 5000, 0.15 * v, 'highpass'),
   };
@@ -159,11 +159,9 @@ export function createCombat(ctx) {
   function targets() {
     const list = [];
     for (const [peerId, o] of ctx.others) {
-      if (o.target?.v) continue;
       const p = o.group.position;
       list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + 1.95, p.z + 0.4) });
     }
-    for (const b of ctx.cars.boxes()) list.push({ kind: 'car', ...b });
     return list;
   }
 
@@ -184,7 +182,7 @@ export function createCombat(ctx) {
     const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
-    const tlist = targets().filter((t) => ctx.cars.driving()?.id !== t.id);
+    const tlist = targets();
     for (let i = 0; i < spec.pellets; i++) {
       const d = base.clone();
       if (spread) d.add(new THREE.Vector3((Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread)).normalize();
@@ -202,19 +200,41 @@ export function createCombat(ctx) {
     const r2 = (v) => v.toArray().map((x) => +x.toFixed(2));
     ctx.net()?.shot({ w: w.type, o: r2(muzzle), e: ends.map(r2) });
     for (const [t, dmg] of dmgBy) {
-      if (t.kind === 'player') ctx.net()?.hit({ dmg: Math.round(dmg), by: ctx.nick(), w: w.type }, t.id);
-      else ctx.cars.damage(t.id, dmg * 0.5);
+      ctx.net()?.hit({ dmg: Math.round(dmg), by: ctx.nick(), w: w.type }, t.id);
       ctx.hitmarker();
     }
+    ctx.recoil(w.type);
+  }
+
+  function rocketModel() {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.75), new THREE.MeshLambertMaterial({ color: 0x5b6b3a }));
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.2), new THREE.MeshLambertMaterial({ color: 0xd23b2a }));
+    tip.position.z = 0.45;
+    const fins = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.16), new THREE.MeshLambertMaterial({ color: 0x333333 }));
+    fins.position.z = -0.33;
+    const fins2 = fins.clone();
+    fins2.rotation.z = Math.PI / 2;
+    const flame = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.3), new THREE.MeshBasicMaterial({ color: 0xffb23a }));
+    flame.position.z = -0.55;
+    g.add(body, tip, fins, fins2, flame);
+    return g;
+  }
+
+  // Дымный след: серые кубики, растут и тают.
+  function smoke(p) {
+    const puff = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xbbbbbb, transparent: true, opacity: 0.6 }));
+    puff.position.copy(p).add(new THREE.Vector3((Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.15, (Math.random() - 0.5) * 0.15));
+    addFx(puff, 0.9, (k, dt) => { puff.scale.setScalar(1 + k * 2.5); puff.material.opacity = 0.6 * (1 - k); puff.position.y += dt * 0.6; });
   }
 
   function spawnRocket(o, v, own) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.7), new THREE.MeshLambertMaterial({ color: 0xdddddd, emissive: 0x552200 }));
+    const mesh = rocketModel();
     mesh.position.copy(o);
     mesh.lookAt(o.clone().add(v));
     scene.add(mesh);
-    rockets.push({ mesh, pos: o.clone(), vel: v.clone(), own, age: 0 });
-    sound('rocket', o);
+    rockets.push({ mesh, pos: o.clone(), vel: v.clone(), own, age: 0, puff: 0 });
+    sound('bazooka', o);
   }
 
   function fireRocket(w) {
@@ -224,7 +244,8 @@ export function createCombat(ctx) {
     const v = d.clone().multiplyScalar(ROCKET.speed);
     spawnRocket(start, v, true);
     rockets[rockets.length - 1].mult = RARITY[w.rarity].mult;
-    ctx.net()?.shot({ w: 'rocket', o: start.toArray().map((x) => +x.toFixed(2)), v: v.toArray().map((x) => +x.toFixed(2)), m: RARITY[w.rarity].mult });
+    ctx.net()?.shot({ w: 'bazooka', o: start.toArray().map((x) => +x.toFixed(2)), v: v.toArray().map((x) => +x.toFixed(2)) });
+    ctx.recoil('bazooka');
   }
 
   function explode(p, own, mult = 1) {
@@ -245,13 +266,13 @@ export function createCombat(ctx) {
       const d = c.distanceTo(p);
       if (d > BLAST_R) continue;
       const dmg = Math.round(BLAST_DMG * mult * (1 - d / BLAST_R));
-      if (t.kind === 'player') ctx.net()?.hit({ dmg, by: ctx.nick(), w: 'rocket' }, t.id);
-      else ctx.cars.damage(t.id, dmg * 1.5);
+      ctx.net()?.hit({ dmg, by: ctx.nick(), w: 'bazooka' }, t.id);
+      ctx.hitmarker();
     }
     const me = ctx.feet().clone().add(new THREE.Vector3(0, 0.9, 0));
     const dm = me.distanceTo(p);
-    if (dm < BLAST_R && !ctx.cars.driving()) {
-      takeDamage(Math.round(BLAST_DMG * 0.6 * (1 - dm / BLAST_R)), ctx.nick(), 'rocket');
+    if (dm < BLAST_R) {
+      takeDamage(Math.round(BLAST_DMG * 0.6 * (1 - dm / BLAST_R)), ctx.nick(), 'bazooka');
       ctx.knock(me.clone().sub(p).normalize().multiplyScalar(12 * (1 - dm / BLAST_R)));
     }
   }
@@ -269,7 +290,6 @@ export function createCombat(ctx) {
         if (w.solid(Math.floor(r.pos.x), Math.floor(r.pos.y), Math.floor(r.pos.z)) || r.pos.y < WATER_Y + 0.85) boom = true;
         else if (r.own && r.age > 0.08) {
           for (const t of targets()) {
-            if (ctx.cars.driving()?.id === t.id) continue;
             if (r.pos.x > t.min.x - 0.2 && r.pos.x < t.max.x + 0.2 && r.pos.y > t.min.y - 0.2 && r.pos.y < t.max.y + 0.2 &&
                 r.pos.z > t.min.z - 0.2 && r.pos.z < t.max.z + 0.2) { boom = true; break; }
           }
@@ -277,6 +297,8 @@ export function createCombat(ctx) {
       }
       r.mesh.position.copy(r.pos);
       r.mesh.lookAt(r.pos.clone().add(r.vel));
+      r.puff += dt;
+      if (r.puff > 0.03) { r.puff = 0; smoke(r.pos.clone().addScaledVector(r.vel.clone().normalize(), -0.6)); }
       if (boom) {
         scene.remove(r.mesh);
         rockets.splice(i, 1);
@@ -315,6 +337,13 @@ export function createCombat(ctx) {
     get hp() { return hp; },
     get shield() { return shield; },
     slots, ammo,
+    // Текущий разброс оружия в слоте i (для прицела): радианы.
+    spreadOf(i) {
+      const w = slots[i];
+      if (!w) return 0;
+      const spec = WEAPONS[w.type];
+      return (spec.spread || 0) * (ctx.moving() ? 1.6 : 1);
+    },
     get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
 
     reset() { hp = 100; shield = 0; changed(); },
@@ -370,7 +399,7 @@ export function createCombat(ctx) {
     explodeAt(p, own) { explode(p, own); },
 
     onShot(peerId, d) {
-      if (d.w === 'rocket') {
+      if (d.w === 'bazooka' || d.w === 'rocket') {
         spawnRocket(new THREE.Vector3(...d.o), new THREE.Vector3(...d.v), false);
         return;
       }
@@ -378,7 +407,7 @@ export function createCombat(ctx) {
       for (const e of d.e || []) tracer(a, new THREE.Vector3(...e), (d.e.length > 1) ? 0xffd38a : 0xffe066);
       sound(d.w, a);
     },
-    onHit(peerId, d) { if (!ctx.cars.driving()) takeDamage(d.dmg, d.by, d.w); else ctx.cars.damageMine(d.dmg); },
+    onHit(peerId, d) { takeDamage(d.dmg, d.by, d.w); },
     onDead(peerId, d) { ctx.killfeed(d.by, d.n, d.w); },
 
     update(dt) {

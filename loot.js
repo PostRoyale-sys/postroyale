@@ -7,14 +7,14 @@ import * as THREE from 'three';
 import { SX, SZ, WATER_Y, rng, seedOf } from './voxel.js';
 import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 
-const CHESTS = 18;
+const CHESTS = 42;                     // мир 192×192 — сундуков больше
 const CHEST_RESPAWN = 180 * 1000;       // мс
 const OPEN_RANGE = 4;
 const PICK_RANGE = 1.5;
 
 // Таблица выпадения.
 const RARITY_WEIGHTS = [40, 28, 18, 10, 4];       // обычное → легендарное
-const WEAPON_WEIGHTS = { pistol: 22, smg: 20, ar: 22, shotgun: 18, sniper: 10, rocket: 8 };
+const WEAPON_WEIGHTS = { pistol: 20, smg: 18, ar: 20, shotgun: 17, sniper: 11, bazooka: 14 };
 
 function weighted(table, rand = Math.random) {
   const entries = Object.entries(table);
@@ -128,8 +128,8 @@ export function createLoot(ctx) {
       const x = 4 + Math.floor(rand() * (SX - 8)), z = 4 + Math.floor(rand() * (SZ - 8));
       const y = w.surfaceY(x, z);
       const top = w.get(x, y - 1, z);
-      if (y <= WATER_Y + 1 || (top !== 1 && top !== 4)) continue;                       // только трава/песок
-      if (chests.some((c) => Math.abs(c.pos.x - x) + Math.abs(c.pos.z - z) < 8)) continue;
+      if (y <= WATER_Y + 1 || (top !== 1 && top !== 4 && top !== 13)) continue;           // трава, песок, снег — не кроны деревьев
+      if (chests.some((c) => Math.abs(c.pos.x - x) + Math.abs(c.pos.z - z) < 12)) continue;
       const group = chestModel();
       const pos = new THREE.Vector3(x + 0.5, y, z + 0.5);
       group.position.copy(pos);

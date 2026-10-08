@@ -1,69 +1,139 @@
-// Воксельный мир: хранение блоков, генерация из сида, отрисовка видимых блоков, луч от камеры.
-// Мир маленький и целиком в памяти (96×48×96 ≈ 440 тыс. ячеек) — без чанков, перестройка меша за миллисекунды.
+// Воксельный мир: хранение блоков, генерация из сида, текстуры, отрисовка по чанкам, луч от камеры.
+// Мир 192×64×192 (≈2.4 млн ячеек) целиком в памяти; рисуем чанками CHUNK×CHUNK по X/Z —
+// после правки перестраивается только задетый чанк, а не весь мир.
 
 import * as THREE from 'three';
 
-export const SX = 96, SY = 48, SZ = 96;
-export const WATER_Y = 11;
+export const SX = 192, SY = 64, SZ = 192;
+export const WATER_Y = 14;
+export const CHUNK = 32;
+const SNOW_Y = 38;
 
-// id блока → название, цвет текстуры, крапинки, прозрачность.
+// ---------- Блоки ----------
+// tex — текстура всех граней, или { top, side, bottom }; see — сквозь блок видно соседей (листва, стекло).
+
 export const BLOCKS = [
-  null,                                                                         // 0 — воздух
-  { name: 'Grass', base: [95, 160, 70], spot: 'rgb(125,185,85)' },              // 1
-  { name: 'Dirt', base: [120, 85, 60] },                                        // 2
-  { name: 'Stone', base: [125, 125, 130], spot: 'rgb(95,95,100)' },             // 3
-  { name: 'Sand', base: [215, 200, 140] },                                      // 4
-  { name: 'Wood', base: [110, 80, 50], stripes: true },                         // 5
-  { name: 'Leaves', base: [55, 130, 55], spot: 'rgb(35,95,35)', alpha: 0.92 },  // 6
-  { name: 'Planks', base: [180, 140, 85], planks: true },                       // 7
-  { name: 'Brick', base: [165, 70, 60], bricks: true },                         // 8
-  { name: 'Gold', base: [240, 200, 60], spot: 'rgb(255,240,150)', glow: 0x332200 }, // 9
-  { name: 'Glass', base: [200, 230, 245], alpha: 0.35 },                        // 10
-  { name: 'Emerald', base: [40, 200, 110], spot: 'rgb(150,255,190)' },          // 11
-  { name: 'Candle', base: [244, 33, 46], spot: 'rgb(255,120,120)' },            // 12
+  null,                                                                    // 0 — воздух
+  { name: 'Grass', tex: { top: 'grassTop', side: 'grassSide', bottom: 'dirt' } }, // 1
+  { name: 'Dirt', tex: 'dirt' },                                          // 2
+  { name: 'Stone', tex: 'stone' },                                        // 3
+  { name: 'Sand', tex: 'sand' },                                          // 4
+  { name: 'Log', tex: { top: 'logTop', side: 'logSide', bottom: 'logTop' } }, // 5
+  { name: 'Leaves', tex: 'leaves', see: true, cutout: true },             // 6
+  { name: 'Planks', tex: 'planks' },                                      // 7
+  { name: 'Brick', tex: 'brick' },                                        // 8
+  { name: 'Gold', tex: 'gold', glow: 0x2a1c00 },                          // 9
+  { name: 'Glass', tex: 'glass', see: true, cutout: true },               // 10
+  { name: 'Emerald', tex: 'emerald' },                                    // 11
+  { name: 'Candle', tex: 'candle' },                                      // 12
+  { name: 'Snow', tex: { top: 'snow', side: 'snowSide', bottom: 'dirt' } }, // 13
+  { name: 'Cobble', tex: 'cobble' },                                      // 14
 ];
-export const HOTBAR = [1, 2, 3, 4, 7, 8, 10, 9, 11, 12, 5, 6];
+export const HOTBAR = [7, 8, 14, 10, 1, 2, 3, 4, 5, 9, 11, 12, 13, 6];
 
-// ---------- Текстуры ----------
+// ---------- Процедурные текстуры 16×16 ----------
+// Рисуем попиксельно с детерминированным шумом: у всех игроков одинаковые.
 
-function texture(b) {
+let seedT = 1;
+const r = () => { seedT = (seedT * 16807) % 2147483647; return seedT / 2147483647; };
+const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
+const rgb = (c, k = 1) => `rgb(${clamp(c[0] * k)},${clamp(c[1] * k)},${clamp(c[2] * k)})`;
+
+function paint(fn) {
   const c = document.createElement('canvas');
   c.width = c.height = 16;
   const g = c.getContext('2d');
-  for (let y = 0; y < 16; y++) {
-    for (let x = 0; x < 16; x++) {
-      let k = 1 + (Math.random() - 0.5) * 0.3;
-      if (b.stripes && x % 4 === 0) k *= 0.8;
-      if (b.planks && y % 4 === 3) k *= 0.7;
-      if (b.bricks && (y % 4 === 3 || (x + (Math.floor(y / 4) % 2) * 4) % 8 === 0)) k = 1.45;
-      g.fillStyle = `rgb(${b.base.map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',')})`;
-      g.fillRect(x, y, 1, 1);
+  fn(g, (x, y, col, a = 1) => { g.globalAlpha = a; g.fillStyle = col; g.fillRect(x, y, 1, 1); g.globalAlpha = 1; });
+  return c;
+}
+const noiseFill = (px, base, amp) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(x, y, rgb(base, 1 + (r() - 0.5) * amp)); };
+const bevel = (px, light, dark) => { for (let i = 0; i < 16; i++) { px(i, 0, light); px(0, i, light); px(i, 15, dark); px(15, i, dark); } };
+
+const PAINTERS = {
+  grassTop: (g, px) => { noiseFill(px, [92, 158, 62], 0.35); for (let i = 0; i < 26; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([120, 190, 80], 1 + (r() - 0.5) * 0.2)); },
+  grassSide: (g, px) => {
+    noiseFill(px, [125, 88, 58], 0.3);
+    for (let i = 0; i < 10; i++) px(r() * 16 | 0, 5 + (r() * 11 | 0), rgb([95, 66, 44]));
+    for (let x = 0; x < 16; x++) { const h = 3 + (r() * 3 | 0); for (let y = 0; y < h; y++) px(x, y, rgb([92, 158, 62], 1 + (r() - 0.5) * 0.3)); }
+  },
+  dirt: (g, px) => { noiseFill(px, [125, 88, 58], 0.32); for (let i = 0; i < 14; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([92, 64, 42])); },
+  stone: (g, px) => {
+    noiseFill(px, [128, 128, 132], 0.22);
+    for (let i = 0; i < 5; i++) { let x = r() * 16 | 0, y = r() * 16 | 0; for (let k = 0; k < 4; k++) { px(x, y, rgb([92, 92, 96])); x = (x + (r() < 0.5 ? 1 : 0)) % 16; y = (y + 1) % 16; } }
+  },
+  cobble: (g, px) => {
+    noiseFill(px, [110, 110, 114], 0.25);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x + (y >> 2) * 3) % 5 === 0 || y % 4 === 0) px(x, y, rgb([70, 70, 74]));
+  },
+  sand: (g, px) => { noiseFill(px, [219, 205, 148], 0.12); for (let i = 0; i < 12; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([196, 180, 122])); },
+  logSide: (g, px) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(x, y, rgb([102, 76, 46], (x % 4 === 0 ? 0.72 : 1) * (1 + (r() - 0.5) * 0.18))); },
+  logTop: (g, px) => {
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      const d = Math.hypot(x - 7.5, y - 7.5);
+      px(x, y, d > 6.8 ? rgb([102, 76, 46], 0.8) : rgb([176, 140, 88], (Math.floor(d) % 2 ? 0.86 : 1) * (1 + (r() - 0.5) * 0.08)));
     }
+  },
+  leaves: (g, px) => {
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      if (r() < 0.16) continue;                       // просветы — прозрачные пиксели (cutout)
+      px(x, y, rgb([52, 122, 48], 1 + (r() - 0.5) * 0.45));
+    }
+  },
+  planks: (g, px) => {
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      const seam = y % 4 === 3 || (x === ((y >> 2) % 2 ? 4 : 11));
+      px(x, y, seam ? rgb([120, 88, 50]) : rgb([182, 142, 86], 1 + (r() - 0.5) * 0.12));
+    }
+  },
+  brick: (g, px) => {
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      const mortar = y % 4 === 3 || (x + ((y >> 2) % 2) * 4) % 8 === 7;
+      px(x, y, mortar ? rgb([196, 188, 176]) : rgb([158, 66, 52], 1 + (r() - 0.5) * 0.22));
+    }
+  },
+  gold: (g, px) => { noiseFill(px, [246, 205, 64], 0.1); bevel(px, rgb([255, 245, 170]), rgb([190, 140, 30])); px(4, 4, '#fff'); px(5, 4, '#fff8'); },
+  emerald: (g, px) => { noiseFill(px, [42, 196, 108], 0.12); bevel(px, rgb([150, 255, 190]), rgb([20, 120, 60])); for (let i = 3; i < 13; i++) px(i, i, rgb([120, 240, 170])); },
+  candle: (g, px) => { noiseFill(px, [226, 40, 52], 0.12); bevel(px, rgb([255, 120, 120]), rgb([140, 20, 28])); },
+  glass: (g, px) => { bevel(px, rgb([235, 248, 255]), rgb([180, 210, 225])); for (let i = 0; i < 4; i++) px(3 + i, 6 - i, '#fff', 0.8); },
+  snow: (g, px) => { noiseFill(px, [244, 248, 252], 0.06); for (let i = 0; i < 8; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([215, 228, 240])); },
+  snowSide: (g, px) => {
+    noiseFill(px, [125, 88, 58], 0.3);
+    for (let x = 0; x < 16; x++) { const h = 3 + (r() * 3 | 0); for (let y = 0; y < h; y++) px(x, y, rgb([244, 248, 252], 1 + (r() - 0.5) * 0.05)); }
+  },
+};
+
+const texCache = new Map();
+function tex(name) {
+  if (!texCache.has(name)) {
+    seedT = [...name].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 2147483646 + 1;
+    const t = new THREE.CanvasTexture(paint(PAINTERS[name]));
+    t.magFilter = t.minFilter = THREE.NearestFilter;
+    t.colorSpace = THREE.SRGBColorSpace;
+    texCache.set(name, t);
   }
-  if (b.spot) {
-    g.fillStyle = b.spot;
-    for (let i = 0; i < 7; i++) g.fillRect(Math.floor(Math.random() * 15), Math.floor(Math.random() * 15), 2, 2);
-  }
-  if (b.alpha && b.alpha < 0.5) { g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeRect(0.5, 0.5, 15, 15); }
-  const t = new THREE.CanvasTexture(c);
-  t.magFilter = t.minFilter = THREE.NearestFilter;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
+  return texCache.get(name);
 }
 
+// Материал на блок: один на все грани или массив [px, nx, py, ny, pz, nz] для BoxGeometry.
 export function makeMaterials() {
-  return BLOCKS.map((b) => b && new THREE.MeshLambertMaterial({
-    map: texture(b),
-    transparent: !!b.alpha,
-    opacity: b.alpha || 1,
-    emissive: b.glow || 0x000000,
-    depthWrite: !b.alpha || b.alpha > 0.5,
-  }));
+  return BLOCKS.map((b) => {
+    if (!b) return null;
+    const mk = (name) => new THREE.MeshLambertMaterial({
+      map: tex(name),
+      transparent: false,
+      alphaTest: b.cutout ? 0.5 : 0,
+      side: b.cutout ? THREE.DoubleSide : THREE.FrontSide,
+      emissive: b.glow || 0x000000,
+    });
+    if (typeof b.tex === 'string') return mk(b.tex);
+    const side = mk(b.tex.side), top = mk(b.tex.top), bottom = mk(b.tex.bottom);
+    return [side, side, top, bottom, side, side];
+  });
 }
 
-// Иконка блока для хотбара (data URL).
+// Иконка блока для хотбара (data URL): боковая грань.
 export function iconUrl(mat) {
-  return mat.map.image.toDataURL();
+  return (Array.isArray(mat) ? mat[0] : mat).map.image.toDataURL();
 }
 
 // ---------- Генерация ----------
@@ -80,9 +150,8 @@ export function rng(seed) {
 
 export const seedOf = (id) => [...id].reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261) >>> 0;
 
-// Сглаженный value-noise на решётке.
 function noise2(rand, cell) {
-  const n = Math.ceil(SX / cell) + 2;
+  const n = Math.ceil(Math.max(SX, SZ) / cell) + 2;
   const grid = Array.from({ length: n * n }, rand);
   const s = (t) => t * t * (3 - 2 * t);
   return (x, z) => {
@@ -105,41 +174,44 @@ export class World {
   get(x, y, z) { return this.inside(x, y, z) ? this.cells[this.idx(x, y, z)] : 0; }
   set(x, y, z, b) { if (this.inside(x, y, z)) this.cells[this.idx(x, y, z)] = b; }
   solid(x, y, z) {
-    if (y < 0) return true;                                   // дно мира
-    if (x < 0 || z < 0 || x >= SX || z >= SZ) return y < WATER_Y; // за краем — «стена воды» не держит, но дно есть
+    if (y < 0) return true;
+    if (x < 0 || z < 0 || x >= SX || z >= SZ) return y < WATER_Y;
     return this.get(x, y, z) !== 0;
   }
 
   generate(seed) {
     const rand = rng(seed);
-    const big = noise2(rand, 32), mid = noise2(rand, 12), small = noise2(rand, 5);
+    const big = noise2(rand, 56), mid = noise2(rand, 20), small = noise2(rand, 7), peaks = noise2(rand, 36);
     const heights = new Int16Array(SX * SZ);
     for (let z = 0; z < SZ; z++) {
       for (let x = 0; x < SX; x++) {
-        // Остров: к краям мир уходит под воду.
+        // Остров: к краям уходит под воду; горы — там, где «peaks» высокие.
         const dx = (x - SX / 2) / (SX / 2), dz = (z - SZ / 2) / (SZ / 2);
-        const island = 1 - Math.min(1, Math.hypot(dx, dz)) ** 2.2;
-        const h = Math.round(6 + island * (8 + big(x, z) * 14 + mid(x, z) * 5) + small(x, z) * 2);
+        const island = 1 - Math.min(1, Math.hypot(dx, dz)) ** 2.4;
+        const mountain = Math.max(0, peaks(x, z) - 0.55) * 60;
+        const h = Math.min(SY - 8, Math.round(7 + island * (9 + big(x, z) * 14 + mid(x, z) * 6 + mountain) + small(x, z) * 2));
         heights[z * SX + x] = h;
         for (let y = 0; y <= h; y++) {
           const depth = h - y;
           let b = depth === 0 ? 1 : depth <= 3 ? 2 : 3;
-          if (h <= WATER_Y + 1 && depth <= 3) b = 4;      // пляж и дно
+          if (h <= WATER_Y + 1 && depth <= 3) b = 4;                 // пляж и дно
+          if (h >= SNOW_Y && depth === 0) b = 13;                     // снег на вершинах
+          if (h >= SNOW_Y + 4 && depth > 0 && depth <= 3) b = 3;      // голые скалы под снегом
           this.set(x, y, z, b);
         }
       }
     }
     // Деревья на траве.
-    for (let i = 0; i < 70; i++) {
+    for (let i = 0; i < 260; i++) {
       const x = 3 + Math.floor(rand() * (SX - 6)), z = 3 + Math.floor(rand() * (SZ - 6));
       const h = heights[z * SX + x];
       if (this.get(x, h, z) !== 1 || h <= WATER_Y + 1) continue;
-      const trunk = 4 + Math.floor(rand() * 2);
+      const trunk = 4 + Math.floor(rand() * 3);
       for (let y = 1; y <= trunk; y++) this.set(x, h + y, z, 5);
       for (let y = trunk - 1; y <= trunk + 1; y++) {
-        const r = y === trunk + 1 ? 1 : 2;
-        for (let ax = -r; ax <= r; ax++) for (let az = -r; az <= r; az++) {
-          if (Math.abs(ax) === r && Math.abs(az) === r && rand() < 0.6) continue;
+        const rad = y === trunk + 1 ? 1 : 2;
+        for (let ax = -rad; ax <= rad; ax++) for (let az = -rad; az <= rad; az++) {
+          if (Math.abs(ax) === rad && Math.abs(az) === rad && rand() < 0.6) continue;
           if (!this.get(x + ax, h + y, z + az)) this.set(x + ax, h + y, z + az, 6);
         }
       }
@@ -153,25 +225,30 @@ export class World {
   }
 }
 
-// ---------- Меш ----------
-// По InstancedMesh на тип блока; рисуем только блоки, у которых есть открытая грань.
+// ---------- Меш чанка ----------
+// По InstancedMesh на тип блока в чанке; рисуем только блоки, у которых есть открытая грань.
 
 const GEO = new THREE.BoxGeometry(1, 1, 1);
 const M = new THREE.Matrix4();
+export const chunkKey = (cx, cz) => `${cx},${cz}`;
+export const CHUNKS_X = Math.ceil(SX / CHUNK), CHUNKS_Z = Math.ceil(SZ / CHUNK);
 
-export function buildMeshes(world, mats) {
+export function buildChunk(world, mats, cx, cz) {
   const buckets = BLOCKS.map(() => []);
   const { cells } = world;
   const open = (x, y, z) => {
-    const b = world.get(x, y, z);
-    return b === 0 || BLOCKS[b].alpha;                       // прозрачный сосед — грань видна
+    if (y >= SY) return true;
+    if (x < 0 || z < 0 || x >= SX || z >= SZ || y < 0) return false;
+    const b = cells[(y * SZ + z) * SX + x];
+    return b === 0 || BLOCKS[b].see;
   };
+  const x0 = cx * CHUNK, z0 = cz * CHUNK, x1 = Math.min(SX, x0 + CHUNK), z1 = Math.min(SZ, z0 + CHUNK);
   for (let y = 0; y < SY; y++) {
-    for (let z = 0; z < SZ; z++) {
-      for (let x = 0; x < SX; x++) {
+    for (let z = z0; z < z1; z++) {
+      for (let x = x0; x < x1; x++) {
         const b = cells[(y * SZ + z) * SX + x];
         if (!b) continue;
-        if (y > 0 && !open(x + 1, y, z) && !open(x - 1, y, z) && !open(x, y + 1, z) && !open(x, y - 1, z) &&
+        if (!open(x + 1, y, z) && !open(x - 1, y, z) && !open(x, y + 1, z) && !open(x, y - 1, z) &&
             !open(x, y, z + 1) && !open(x, y, z - 1)) continue;
         buckets[b].push(x, y, z);
       }
@@ -186,14 +263,24 @@ export function buildMeshes(world, mats) {
       mesh.setMatrixAt(j, M);
     }
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.frustumCulled = false;
+    mesh.computeBoundingSphere();
     meshes.push(mesh);
   });
   return meshes;
 }
 
+// Чанк(и), которые задевает правка в ячейке x,z (на границе — оба соседа: у них могла открыться грань).
+export function chunksOf(x, z) {
+  const out = new Set();
+  for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const xx = x + dx, zz = z + dz;
+    if (xx < 0 || zz < 0 || xx >= SX || zz >= SZ) continue;
+    out.add(chunkKey(Math.floor(xx / CHUNK), Math.floor(zz / CHUNK)));
+  }
+  return out;
+}
+
 // ---------- Луч ----------
-// DDA по сетке: первый непустой блок в пределах maxDist и нормаль грани, через которую вошли.
 
 export function raycast(world, origin, dir, maxDist = 6) {
   let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);

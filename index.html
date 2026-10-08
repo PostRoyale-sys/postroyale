@@ -57,46 +57,22 @@
   #pause p { margin: 0 0 18px; color: #8b98a5; }
   #pause .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; text-align: left; margin: 0 auto 20px; width: fit-content; color: #c3c8d4; font-size: 14px; }
   #pause .keys b { color: #fff; }
-  #cross { position: fixed; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; pointer-events: none; mix-blend-mode: difference; }
-  #cross::before, #cross::after { content: ""; position: absolute; background: #fff; }
-  #cross::before { left: 7px; top: 0; width: 2px; height: 16px; }
-  #cross::after { top: 7px; left: 0; height: 2px; width: 16px; }
-  #bars { position: fixed; left: 50%; bottom: 74px; transform: translateX(-50%); width: 260px; display: flex; flex-direction: column; gap: 4px; font-weight: 800; font-size: 12px; text-shadow: 0 1px 2px #000; }
-  #bars .row2 { display: flex; align-items: center; gap: 8px; }
-  #bars .bar { flex: 1; height: 9px; border-radius: 5px; background: rgba(11,13,18,.7); overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,.15); }
-  #hpfill { height: 100%; width: 100%; background: var(--green); transition: width .2s; }
-  #hpfill.low { background: #f4212e; }
-  #shfill { height: 100%; width: 0; background: #3d9bff; transition: width .2s; }
-  #bars span { width: 26px; text-align: right; }
-  #flash { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 40px rgba(244,33,46,.0); }
-  #flash.on { animation: hurt .45s; }
-  #flash.shield { animation: hurtsh .45s; }
-  @keyframes hurtsh { 0% { box-shadow: inset 0 0 140px 50px rgba(61,155,255,.7); } 100% { box-shadow: inset 0 0 120px 40px rgba(61,155,255,0); } }
-  @keyframes hurt { 0% { box-shadow: inset 0 0 140px 50px rgba(244,33,46,.75); } 100% { box-shadow: inset 0 0 120px 40px rgba(244,33,46,0); } }
-  #chatlog .kill { background: rgba(244,33,46,.35); font-weight: 800; }
-  #blockname { bottom: 112px; }
-  #hotbar div.wslot { width: 58px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 2px var(--rar, rgba(255,255,255,.15)); display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  #hotbar div.wslot.on { box-shadow: inset 0 0 0 3px #fff, 0 0 12px var(--rar, transparent); }
-  #hotbar div.wslot b { font-size: 15px; color: var(--rar, #fff); line-height: 1; }
-  #hotbar div.wslot b.empty { font-size: 18px; }
-  #hotbar div.wslot small { font-size: 10.5px; color: #c3c8d4; margin-top: 3px; font-variant-numeric: tabular-nums; }
-  #hotbar b.emoji { display: flex; height: 100%; align-items: center; justify-content: center; font-size: 22px; }
-  #ammo { position: fixed; right: 14px; bottom: 16px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); font-size: 12.5px; display: grid; gap: 3px; min-width: 150px; }
-  #ammo div { display: flex; align-items: center; gap: 7px; }
-  #ammo div.zero { opacity: .4; }
-  #ammo i { width: 9px; height: 9px; border-radius: 2px; }
-  #ammo b { margin-left: auto; font-variant-numeric: tabular-nums; }
-  #prompt { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(11,13,18,.78); font-weight: 800; font-size: 14px; }
-  #reload { position: fixed; left: 50%; top: 53%; transform: translateX(-50%); font-weight: 800; font-size: 13px; color: #ffad1f; text-shadow: 0 1px 3px #000; }
-  #scope { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 0 32vh, #000 32.4vh); }
-  #scope::before, #scope::after { content: ""; position: absolute; background: rgba(0,0,0,.85); }
-  #scope::before { left: 50%; top: 18vh; bottom: 18vh; width: 2px; }
-  #scope::after { top: 50%; left: calc(50% - 32vh); right: calc(50% - 32vh); height: 2px; }
-  #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; opacity: 0; }
-  #hitmark::before, #hitmark::after { content: ""; position: absolute; left: 10px; top: -2px; width: 2px; height: 26px; background: #fff; }
-  #hitmark::before { transform: rotate(45deg); } #hitmark::after { transform: rotate(-45deg); }
-  #hitmark.on { animation: hm .25s; }
-  @keyframes hm { 0% { opacity: 1; } 100% { opacity: 0; } }
+  /* Прицел: --gap задаёт main.js по разбросу оружия */
+  #cross { position: fixed; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; --gap: 6px; }
+  #cross i { position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.55); transition: transform .08s linear; }
+  #cross .t, #cross .b { left: -1px; width: 2px; height: 9px; }
+  #cross .l, #cross .r { top: -1px; width: 9px; height: 2px; }
+  #cross .t { top: calc(-1 * var(--gap) - 9px); } #cross .b { top: var(--gap); }
+  #cross .l { left: calc(-1 * var(--gap) - 9px); } #cross .r { left: var(--gap); }
+  #cross .dot { position: absolute; left: -2px; top: -2px; width: 4px; height: 4px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.55); }
+  #cross .ring { position: absolute; left: calc(-1 * var(--gap)); top: calc(-1 * var(--gap)); width: calc(2 * var(--gap)); height: calc(2 * var(--gap));
+    border-radius: 50%; border: 2px solid rgba(255,255,255,.85); box-sizing: border-box; box-shadow: 0 0 0 1px rgba(0,0,0,.4); display: none; }
+  #cross[data-mode="dot"] i { display: none; }
+  #cross[data-mode="ring"] i { display: none; } #cross[data-mode="ring"] .ring { display: block; }
+  #cross[data-mode="bazooka"] .t, #cross[data-mode="bazooka"] .b { display: none; }
+  #cross[data-mode="bazooka"] .l, #cross[data-mode="bazooka"] .r { width: 14px; }
+  #cross[data-mode="bazooka"] .l { left: calc(-1 * var(--gap) - 14px); }
+  #cross[data-mode="off"] { display: none; }
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: #e7e9ea; color: #0f1419; font-weight: 800; }
 </style>
 <script type="importmap">
@@ -109,7 +85,7 @@
 </head>
 <body>
 <div id="game"></div>
-<div id="cross" hidden></div>
+<div id="cross" hidden><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b class="dot"></b><span class="ring"></span></div>
 
 <div id="intro">
   <div class="box">
@@ -149,10 +125,10 @@
     <div class="keys">
       <b>WASD</b><span>move · Shift run · Space jump</span>
       <b>F</b><span>fly (Space up, C down)</span>
-      <b>1–3</b><span>weapons (empty = hands) · 4 car · 5–9 blocks</span>
-      <b>E</b><span>open chest · drive / exit car</span>
+      <b>1–3</b><span>weapons (empty = hands) · 4–9 blocks</span>
+      <b>E</b><span>open chest</span>
       <b>Left click</b><span>shoot (hold for SMG / AR)</span>
-      <b>Right click</b><span>scope (sniper) · place block / car</span>
+      <b>Right click</b><span>scope (sniper) · place block</span>
       <b>R · G · Q</b><span>reload · swap for weapon on the ground · drop</span>
       <b>T</b><span>chat</span>
     </div>
