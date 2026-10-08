@@ -6,6 +6,8 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { World, SX, SY, SZ, WATER_Y, BLOCKS, HOTBAR, makeMaterials, buildMeshes, raycast, iconUrl } from './voxel.js';
 import { connect } from './net.js';
+import { createCombat, TOOLS, toolIcon, rayBox } from './combat.js';
+import { createCars } from './cars.js';
 
 const NAME = 'PostCraft';                     // рабочее название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
@@ -151,6 +153,9 @@ function step(dt) {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) move.sub(right);
   if (move.lengthSq()) move.normalize().multiplyScalar(speed * dt);
 
+  // Отброс от взрыва гасится за полсекунды.
+  move.addScaledVector(knockVel, dt);
+  knockVel.multiplyScalar(Math.max(0, 1 - 4 * dt));
   moveAxis('x', move.x);
   moveAxis('z', move.z);
   if (flying) {
@@ -170,6 +175,8 @@ function step(dt) {
 
 // ---------- Ломать / ставить ----------
 
+// Хотбар: сначала предметы (пушки, машина), потом блоки.
+const ENTRIES = [...TOOLS.map((t) => ({ tool: t })), ...HOTBAR.map((b) => ({ block: b }))];
 let slot = 0;
 const lookDir = new THREE.Vector3();
 
@@ -189,7 +196,13 @@ function edit(x, y, z, b) {
 }
 
 renderer.domElement.addEventListener('mousedown', (e) => {
-  if (!controls.isLocked || !world) return;
+  if (!controls.isLocked || !world || cars.driving()) return;
+  const entry = ENTRIES[slot];
+  if (entry.tool) {
+    if (e.button === 0) combat.use(entry.tool.id, performance.now() / 1000);
+    if (e.button === 2 && entry.tool.id === 'car') placeCar();
+    return;
+  }
   const hit = target();
   if (!hit) return;
   if (e.button === 0) {
@@ -200,9 +213,31 @@ renderer.domElement.addEventListener('mousedown', (e) => {
     world.set(x, y, z, 1);                                       // проверка: не ставим блок в себя
     const inside = collides(feet.x, feet.y, feet.z);
     world.set(x, y, z, 0);
-    if (!inside) edit(x, y, z, HOTBAR[slot]);
+    if (!inside) edit(x, y, z, entry.block);
   }
 });
+
+// Машина — на поверхность в паре блоков перед игроком, носом туда же, куда смотрим.
+function placeCar() {
+  const d = camera.getWorldDirection(new THREE.Vector3());
+  d.y = 0;
+  d.normalize();
+  const x = feet.x + d.x * 3.5, z = feet.z + d.z * 3.5;
+  if (x < 2 || z < 2 || x > SX - 2 || z > SZ - 2) return;
+  const y = world.surfaceY(Math.floor(x), Math.floor(z));
+  if (y < WATER_Y) { toast('Not in the water 🌊'); return; }
+  cars.place(x, y, z, Math.atan2(-d.x, -d.z));
+}
+
+// Взрыв: стрелявший разом убирает блоки и шлёт их всем одной пачкой.
+function destroyBlocks(list) {
+  const t = Date.now(), batch = [];
+  for (const [x, y, z] of list) {
+    const i = world.idx(x, y, z);
+    if (applyEdit(i, 0, t)) batch.push([i, 0, t]);
+  }
+  if (batch.length) { net?.sync({ e: batch }); saveSoon(); }
+}
 addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- Хотбар ----------
@@ -210,11 +245,11 @@ addEventListener('contextmenu', (e) => e.preventDefault());
 function renderHotbar() {
   const bar = $('hotbar');
   bar.textContent = '';
-  HOTBAR.forEach((b, i) => {
+  ENTRIES.forEach((entry, i) => {
     const d = document.createElement('div');
     d.className = i === slot ? 'on' : '';
     const img = document.createElement('img');
-    img.src = iconUrl(mats[b]);
+    img.src = entry.tool ? toolIcon(entry.tool) : iconUrl(mats[entry.block]);
     d.appendChild(img);
     if (i < 9) { const s = document.createElement('span'); s.textContent = i + 1; d.appendChild(s); }
     d.addEventListener('click', () => pick(i));
@@ -223,9 +258,10 @@ function renderHotbar() {
 }
 let nameTimer = 0;
 function pick(i) {
-  slot = (i + HOTBAR.length) % HOTBAR.length;
+  slot = (i + ENTRIES.length) % ENTRIES.length;
   [...$('hotbar').children].forEach((d, j) => d.classList.toggle('on', j === slot));
-  $('blockname').textContent = BLOCKS[HOTBAR[slot]].name;
+  const entry = ENTRIES[slot];
+  $('blockname').textContent = entry.tool ? entry.tool.name : BLOCKS[entry.block].name;
   $('blockname').style.opacity = 1;
   clearTimeout(nameTimer);
   nameTimer = setTimeout(() => { $('blockname').style.opacity = 0; }, 1200);
@@ -279,6 +315,7 @@ function upsertOther(peerId, d) {
     updateCount();
   }
   o.target = d;
+  o.group.visible = !d.v;          // сидит в машине — аватар прячем, видно машину
 }
 
 const peers = new Set();       // подключённые игроки (по onPeerJoin), даже если их позиция ещё не пришла
@@ -302,12 +339,14 @@ function startNet() {
         // Новичку — все правки мира и где мы стоим (сразу, не дожидаясь кадра).
         if (edits.size) net.sync({ e: [...edits].map(([i, e]) => [i, e.b, e.t]) }, peerId);
         net.pose(poseData(), peerId);
+        cars.syncTo(peerId);
         updateCount();
       },
       leave(peerId) {
         peers.delete(peerId);
         const o = others.get(peerId);
         if (o) { scene.remove(o.group); others.delete(peerId); }
+        cars.onLeave(peerId);
         updateCount();
       },
       pose(peerId, d) { upsertOther(peerId, d); },
@@ -318,6 +357,10 @@ function startNet() {
         if (changed) saveSoon();
       },
       chat(peerId, d) { say(d.n, d.t); },
+      shot(peerId, d) { combat.onShot(peerId, d); },
+      hit(peerId, d) { combat.onHit(peerId, d); },
+      dead(peerId, d) { combat.onDead(peerId, d); },
+      car(peerId, d) { cars.onCar(peerId, d); },
     });
     updateCount();
   } catch (e) {
@@ -329,7 +372,9 @@ function startNet() {
 
 function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
-  return { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick };
+  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick };
+  if (cars.driving()) d.v = cars.driving().id;
+  return d;
 }
 
 function sendPose(now) {
@@ -382,7 +427,8 @@ addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
   if (!world) return;
-  if (e.code === 'KeyF') { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
+  if (e.code === 'KeyF' && !cars.driving()) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
+  if (e.code === 'KeyE' && controls.isLocked) cars.toggle(feet);
   if (e.code === 'KeyT' && controls.isLocked) { e.preventDefault(); openChat(); }
   const n = e.code.match(/^Digit([1-9])$/);
   if (n) pick(+n[1] - 1);
@@ -400,6 +446,58 @@ function toast(text) {
   $('toast').hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
+}
+
+// ---------- Бой и машины ----------
+
+let shakeAmt = 0;
+const knockVel = new THREE.Vector3();
+
+function killfeed(by, victim, w) {
+  const icon = { pistol: '🔫', rocket: '🚀', car: '🚗' }[w] || '💀';
+  const line = document.createElement('div');
+  line.className = 'kill';
+  line.textContent = by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
+  $('chatlog').appendChild(line);
+  while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
+}
+
+const ctx = {
+  scene, camera,
+  world: () => world,
+  feet: () => feet,
+  others,
+  net: () => net,
+  selfId: () => net?.selfId || 'me',
+  nick: () => nick,
+  toast,
+  killfeed,
+  respawn: () => { if (cars.driving()) cars.toggle(feet); spawn(); },
+  hpBar: (hp) => { $('hpfill').style.width = `${hp}%`; $('hpfill').className = hp < 35 ? 'low' : ''; $('hptext').textContent = hp; },
+  flash: () => { $('flash').classList.remove('on'); void $('flash').offsetWidth; $('flash').classList.add('on'); },
+  shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
+  knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
+  destroyBlocks,
+  explodeFx: (p) => combat.explodeAt(p, false),
+  exitCar: (p) => { feet.set(p.x, Math.max(p.y, world.surfaceY(Math.floor(p.x), Math.floor(p.z))) + 0.05, p.z); vel.set(0, 0, 0); },
+};
+ctx.cars = null;
+const combat = createCombat(ctx);
+const cars = createCars(ctx);
+ctx.cars = cars;
+
+// Камера при езде: сзади-сверху машины, мышью можно оглядываться вокруг.
+function carCamera() {
+  const car = cars.driving();
+  const dir = camera.getWorldDirection(new THREE.Vector3());
+  const center = car.pos.clone().add(new THREE.Vector3(0, 2.2, 0));
+  // Если сзади стена или дерево — камера подъезжает ближе, чтобы не смотреть сквозь блоки.
+  const back = dir.clone().negate();
+  const hit = raycast(world, center, back, 7);
+  const dist = hit ? Math.max(1.5, rayBox(center, back, new THREE.Vector3(hit.x, hit.y, hit.z), new THREE.Vector3(hit.x + 1, hit.y + 1, hit.z + 1)) - 0.4) : 7;
+  const cam = center.clone().addScaledVector(back, dist);
+  player.position.copy(cam);
+  feet.copy(car.pos);
 }
 
 // ---------- Поделиться ----------
@@ -433,7 +531,8 @@ function start() {
     pick(0);
     $('wname').textContent = `🌍 ${worldId}`;
     $('intro').hidden = true;
-    $('top').hidden = $('hotbar').hidden = $('hint').hidden = false;
+    $('top').hidden = $('hotbar').hidden = $('hint').hidden = $('hp').hidden = false;
+    combat.reset();
     $('pause').hidden = false;
     document.title = `${worldId} — ${NAME}`;
     startNet();
@@ -449,13 +548,21 @@ renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (world) {
-    if (controls.isLocked) step(dt);
+    if (cars.driving()) { if (controls.isLocked) cars.update(dt, keys, now); carCamera(); }
+    else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + EYE, feet.z);
+    if (!cars.driving() || !controls.isLocked) cars.update(dt, controls.isLocked ? keys : new Set(), now);
+    combat.update(dt);
+    if (shakeAmt > 0.001) {
+      player.position.add(new THREE.Vector3((Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt));
+      shakeAmt *= Math.max(0, 1 - 6 * dt);
+    }
     if (dirty && now - lastRebuild > 80) { lastRebuild = now; rebuild(); }
-    const hit = controls.isLocked ? target() : null;
+    const hit = controls.isLocked && !cars.driving() && ENTRIES[slot].block ? target() : null;
     outline.visible = !!hit;
     if (hit) outline.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
     for (const o of others.values()) {
+      if (o.target.v) continue;
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y, o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
     }
@@ -466,7 +573,7 @@ renderer.setAnimationLoop((now) => {
 
 // Для отладки: window.__pc.world, .edits, .net
 window.__pc = {
-  get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit,
+  get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit, combat, cars, pick,
   tp(x, z, up = 0) { feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01 + up, z); player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
 };

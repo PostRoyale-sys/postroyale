@@ -2,35 +2,31 @@
 // сервера и аккаунтов нет. Комната = id мира, поэтому все, кто открыл одну ссылку, оказываются вместе.
 //
 // Действия (имена короткие — у Trystero лимит на длину):
-//   pose — где игрок и куда смотрит (≈10 раз в секунду);
+//   pose — где игрок и куда смотрит (≈10 раз в секунду), v — id машины, если едет;
 //   edit — сломал/поставил блок;
-//   sync — все правки мира целиком (отправляем новичку при входе);
-//   chat — сообщение в чат.
+//   sync — пачка правок (новичку при входе — все; при взрыве — разрушенные блоки всем);
+//   chat — сообщение в чат;
+//   shot — выстрел (для трассера/ракеты и звука у всех);
+//   hit  — попадание по конкретному игроку (шлём только ему);
+//   dead — игрок погиб (лента убийств у всех);
+//   car  — состояние машины (едет водитель, стоит — владелец раз в пару секунд; gone — машину взорвали).
 
 import { joinRoom, selfId } from 'trystero';
 
 const APP_ID = 'postcraft-v1';
+const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'car'];
 
 export function connect(worldId, on) {
   const room = joinRoom({ appId: APP_ID }, worldId);
-  const pose = room.makeAction('pose');
-  const edit = room.makeAction('edit');
-  const sync = room.makeAction('sync');
-  const chat = room.makeAction('chat');
-
   room.onPeerJoin = (peerId) => on.join?.(peerId);
   room.onPeerLeave = (peerId) => on.leave?.(peerId);
-  pose.onMessage = (d, { peerId }) => on.pose?.(peerId, d);
-  edit.onMessage = (d, { peerId }) => on.edit?.(peerId, d);
-  sync.onMessage = (d, { peerId }) => on.sync?.(peerId, d);
-  chat.onMessage = (d, { peerId }) => on.chat?.(peerId, d);
 
-  return {
-    selfId,
-    pose: (d, target) => pose.send(d, target ? { target } : undefined),
-    edit: (d) => edit.send(d),
-    sync: (d, target) => sync.send(d, { target }),
-    chat: (d) => chat.send(d),
-    leave: () => room.leave(),
-  };
+  const api = { selfId, leave: () => room.leave() };
+  for (const name of ACTIONS) {
+    const a = room.makeAction(name);
+    a.onMessage = (d, { peerId }) => on[name]?.(peerId, d);
+    // api.pose(d) — всем; api.pose(d, peerId) — одному игроку.
+    api[name] = (d, target) => a.send(d, target ? { target } : undefined);
+  }
+  return api;
 }
