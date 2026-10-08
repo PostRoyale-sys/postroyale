@@ -192,18 +192,21 @@ scene.add(heli);
 let flight = null;            // { a, b, dir, t0, dur } — маршрут вертолёта (виден, пока летит)
 let riding = false;           // ты внутри
 
+// Маршрут: заход с моря (APPROACH м, прыгать нельзя) → зона прыжка (отрезок над безопасной частью острова,
+// 2·JR м через центр зоны) → на краю зоны всех, кто не прыгнул, выбрасывает → вертолёт улетает дальше.
+const APPROACH = 70, AFTER = 60;
 function startRide(late) {
   const c = royale.center;
   const r = late ? null : rng(seedOf(worldId) ^ Math.imul(royale.round + 7, 2654435761));
   const ang = (r ? r() : Math.random()) * Math.PI * 2;
   const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
-  // опоздавший пролетает только над безопасной частью зоны — и выпрыгнет (или его выбросит) внутри неё
-  const L = late ? Math.max(15, Math.min(90, royale.safeRadius() * 0.8)) : 230;
-  const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -L);
-  const b = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, L);
+  // полуширина зоны прыжка: в начале раунда — почти весь остров, опоздавшему — только внутри безопасной зоны
+  const JR = late ? Math.max(12, Math.min(90, royale.safeRadius() * 0.8)) : Math.min(150, royale.safeRadius() * 0.9);
+  const approach = late ? 45 : APPROACH;
+  const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -(JR + approach));
   // общий вылет — от начала раунда (у всех одинаково), личный — от сейчас
   const t0 = late ? Date.now() / 1000 : royale.roundStart / 1000;
-  flight = { a, b, dir, t0, dur: (2 * L) / HELI_SPEED };
+  flight = { a, dir, t0, w0: approach, w1: approach + 2 * JR, len: approach + 2 * JR + AFTER };
   riding = true;
   gliding = false;
   vel.set(0, 0, 0);
@@ -211,13 +214,14 @@ function startRide(late) {
   camera.rotation.set(-0.25, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
 }
 
-function heliPos(out) {
-  const u = Math.min(1, Math.max(0, (Date.now() / 1000 - flight.t0) / flight.dur));
-  return out.copy(flight.a).lerp(flight.b, u);
-}
+// Сколько метров пролетел вертолёт от начала маршрута.
+const flown = () => Math.min(flight.len, Math.max(0, (Date.now() / 1000 - flight.t0) * HELI_SPEED));
+const heliPos = (out) => out.copy(flight.a).addScaledVector(flight.dir, flown());
+const inJumpZone = () => flight && flown() >= flight.w0;
 
-function jumpOut() {
+function jumpOut(forced = false) {
   if (!riding) return;
+  if (!forced && !inJumpZone()) { toast(`Jump zone in ${Math.ceil((flight.w0 - flown()) / HELI_SPEED)}s`); return; }
   riding = false;
   const p = heliPos(new THREE.Vector3());
   feet.set(p.x, p.y - 2.5, p.z);
@@ -225,6 +229,14 @@ function jumpOut() {
   knockVel.copy(flight.dir).multiplyScalar(6);
   gliding = true;
   combat.sfx('swing');
+  if (forced) toast('Auto-dropped at the edge of the jump zone');
+}
+
+// Подсказка в вертолёте: до зоны прыжка — сколько ждать; в зоне — сколько до автосброса.
+function ridePrompt() {
+  const d = flown();
+  if (d < flight.w0) return `Jump zone in ${Math.ceil((flight.w0 - d) / HELI_SPEED)}s`;
+  return `SPACE — jump out · auto-drop in ${Math.ceil((flight.w1 - d) / HELI_SPEED)}s`;
 }
 
 const V_HELI = new THREE.Vector3(), V_LOOK = new THREE.Vector3();
@@ -235,9 +247,9 @@ function updateHeli(t) {
   heli.position.y += Math.sin(t * 1.3) * 0.4;
   heli.rotation.set(0.06, Math.atan2(-flight.dir.x, -flight.dir.z), Math.sin(t * 0.9) * 0.04);
   heli.userData.tick(t);
-  const done = Date.now() / 1000 - flight.t0 >= flight.dur;
+  const d = flown();
   if (riding) {
-    if (done) jumpOut();
+    if (d >= flight.w1) jumpOut(true);
     else {
       feet.copy(V_HELI);
       // камера на орбите вокруг вертолёта: направление — от мыши
@@ -245,10 +257,36 @@ function updateHeli(t) {
       player.position.copy(V_HELI).addScaledVector(V_LOOK, -20).add(new THREE.Vector3(0, 5, 0));
     }
   }
-  if (done && !riding && Date.now() / 1000 - flight.t0 > flight.dur + 3) { flight = null; heli.visible = false; }
+  if (!riding && d >= flight.len) { flight = null; heli.visible = false; }
+}
+
+// Наблюдатель — призрак: летит куда смотрит, сквозь стены и деревья, без гравитации.
+// Space — вверх, C — вниз, Shift — быстрее. Не ниже земли и не дальше края карты.
+const GHOST = 14;
+function ghostStep(dt) {
+  const fwd = camera.getWorldDirection(new THREE.Vector3());
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x).normalize();
+  const move = new THREE.Vector3();
+  if (keys.has('KeyW') || keys.has('ArrowUp')) move.add(fwd);
+  if (keys.has('KeyS') || keys.has('ArrowDown')) move.sub(fwd);
+  if (keys.has('KeyD') || keys.has('ArrowRight')) move.add(right);
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) move.sub(right);
+  if (keys.has('Space')) move.y += 1;
+  if (keys.has('KeyC')) move.y -= 1;
+  const fast = keys.has('ShiftLeft') || keys.has('ShiftRight');
+  if (move.lengthSq()) move.normalize().multiplyScalar(GHOST * (fast ? 2.2 : 1) * dt);
+  feet.add(move);
+  feet.x = Math.max(-60, Math.min(MAP + 60, feet.x));
+  feet.z = Math.max(-60, Math.min(MAP + 60, feet.z));
+  feet.y = Math.min(160, Math.max(feet.y, Math.max(world.height(feet.x, feet.z), WATER_Y) + 0.3));
+  vel.set(0, 0, 0);
+  gliding = false;
+  moving = move.lengthSq() > 0;
+  player.position.set(feet.x, feet.y + EYE, feet.z);
 }
 
 function step(dt) {
+  if (!royale.alive) { ghostStep(dt); return; }
   const scoped = isScoped();
   const speed = gliding ? GLIDE : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
@@ -719,7 +757,7 @@ function onRoundStart(r, alive) {
   } else {
     gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
-    banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · walk around and watch`, 5000);
+    banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · fly around as a ghost (Space up, C down)`, 5000);
   }
 }
 
@@ -728,6 +766,7 @@ function onEliminated(place, by) {
   buildType = null;
   structures.ghost(null);
   vel.set(0, 0, 0);
+  feet.y += 3;                                    // призрак поднимается над местом гибели
   season.placed(place);
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
@@ -1342,9 +1381,10 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : riding ? 'SPACE — jump out' : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
+    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
-    $('prompt').classList.toggle('ride', riding);
+    $('prompt').classList.toggle('ride', riding && inJumpZone());
+    $('prompt').classList.toggle('wait', riding && !inJumpZone());
     const rl = combat.reloading;
     const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
     if ($('reload').textContent !== rtext) $('reload').textContent = rtext;
@@ -1431,7 +1471,7 @@ window.__pc = {
   combat, loot, pick, royale, season, structures, mats, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
-  get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; },
+  get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: () => jumpOut(),
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
   tp(x, z, up = 0, y = 999) { feet.set(x, structures.ground(x, z, y) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
