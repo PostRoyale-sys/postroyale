@@ -18,7 +18,7 @@ import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
-const GRAVITY = 30, JUMP = 9, WALK = 5.5, RUN = 8, FLY = 14, GLIDE = 13;
+const GRAVITY = 30, JUMP = 9, WALK = 5.5, RUN = 8, GLIDE = 13;
 const PICK_REACH = 3.4, PICK_RATE = 0.42, BUILD_RATE = 0.12;
 const POSE_HZ = 10;
 const FOV = 80, SCOPE_FOV = 22;
@@ -130,7 +130,7 @@ const structures = createStructures({ scene });
 // ---------- Физика игрока ----------
 
 const vel = new THREE.Vector3();
-let onGround = false, flying = false, moving = false, gliding = false;
+let onGround = false, moving = false, gliding = false;   // полёта нет: только ходьба, прыжок и планирование при высадке
 const keys = new Set();
 const feet = new THREE.Vector3();          // позиция ног; камера — на высоте глаз
 const knockVel = new THREE.Vector3();
@@ -165,7 +165,7 @@ function spawn(drop = true) {
 
 function step(dt) {
   const scoped = isScoped();
-  const speed = flying ? FLY : gliding ? GLIDE : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
+  const speed = gliding ? GLIDE : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd);
   fwd.y = 0;
@@ -183,11 +183,7 @@ function step(dt) {
   move.addScaledVector(knockVel, dt);
   knockVel.multiplyScalar(Math.max(0, 1 - 4 * dt));
 
-  if (flying) {
-    feet.x += move.x; feet.z += move.z;
-    feet.y += ((keys.has('Space') ? FLY : 0) - (keys.has('KeyC') ? FLY : 0)) * dt;
-    feet.y = Math.max(feet.y, world.height(feet.x, feet.z) + 0.2);
-  } else {
+  {
     moveAxis('x', move.x);
     moveAxis('z', move.z);
     if (keys.has('Space') && onGround) { vel.y = JUMP; onGround = false; }
@@ -641,25 +637,21 @@ function onRoundStart(r, alive) {
   goldenKeyRound = -1;
   renderHotbar();
   if (alive) {
-    flying = false;
     spawn(true);
     season.roundStarted();
     banner('DROP!', 'Glide down, grab weapons from chests — the storm closes in 30s');
   } else {
-    flying = true;
     gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
-    banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · F fly`, 5000);
+    banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · walk around and watch`, 5000);
   }
 }
 
 function onEliminated(place, by) {
-  flying = true;
   gliding = false;
   buildType = null;
   structures.ghost(null);
   vel.set(0, 0, 0);
-  feet.y += 6;
   season.placed(place);
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
@@ -797,7 +789,6 @@ addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
   if (!world || !controls.isLocked) return;
-  if (e.code === 'KeyF' && !royale.alive) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(eye(), look());
@@ -892,7 +883,6 @@ if (params.has('shot')) {
     feet.set(x, world.height(x, z) + up, z);
     player.position.set(feet.x, feet.y + EYE, feet.z);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
-    flying = true;
     gliding = false;
   }, 60);
 }
