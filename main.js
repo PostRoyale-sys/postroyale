@@ -644,7 +644,7 @@ function onRoundStart(r, alive) {
     spawn(true);
     season.roundStarted();
     const late = Date.now() - r * ROUND_MS > DROP_MS;
-    banner('DROP!', late ? 'Match in progress — glide down, loot fast, watch the storm' : 'Glide down, grab weapons from chests — the storm closes in 30s');
+    banner('DROP!', late ? 'Match in progress — glide down, loot fast, watch the storm' : 'Glide down, grab weapons from chests — the storm starts closing in 90s');
   } else {
     gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
@@ -696,8 +696,8 @@ function onRoundEnd({ me, winners, early }) {
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, '0')}`;
 let lastStorm = '';
 function stormHud({ t, storm, alive, outside, spectating, drop }) {
-  const left = drop ? (DROP_MS - t) / 1000 : storm.left;
-  const what = drop ? 'Storm in' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
+  const left = storm.left;
+  const what = storm.idx === 0 ? 'Storm in' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
   const txt = `${spectating ? '👁 Spectating · ' : ''}👥 ${alive} alive · 🌪 ${what} ${mmss(left)}`;
   if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; }
   $('storm').classList.toggle('danger', outside);

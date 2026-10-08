@@ -17,18 +17,19 @@ export const DROP_MS = 30e3;
 export const FINAL_R = 8;
 const LATE_CUTOFF = 90e3;
 
-// [начало, конец (с), радиус от → до, урон/с снаружи]
-const R0 = Math.hypot(SX, SZ) / 2;
-// Фазы рассчитаны на остров 320 м: первая зона сразу ужимается до 120.
-const PHASES = [
-  [0, 30, R0, R0, 0],
-  [30, 90, R0, 120, 1],
-  [90, 150, 120, 120, 1],
-  [150, 210, 120, 70, 2],
-  [210, 260, 70, 70, 2],
-  [260, 310, 70, 35, 4],
-  [310, 350, 35, 35, 5],
-  [350, 400, 35, 14, 8],
+// Фазы шторма: [начало, конец (с), радиус от → до, урон/с снаружи]. COVER — первый круг, накрывающий
+// весь остров от центра этого раунда (считается в cover()), поэтому в начале раунда безопасна вся суша.
+// 90 с без сжатия (высадка + лут), дальше круг сужается до FINAL_R и держится до конца раунда.
+const COVER = -1;
+const PHASE_TABLE = [
+  [0, 90, COVER, COVER, 0],
+  [90, 150, COVER, 110, 1],
+  [150, 190, 110, 110, 1],
+  [190, 240, 110, 65, 2],
+  [240, 280, 65, 65, 2],
+  [280, 320, 65, 34, 4],
+  [320, 350, 34, 34, 5],
+  [350, 400, 34, 14, 8],
   [400, 440, 14, FINAL_R, 10],
   [440, 480, FINAL_R, FINAL_R, 10],
 ];
@@ -36,6 +37,7 @@ const PHASES = [
 export function createRoyale(ctx) {
   const { scene } = ctx;
   let round = -1, roundStart = 0, center = { x: SX / 2, z: SZ / 2 };
+  let PHASES = PHASE_TABLE, R0 = Math.hypot(SX, SZ);
   let alive = false, maxAliveSeen = 0, won = false, place = 0, ended = false;
   let surviveAcc = 0, stormAcc = 0;
 
@@ -56,6 +58,18 @@ export function createRoyale(ctx) {
       if (w.surfaceY(Math.floor(x), Math.floor(z)) > WATER_Y + 1) return { x, z };
     }
     return { x: SX / 2, z: SZ / 2 };
+  }
+
+  // Первый круг: до самой дальней точки суши от центра + запас — весь остров внутри.
+  function setCenter(r) {
+    center = pickCenter(r);
+    const w = ctx.world();
+    let far = 0;
+    for (let x = 0; x <= SX; x += 8) for (let z = 0; z <= SZ; z += 8) {
+      if (w.surfaceY(x, z) > WATER_Y) far = Math.max(far, Math.hypot(x - center.x, z - center.z));
+    }
+    R0 = far + 15;
+    PHASES = PHASE_TABLE.map((p) => p.map((v, i) => (v === COVER && (i === 2 || i === 3) ? R0 : v)));
   }
 
   function storm(t) {
@@ -83,7 +97,7 @@ export function createRoyale(ctx) {
     init(now = Date.now()) {
       round = roundOf(now);
       roundStart = round * ROUND_MS;
-      center = pickCenter(round);
+      setCenter(round);
       alive = now - roundStart < ROUND_MS - LATE_CUTOFF;
       ctx.onRoundStart(round, alive);
     },
@@ -137,7 +151,7 @@ export function createRoyale(ctx) {
       if (r !== round) {
         round = r;
         roundStart = r * ROUND_MS;
-        center = pickCenter(r);
+        setCenter(r);
         alive = true;                     // новая высадка — все в игре
         won = false;
         maxAliveSeen = 0;
