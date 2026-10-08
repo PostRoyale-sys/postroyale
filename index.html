@@ -264,6 +264,9 @@
   #season .sw { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
   #season .sw button { padding: 6px 12px; font-size: 13px; }
   #season p { margin: 8px 0 0; font-size: 11px; color: #8b98a5; }
+  #fps { position: fixed; right: 14px; top: 66px; z-index: 40; padding: 4px 9px; border-radius: 8px; background: rgba(11,13,18,.6); font: 700 11.5px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
+  #fps.good { color: #7dffb0; } #fps.ok { color: #ffd81a; } #fps.bad { color: #ff6b6b; }
+  body.shot #fps { display: none !important; }
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: #e7e9ea; color: #0f1419; font-weight: 800; }
   #bars { position: fixed; left: 20px; bottom: 22px; width: 300px; display: flex; flex-direction: column; gap: 4px; font-weight: 800; font-size: 12px; text-shadow: 0 1px 2px #000; }
   #bars .row2 { display: flex; align-items: center; gap: 8px; }
@@ -329,7 +332,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -345,6 +348,7 @@
 </head>
 <body>
 <div id="game"></div>
+<div id="fps" hidden></div>
 <div id="cross" hidden><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b class="dot"></b><span class="ring"></span></div>
 
 <!-- Заставка, пока строится остров -->

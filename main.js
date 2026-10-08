@@ -6,6 +6,12 @@
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { GameMap, MAP, WATER_Y } from './map.js';
 import { toonGradient, toon } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
@@ -16,6 +22,7 @@ import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter } from './skins.js';
+import { createGrass } from './grass.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
@@ -115,15 +122,32 @@ const controls = new PointerLockControls(camera, renderer.domElement);
 const player = controls.object ?? controls.getObject();
 scene.add(player);
 
+// Обработка кадра: рендер в буфер, bloom в половинном разрешении, вывод в sRGB, сглаживание FXAA.
+// Замер (1920×953): без эффектов 5.8 мс; MSAA 4× в буфере — +3.6 мс и дорожает bloom, поэтому FXAA (~+0.5 мс).
+// Без bloom кадр рисуется напрямую (встроенное сглаживание браузера) — так дешевле.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType }));
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.45, 0.55, 0.82);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+const fxaa = new ShaderPass(FXAAShader);
+composer.addPass(fxaa);
+const fitFxaa = () => { const pr = renderer.getPixelRatio(); fxaa.material.uniforms.resolution.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr)); };
+fitFxaa();
+
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloom.resolution.set(innerWidth / 2, innerHeight / 2);
+  fitFxaa();
 });
 
 // ---------- Карта и постройки ----------
 
 let world = null, terrain = null;
+const grass = createGrass(scene);
 let playing = false;                       // false — лобби (остров на фоне), true — в матче
 const structures = createStructures({ scene });
 
@@ -862,6 +886,7 @@ function loadWorld(id) {
   terrain = world.mesh();
   scene.add(terrain);
   structures.load(world);
+  grass.setMap(world);
 }
 
 function start() {
@@ -1131,7 +1156,7 @@ setInterval(updateRoundInfo, 500);
 // ---------- Настройки ----------
 
 const SETTINGS_KEY = 'pr:settings';
-const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true };
+const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true, bloom: true, grass: true, fps: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { /* по умолчанию */ }
 
 function applySettings() {
@@ -1141,6 +1166,11 @@ function applySettings() {
   sun.castShadow = settings.shadows;
   renderer.setPixelRatio(settings.hq ? Math.min(devicePixelRatio, 2) : 1);
   renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(settings.hq ? Math.min(devicePixelRatio, 2) : 1);
+  composer.setSize(innerWidth, innerHeight);
+  fitFxaa();
+  grass.visible = settings.grass;
+  $('fps').hidden = !settings.fps;
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* без сохранения */ }
 }
 
@@ -1152,6 +1182,9 @@ const SLIDERS = [
 const TOGGLES = [
   { key: 'shadows', label: 'Shadows', on: 'On', off: 'Off' },
   { key: 'hq', label: 'Graphics quality', on: 'High', off: 'Fast' },
+  { key: 'bloom', label: 'Bloom (glow)', on: 'On', off: 'Off' },
+  { key: 'grass', label: 'Grass', on: 'On', off: 'Off' },
+  { key: 'fps', label: 'Show FPS', on: 'On', off: 'Off' },
 ];
 // Одни и те же настройки — во вкладке лобби и в паузе; меняешь в одном месте — обновляется везде.
 function renderSettings() {
@@ -1259,7 +1292,9 @@ renderer.setAnimationLoop((now) => {
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 180);
   sky.position.copy(c);
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
-  renderer.render(scene, camera);
+  if (playing) grass.update(feet, t);              // в лобби камера высоко — траву не видно, не считаем
+  if (settings.bloom) composer.render(); else renderer.render(scene, camera);
+  countFps(now);
   if (playing && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
@@ -1284,6 +1319,20 @@ if (params.has('shot')) {
   }, 60);
 }
 
+// Счётчик FPS: среднее за полсекунды, цвет по уровню.
+let fpsFrames = 0, fpsT0 = performance.now();
+function countFps(now) {
+  fpsFrames++;
+  if (now - fpsT0 < 500) return;
+  const fps = fpsFrames * 1000 / (now - fpsT0);
+  fpsFrames = 0; fpsT0 = now;
+  const el = $('fps');
+  el.hidden = !settings.fps;
+  if (!settings.fps) return;
+  el.textContent = `${Math.round(fps)} FPS · ${(1000 / fps).toFixed(1)} ms`;
+  el.className = fps >= 55 ? 'good' : fps >= 35 ? 'ok' : 'bad';
+}
+
 let debugView = false;           // для скриншотов в тестах: рисовать оружие в руках без захвата мыши
 
 // Прицел: 4 штриха расходятся по разбросу оружия; у дробовика — кольцо; в оптике скрыт; кирка/стройка — точка.
@@ -1299,7 +1348,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats, scene, camera,
+  combat, loot, pick, royale, season, structures, mats, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls,
