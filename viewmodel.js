@@ -4,8 +4,9 @@
 
 import * as THREE from 'three';
 import { RARITY } from './combat.js';
+import { toonGradient } from './art.js';
 
-const lam = (color, emissive = 0x000000) => new THREE.MeshLambertMaterial({ color, emissive });
+const lam = (color, emissive = 0x000000) => new THREE.MeshToonMaterial({ color, emissive, gradientMap: toonGradient() });
 function box(w, h, d, color, x, y, z, emissive) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(color, emissive));
   m.position.set(x, y, z);
@@ -17,6 +18,7 @@ const DARK = 0x2a2d33, METAL = 0x5b616b, WOOD = 0x7a5232, OLIVE = 0x56663a, SKIN
 // Модель оружия: ствол вдоль −Z, начало координат — у рукояти. userData.muzzle — точка вспышки.
 export function weaponModel(type, rarity = 0) {
   const g = new THREE.Group();
+  if (type === 'pickaxe') return pickaxeModel();
   const rc = new THREE.Color(RARITY[rarity].color);
   const accent = (w, h, d, x, y, z) => box(w, h, d, rc, x, y, z, rc.clone().multiplyScalar(0.35));
   let muzzle = -0.3;
@@ -62,6 +64,16 @@ export function weaponModel(type, rarity = 0) {
   return g;
 }
 
+// Кирка: рукоять вдоль −Z (вверх по экрану), фиолетовое двустороннее навершие.
+function pickaxeModel() {
+  const g = new THREE.Group();
+  g.add(box(0.06, 0.06, 0.62, WOOD, 0, 0, -0.22), box(0.08, 0.08, 0.1, DARK, 0, 0, 0.05),
+    box(0.1, 0.1, 0.12, METAL, 0, 0, -0.52), box(0.07, 0.42, 0.07, 0x8a5cff, 0, 0, -0.55, 0x2a1060),
+    box(0.05, 0.08, 0.05, 0xd8c8ff, 0, 0.24, -0.55), box(0.05, 0.08, 0.05, 0xd8c8ff, 0, -0.24, -0.55));
+  g.userData.muzzle = new THREE.Vector3(0, 0, -0.55);
+  return g;
+}
+
 function handsModel() {
   const g = new THREE.Group();
   g.add(box(0.11, 0.11, 0.42, SKIN, 0.02, -0.02, 0.05), box(0.13, 0.12, 0.13, SKIN, 0.02, 0.0, -0.18));
@@ -82,7 +94,7 @@ export function createViewmodel(renderer, camera) {
   vscene.add(holder);
 
   let model = null, key = '', type = null;
-  let recoil = 0, swap = 1, bobT = 0, flashLeft = 0;
+  let recoil = 0, swap = 1, bobT = 0, flashLeft = 0, swing = 0;
   const flash = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.14), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
 
   function set(weapon) {
@@ -92,7 +104,10 @@ export function createViewmodel(renderer, camera) {
     type = weapon?.type || null;
     if (model) holder.remove(model);
     model = weapon ? weaponModel(weapon.type, weapon.rarity) : handsModel();
-    if (weapon) {
+    if (weapon && weapon.type === 'pickaxe') {
+      model.rotation.x = 1.0;                 // рукоять вверх и от себя, навершие — вверху справа
+      model.add(box(0.1, 0.1, 0.16, SKIN, 0.0, 0, 0.0));
+    } else if (weapon) {
       // Кисть на рукояти.
       model.add(box(0.1, 0.1, 0.3, SKIN, 0.03, -0.14, 0.17));
       flash.position.copy(model.userData.muzzle);
@@ -107,6 +122,7 @@ export function createViewmodel(renderer, camera) {
     set,
     // Вызвать при выстреле: отдача и вспышка.
     kick(t) {
+      if (t === 'pickaxe') { swing = 1; return; }
       recoil = t === 'bazooka' ? 1 : t === 'shotgun' || t === 'sniper' ? 0.8 : 0.35;
       flashLeft = t === 'bazooka' ? 0.08 : 0.05;
     },
@@ -117,6 +133,7 @@ export function createViewmodel(renderer, camera) {
       recoil = Math.max(0, recoil - dt * 6);
       swap = Math.min(1, swap + dt * 4.5);
       flashLeft = Math.max(0, flashLeft - dt);
+      swing = Math.max(0, swing - dt * 3.2);
       flash.visible = flashLeft > 0;
       flash.rotation.z = Math.random() * Math.PI;
       if (model.userData.tip) model.userData.tip.visible = loaded;
@@ -127,6 +144,12 @@ export function createViewmodel(renderer, camera) {
       const bz = shoulder ? -0.95 : type ? -0.4 : -0.42;     // базука длинная — держим дальше, иначе труба закрывает экран
       holder.position.set(bx + bob * 0.6, by + Math.abs(bob) - (1 - swap) * 0.3 - (reloading ? 0.1 : 0), bz + recoil * 0.09);
       holder.rotation.set(recoil * 0.22 + (reloading ? 0.55 : 0), 0.05 + (type ? 0 : -0.25), reloading ? -0.25 : 0);
+      if (type === 'pickaxe') {
+        // удар: замах вверх и резко вниз-влево
+        const k = swing > 0.7 ? (1 - swing) / 0.3 : swing / 0.7;
+        holder.position.set(0.3, -0.32 + bob * 0.5 - (1 - swap) * 0.3, -0.5);
+        holder.rotation.set(-k * 1.3, 0.2 + k * 0.4, -0.3 - k * 0.5);
+      }
 
       vcam.aspect = camera.aspect;
       vcam.updateProjectionMatrix();

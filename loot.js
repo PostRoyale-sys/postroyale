@@ -4,10 +4,11 @@
 // Новый раунд (royale.js) — всё заново: сундуки закрыты, предметы с земли убраны, пакеты прошлого раунда игнорируются.
 
 import * as THREE from 'three';
-import { SX, SZ, WATER_Y, rng, seedOf } from './voxel.js';
+import { MAP, rng, seedOf } from './map.js';
 import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 
-const CHESTS = 42;                     // мир 192×192 — сундуков больше
+const CHESTS = 40;                     // не больше стольких сундуков за раунд
+const CHEST_CHANCE = 0.8;              // доля мест, где в раунде есть сундук
 const OPEN_RANGE = 4;
 const PICK_RANGE = 1.5;
 
@@ -120,22 +121,19 @@ export function createLoot(ctx) {
   const items = new Map();          // id → { ...item, id, pos, group }
   let seq = 0, round = 0, roundStart = 0;
 
-  // Места сундуков — из сида мира и номера раунда: на суше, не на кронах деревьев.
+  // Сундуки — на местах из карты (этажи домов, под деревьями): каждый раунд появляется случайная часть мест
+  // (одинаково у всех — от сида мира и номера раунда), как в Fortnite.
   function placeChests() {
     for (const c of chests) scene.remove(c.group);
     chests.length = 0;
     const w = ctx.world();
     const rand = rng(seedOf(w.id) ^ 0x51ed ^ Math.imul(round + 1, 2246822519));
-    for (let tries = 0; chests.length < CHESTS && tries < 2000; tries++) {
-      const x = 4 + Math.floor(rand() * (SX - 8)), z = 4 + Math.floor(rand() * (SZ - 8));
-      const y = w.surfaceY(x, z);
-      const top = w.get(x, y - 1, z);
-      if (y <= WATER_Y + 1 || (top !== 1 && top !== 4 && top !== 13)) continue;           // трава, песок, снег — не кроны деревьев
-      if (chests.some((c) => Math.abs(c.pos.x - x) + Math.abs(c.pos.z - z) < 12)) continue;
+    for (const s of w.chestSpots) {
+      if (rand() > CHEST_CHANCE || chests.length >= CHESTS) continue;
       const group = chestModel();
-      const pos = new THREE.Vector3(x + 0.5, y, z + 0.5);
+      const pos = new THREE.Vector3(s.x, s.y, s.z);
       group.position.copy(pos);
-      group.rotation.y = Math.floor(rand() * 4) * Math.PI / 2;
+      group.rotation.y = s.rot;
       scene.add(group);
       chests.push({ i: chests.length, pos, group, openedAt: 0 });
     }
@@ -168,14 +166,13 @@ export function createLoot(ctx) {
 
   // Разложить предметы веером вокруг точки (и разослать всем).
   function drop(center, list) {
-    const w = ctx.world();
     const out = [];
     list.forEach((it, k) => {
       const ang = (k / list.length) * Math.PI * 2 + Math.random() * 0.5;
       const r = 0.8 + Math.random() * 0.7;
-      const x = Math.max(1, Math.min(SX - 1, center.x + Math.cos(ang) * r));
-      const z = Math.max(1, Math.min(SZ - 1, center.z + Math.sin(ang) * r));
-      const y = w.surfaceY(Math.floor(x), Math.floor(z)) + 0.45;
+      const x = Math.max(1, Math.min(MAP - 1, center.x + Math.cos(ang) * r));
+      const z = Math.max(1, Math.min(MAP - 1, center.z + Math.sin(ang) * r));
+      const y = ctx.structures().ground(x, z, center.y + 0.5) + 0.45;
       const full = { ...it, id: `${ctx.selfId()}:${seq++}`, rr: round, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) };
       spawn(full);
       out.push(full);

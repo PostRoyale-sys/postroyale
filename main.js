@@ -1,11 +1,14 @@
-// PostCraft — общий воксельный мир по ссылке. Создал мир → ссылка ?w=<id> → кинул в X → все, кто открыл, играют вместе.
-// Мир генерируется из id (у всех одинаковый), поверх — правки игроков: синхронизация по P2P (net.js),
-// у каждого копия правок в localStorage — постройки не пропадают, пока их хранит хоть кто-то из игроков.
-// Оружие — только из сундуков (loot.js), бой — combat.js, модели оружия в руках — viewmodel.js.
+// PostRoyale — королевская битва по ссылке. Создал матч → ссылка ?w=<id> → кинул в X → все, кто открыл, играют вместе.
+// Карта (map.js) генерируется из id: гладкий остров, локации с домами, лес, камни, машины — у всех одинаковая.
+// Рельеф не ломается; ломаются постройки и объекты (structures.js): киркой добываешь дерево/кирпич/металл
+// и строишь стены, полы, рампы. Оружие — из сундуков (loot.js), бой — combat.js, раунды и шторм — royale.js.
+// Сеть — P2P (net.js), постройки живут один раунд.
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { World, SX, SY, SZ, WATER_Y, BLOCKS, HOTBAR, makeMaterials, toonGradient, buildChunk, chunksOf, chunkKey, CHUNKS_X, CHUNKS_Z, raycast, iconUrl } from './voxel.js';
+import { GameMap, MAP, G, WATER_Y } from './map.js';
+import { toonGradient, toon } from './art.js';
+import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
 import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
@@ -13,11 +16,12 @@ import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 
-const NAME = 'PostRoyale';                     // рабочее название — менять здесь (и в <title> index.html)
+const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
-const GRAVITY = 30, JUMP = 8.6, WALK = 4.6, RUN = 7.5, FLY = 11, REACH = 6;
+const GRAVITY = 30, JUMP = 9, WALK = 5.5, RUN = 8, FLY = 14, GLIDE = 13;
+const PICK_REACH = 3.4, PICK_RATE = 0.42, BUILD_RATE = 0.12;
 const POSE_HZ = 10;
-const FOV = 75, SCOPE_FOV = 22;
+const FOV = 80, SCOPE_FOV = 22;
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.name').forEach((n) => { n.textContent = NAME; });
@@ -35,13 +39,12 @@ $('nick').value = nick;
 
 if (worldId) {
   $('go').textContent = 'Join match';
-  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and drop in — loot chests, outrun the storm, be the last one standing.`;
+  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and drop in — loot chests, build, outrun the storm, be the last one standing.`;
 }
 
 // ---------- Сцена ----------
 
-// Графика в мультяшном стиле: cel-затенение (MeshToonMaterial), мягкие тени от солнца, градиентное небо,
-// пухлые облака, бирюзовая вода, лёгкая дымка у горизонта.
+// Мультяшный стиль: cel-затенение (MeshToonMaterial), мягкие тени от солнца, градиентное небо, облака, бирюзовое море.
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -53,20 +56,20 @@ $('game').appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const HORIZON = 0xbfe9ff, ZENITH = 0x2f8fff;
 scene.background = new THREE.Color(HORIZON);
-scene.fog = new THREE.Fog(HORIZON, 90, 240);
-const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 600);
+scene.fog = new THREE.Fog(HORIZON, 140, 420);
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 1000);
 scene.add(new THREE.HemisphereLight(0xd8efff, 0x7a6a48, 1.25));
 const sun = new THREE.DirectionalLight(0xfff0d8, 1.9);
 const SUN_DIR = new THREE.Vector3(-0.45, 1, 0.35).normalize();
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 260 });
+Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, near: 1, far: 300 });
 sun.shadow.bias = -0.0008;
-sun.shadow.normalBias = 0.04;
+sun.shadow.normalBias = 0.05;
 scene.add(sun, sun.target);
 
 // Небо: купол с вертикальным градиентом и солнечным ореолом, ездит за камерой.
-const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), new THREE.ShaderMaterial({
+const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: { top: { value: new THREE.Color(ZENITH) }, bottom: { value: new THREE.Color(HORIZON) }, sunDir: { value: SUN_DIR } },
   vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -87,25 +90,25 @@ const clouds = new THREE.Group();
   const geo = new THREE.IcosahedronGeometry(1, 2);
   let seed = 7;
   const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 30; i++) {
     const c = new THREE.Group();
     const n = 4 + (rnd() * 4 | 0);
     for (let k = 0; k < n; k++) {
       const p = new THREE.Mesh(geo, mat);
-      const sc = 5 + rnd() * 6;
+      const sc = 6 + rnd() * 7;
       p.scale.set(sc * 1.3, sc * 0.8, sc);
-      p.position.set((k - n / 2) * 6 + rnd() * 3, rnd() * 3, rnd() * 6 - 3);
+      p.position.set((k - n / 2) * 7 + rnd() * 3, rnd() * 3, rnd() * 6 - 3);
       c.add(p);
     }
-    c.position.set(SX / 2 + (rnd() - 0.5) * 520, 110 + rnd() * 40, SZ / 2 + (rnd() - 0.5) * 520);
+    c.position.set(MAP / 2 + (rnd() - 0.5) * 800, 130 + rnd() * 50, MAP / 2 + (rnd() - 0.5) * 800);
     clouds.add(c);
   }
   scene.add(clouds);
 }
 
-const water = new THREE.Mesh(new THREE.PlaneGeometry(SX * 6, SZ * 6).rotateX(-Math.PI / 2),
-  new THREE.MeshToonMaterial({ color: 0x29c9e6, gradientMap: toonGradient(), transparent: true, opacity: 0.78, emissive: 0x06425a }));
-water.position.set(SX / 2, WATER_Y + 0.85, SZ / 2);
+const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 8, MAP * 8).rotateX(-Math.PI / 2),
+  toon(0x29c9e6, { transparent: true, opacity: 0.82, emissive: 0x06425a }));
+water.position.set(MAP / 2, WATER_Y, MAP / 2);
 water.receiveShadow = true;
 scene.add(water);
 
@@ -119,96 +122,50 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
-  new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55 }));
-outline.visible = false;
-scene.add(outline);
+// ---------- Карта и постройки ----------
 
-// ---------- Мир и правки ----------
+let world = null, terrain = null;
+const structures = createStructures({ scene });
 
-let world = null, mats = null;
-const chunkMeshes = new Map();       // "cx,cz" → [InstancedMesh]
-const dirtyChunks = new Set();
-const edits = new Map();             // idx → { b, t } — правки поверх сгенерированного мира
-const storeKey = () => `pc:edits:v2:${worldId}`;     // v2 — мир 192×192 (старые сохранения 96×96 несовместимы)
-
-function applyEdit(idx, b, t) {
-  const cur = edits.get(idx);
-  if (cur && cur.t >= t) return false;          // уже есть более новая правка
-  edits.set(idx, { b, t });
-  world.cells[idx] = b;
-  const x = idx % SX, z = Math.floor(idx / SX) % SZ;
-  for (const k of chunksOf(x, z)) dirtyChunks.add(k);
-  return true;
-}
-
-let saveTimer = 0;
-function saveSoon() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(storeKey(), JSON.stringify([...edits].map(([i, e]) => [i, e.b, e.t]))); } catch (e) { /* квота */ }
-  }, 800);
-}
-
-function rebuildChunk(key) {
-  for (const m of chunkMeshes.get(key) || []) { scene.remove(m); m.dispose(); }
-  const [cx, cz] = key.split(',').map(Number);
-  const list = buildChunk(world, mats, cx, cz);
-  for (const m of list) scene.add(m);
-  chunkMeshes.set(key, list);
-  dirtyChunks.delete(key);
-}
-
-function rebuildAll() {
-  for (let cx = 0; cx < CHUNKS_X; cx++) for (let cz = 0; cz < CHUNKS_Z; cz++) rebuildChunk(chunkKey(cx, cz));
-}
-
-// ---------- Физика (AABB игрока против сетки) ----------
+// ---------- Физика игрока ----------
 
 const vel = new THREE.Vector3();
-let onGround = false, flying = false, moving = false;
+let onGround = false, flying = false, moving = false, gliding = false;
 const keys = new Set();
 const feet = new THREE.Vector3();          // позиция ног; камера — на высоте глаз
 const knockVel = new THREE.Vector3();
 
-function collides(px, py, pz) {
-  for (let x = Math.floor(px - HALF); x <= Math.floor(px + HALF); x++) {
-    for (let y = Math.floor(py); y <= Math.floor(py + HEIGHT - 0.01); y++) {
-      for (let z = Math.floor(pz - HALF); z <= Math.floor(pz + HALF); z++) {
-        if (world.solid(x, y, z)) return true;
-      }
-    }
-  }
-  return false;
-}
-
 function moveAxis(axis, d) {
   if (!d) return false;
-  const steps = Math.ceil(Math.abs(d) / 0.25);
+  const steps = Math.ceil(Math.abs(d) / 0.2);
   const s = d / steps;
   for (let i = 0; i < steps; i++) {
     feet[axis] += s;
-    if (collides(feet.x, feet.y, feet.z)) { feet[axis] -= s; return true; }
+    if (structures.blocked(feet.x, feet.y, feet.z, HEIGHT, HALF)) { feet[axis] -= s; return true; }
   }
   return false;
 }
 
-// Первый вход — в центре; после смерти — в случайной точке суши, чтобы не «кемперили» спавн.
-function spawn(random = false) {
-  let x = SX / 2 + 0.5, z = SZ / 2 + 0.5;
-  if (random) {
-    for (let i = 0; i < 200; i++) {
-      const rx = 6 + Math.random() * (SX - 12), rz = 6 + Math.random() * (SZ - 12);
-      if (world.surfaceY(Math.floor(rx), Math.floor(rz)) > WATER_Y + 1) { x = rx; z = rz; break; }
-    }
+const randomLand = () => {
+  for (let i = 0; i < 400; i++) {
+    const x = 20 + Math.random() * (MAP - 40), z = 20 + Math.random() * (MAP - 40);
+    if (world.height(x, z) > 3) return { x, z };
   }
-  feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01, z);
+  return { x: MAP / 2, z: MAP / 2 };
+};
+
+// Высадка: с высоты над случайной точкой суши, планирование до земли.
+function spawn(drop = true) {
+  const { x, z } = randomLand();
+  const g = world.height(x, z);
+  feet.set(x, drop ? Math.max(g, 30) + 70 : g + 0.05, z);
   vel.set(0, 0, 0);
+  gliding = drop;
 }
 
 function step(dt) {
   const scoped = isScoped();
-  const speed = flying ? FLY : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
+  const speed = flying ? FLY : gliding ? GLIDE : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd);
   fwd.y = 0;
@@ -225,84 +182,172 @@ function step(dt) {
   // Отброс от взрыва гасится за полсекунды.
   move.addScaledVector(knockVel, dt);
   knockVel.multiplyScalar(Math.max(0, 1 - 4 * dt));
-  moveAxis('x', move.x);
-  moveAxis('z', move.z);
+
   if (flying) {
-    const dy = (keys.has('Space') ? FLY : 0) - (keys.has('KeyC') ? FLY : 0);
-    moveAxis('y', dy * dt);
+    feet.x += move.x; feet.z += move.z;
+    feet.y += ((keys.has('Space') ? FLY : 0) - (keys.has('KeyC') ? FLY : 0)) * dt;
+    feet.y = Math.max(feet.y, world.height(feet.x, feet.z) + 0.2);
   } else {
+    moveAxis('x', move.x);
+    moveAxis('z', move.z);
     if (keys.has('Space') && onGround) { vel.y = JUMP; onGround = false; }
-    vel.y = Math.max(vel.y - GRAVITY * dt, -40);
-    const hit = moveAxis('y', vel.y * dt);
-    if (hit) { if (vel.y < 0) onGround = true; vel.y = 0; } else onGround = false;
-    if (feet.y < WATER_Y + 1) { vel.y = Math.max(vel.y, -2.5); if (keys.has('Space')) vel.y = 3.5; }
+    vel.y = Math.max(vel.y - GRAVITY * dt, gliding ? -9 : -45);
+    let ny = feet.y + vel.y * dt;
+    if (vel.y > 0) {
+      const top = structures.ceiling(feet.x, feet.y, ny, feet.z, HEIGHT, HALF);
+      if (ny > top) { ny = top; vel.y = 0; }
+    }
+    const g = structures.ground(feet.x, feet.z, Math.max(feet.y, ny), HALF);
+    // На земле прилипаем к опоре, если она чуть ниже (спуск по рампе и склону без подпрыгиваний).
+    if (ny <= g || (onGround && vel.y <= 0 && feet.y - g < 0.6)) { ny = g; vel.y = 0; onGround = true; gliding = false; }
+    else onGround = false;
+    feet.y = ny;
+    // Вода: плаваем у поверхности.
+    if (feet.y < WATER_Y - 1.1) { vel.y = Math.max(vel.y, -2); if (keys.has('Space') || feet.y < WATER_Y - 1.4) vel.y = 3; }
   }
-  if (feet.y < -20) spawn(true);
+  feet.x = Math.max(-60, Math.min(MAP + 60, feet.x));
+  feet.z = Math.max(-60, Math.min(MAP + 60, feet.z));
   player.position.set(feet.x, feet.y + EYE, feet.z);
 }
 
-// ---------- Хотбар: 3 слота оружия, блоки ----------
-// Клавиши: 1–3 — оружие (пустой слот — руки: ломать блоки, открывать сундуки), 4–9 — первые блоки, колесо — всё по кругу.
+// ---------- Хотбар: кирка + 3 слота оружия; режим стройки ----------
+// 1 — кирка, 2–4 — оружие, колесо — по кругу. Z стена, X пол, C рампа, V — материал, ЛКМ — поставить (можно зажать).
 
-const ENTRIES = [{ weapon: 0 }, { weapon: 1 }, { weapon: 2 }, ...HOTBAR.map((b) => ({ block: b }))];
+const ENTRIES = [{ pick: true }, { weapon: 0 }, { weapon: 1 }, { weapon: 2 }];
+const PICKAXE = { type: 'pickaxe', rarity: 0 };
 let slot = 0;
-const lookDir = new THREE.Vector3();
+let buildType = null, buildMat = 0;
+const mats = Object.fromEntries(MATS.map((m) => [m, 0]));
+const PIECE_NAMES = { w: 'Wall', f: 'Floor', r: 'Ramp' };
 
-function target() {
-  camera.getWorldDirection(lookDir);
-  return raycast(world, camera.getWorldPosition(new THREE.Vector3()), lookDir, REACH);
-}
-
-function edit(x, y, z, b) {
-  if (!world.inside(x, y, z)) return;
-  const idx = world.idx(x, y, z);
-  const t = Date.now();
-  if (applyEdit(idx, b, t)) {
-    net?.edit({ i: idx, b, t });
-    saveSoon();
-  }
-}
-
-// Взрыв: стрелявший разом убирает блоки и шлёт их всем одной пачкой.
-function destroyBlocks(list) {
-  const t = Date.now(), batch = [];
-  for (const [x, y, z] of list) {
-    const i = world.idx(x, y, z);
-    if (applyEdit(i, 0, t)) batch.push([i, 0, t]);
-  }
-  if (batch.length) { net?.sync({ e: batch }); saveSoon(); }
-}
-
-const currentWeapon = () => { const e = ENTRIES[slot]; return e.weapon !== undefined ? combat.slots[e.weapon] : null; };
+const currentWeapon = () => { const e = ENTRIES[slot]; return !buildType && e.weapon !== undefined ? combat.slots[e.weapon] : null; };
+const holding = () => (buildType ? null : ENTRIES[slot].pick ? PICKAXE : currentWeapon());
 let scopeHeld = false;
 const isScoped = () => scopeHeld && !!currentWeapon() && !!WEAPONS[currentWeapon().type].scope;
 let mouseDown = false;
+const eye = () => camera.getWorldPosition(new THREE.Vector3());
+const look = () => camera.getWorldDirection(new THREE.Vector3());
+
+// Кирка: игрок рядом — 20 урона; постройка/объект — урон и материалы.
+let nextSwing = 0;
+function swingPickaxe(now) {
+  if (now < nextSwing || !royale.alive) return;
+  nextSwing = now + PICK_RATE;
+  vm.kick('pickaxe');
+  combat.sfx('swing');
+  const o = eye(), d = look();
+  const chest = loot.chestNear(o, d);
+  if (chest) { openChest(chest); return; }
+  for (const [peerId, p] of others) {
+    if (p.target?.a === false) continue;
+    const c = p.group.position;
+    const t = rayBoxPlayer(o, d, c);
+    if (t < PICK_REACH) { net?.hit({ dmg: 20, by: nick, w: 'pickaxe' }, peerId); hitmarker(); combat.sfx('chop'); return; }
+  }
+  const hit = structures.raycast(o, d, PICK_REACH);
+  if (hit?.e) {
+    combat.sfx('chop');
+    chips(hit.point, hit.e);
+    damageStructure(hit.e.k, PICK_DMG, true);
+  }
+}
+function rayBoxPlayer(o, d, c) {
+  const min = new THREE.Vector3(c.x - 0.45, c.y, c.z - 0.45), max = new THREE.Vector3(c.x + 0.45, c.y + 1.9, c.z + 0.45);
+  let t0 = 0, t1 = Infinity;
+  for (const a of ['x', 'y', 'z']) {
+    if (Math.abs(d[a]) < 1e-9) { if (o[a] < min[a] || o[a] > max[a]) return Infinity; continue; }
+    let ta = (min[a] - o[a]) / d[a], tb = (max[a] - o[a]) / d[a];
+    if (ta > tb) [ta, tb] = [tb, ta];
+    t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+    if (t0 > t1) return Infinity;
+  }
+  return t0;
+}
+
+// Урон постройке: локально + всем. harvest — удар киркой: материалы себе.
+function damageStructure(k, dmg, harvest) {
+  const res = structures.damage(k, dmg);
+  if (!res) return;
+  net?.edit({ k, x: dmg, rr: royale.round });
+  if (harvest) {
+    const { mat, n } = structures.harvestOf(res.e, res.destroyed);
+    const before = mats[mat];
+    mats[mat] = Math.min(MAT_MAX, mats[mat] + n);
+    if (mats[mat] > before) pointsToast(`+${mats[mat] - before} ${MAT_INFO[mat].name}`);
+    renderMats();
+  }
+}
+
+// Щепки/осколки при ударе киркой.
+const chipGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+const fxList = [];
+function chips(p, e) {
+  const color = e.kind === 'piece' ? MAT_INFO[e.m].tint : e.type === 'rock' ? 0x9aa3ad : e.type === 'car' ? 0xc0c8d4 : 0xb07a45;
+  const mat = new THREE.MeshBasicMaterial({ color });
+  for (let i = 0; i < 6; i++) {
+    const m = new THREE.Mesh(chipGeo, mat);
+    m.position.copy(p);
+    scene.add(m);
+    fxList.push({ m, v: new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.3, Math.random() - 0.5).multiplyScalar(6), age: 0 });
+  }
+}
+function updateFx(dt) {
+  for (let i = fxList.length - 1; i >= 0; i--) {
+    const f = fxList[i];
+    f.age += dt;
+    f.v.y -= 20 * dt;
+    f.m.position.addScaledVector(f.v, dt);
+    if (f.age > 0.6) { scene.remove(f.m); fxList.splice(i, 1); }
+  }
+}
+
+// Стройка: деталь перед игроком за BUILD_COST материала.
+let plan = null, nextBuild = 0, lastBuiltKey = '';
+function updatePlan() {
+  if (!buildType || !royale.alive) { plan = null; structures.ghost(null); return; }
+  const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+  plan = structures.plan(buildType, feet, e.y, e.x, MATS[buildMat]);
+  const ok = mats[plan.m] >= BUILD_COST && !structures.has(plan.k);
+  structures.ghost(structures.has(plan.k) ? null : plan, ok);
+}
+function placePiece(now) {
+  if (!plan || now < nextBuild || structures.has(plan.k)) return;
+  if (mats[plan.m] < BUILD_COST) { toast(`Need ${BUILD_COST} ${MAT_INFO[plan.m].name}`); nextBuild = now + 0.5; return; }
+  const { k, t, ix, iy, iz, o, m } = plan;
+  if (!structures.add({ k, t, ix, iy, iz, o, m })) return;
+  mats[m] -= BUILD_COST;
+  nextBuild = now + BUILD_RATE;
+  lastBuiltKey = k;
+  combat.sfx('build');
+  net?.edit({ a: 1, k, t, ix, iy, iz, o, m, rr: royale.round });
+  renderMats();
+}
+
+function enterBuild(t) {
+  if (!royale.alive) return;
+  if (buildType === t) { exitBuild(); return; }
+  buildType = t;
+  scopeHeld = false;
+  combat.cancelReload();
+  renderHotbar();
+  showName(`${PIECE_NAMES[t]} · ${MAT_INFO[MATS[buildMat]].name}`, MAT_INFO[MATS[buildMat]].color);
+}
+function exitBuild() { buildType = null; structures.ghost(null); renderHotbar(); }
 
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !world) return;
-  const entry = ENTRIES[slot];
   const w = currentWeapon();
   if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
-  if (e.button === 0) mouseDown = true;
-  if (w) { if (e.button === 0) combat.fire(entry.weapon, performance.now() / 1000); return; }
-
-  // Руки/блоки: сначала сундук под прицелом, потом блоки.
-  if (e.button === 0) {
-    const chest = loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
-    if (chest) { openChest(chest); return; }
-  }
-  if (!royale.alive) return;                                     // наблюдатель мир не трогает
-  const hit = target();
-  if (!hit) return;
-  if (e.button === 0) {
-    if (hit.y > 0) edit(hit.x, hit.y, hit.z, 0);                 // бедрок (y=0) не ломаем
-  } else if (e.button === 2 && entry.block) {
-    const x = hit.x + hit.normal[0], y = hit.y + hit.normal[1], z = hit.z + hit.normal[2];
-    if (world.get(x, y, z) || y >= SY) return;
-    world.set(x, y, z, 1);                                       // проверка: не ставим блок в себя
-    const inside = collides(feet.x, feet.y, feet.z);
-    world.set(x, y, z, 0);
-    if (!inside) edit(x, y, z, entry.block);
+  if (e.button === 2 && buildType) { exitBuild(); return; }
+  if (e.button !== 0) return;
+  mouseDown = true;
+  const now = performance.now() / 1000;
+  if (buildType) { placePiece(now); return; }
+  if (ENTRIES[slot].pick) { swingPickaxe(now); return; }
+  if (w) combat.fire(ENTRIES[slot].weapon, now);
+  else {
+    const chest = loot.chestNear(eye(), look());
+    if (chest) openChest(chest);
   }
 });
 addEventListener('mouseup', (e) => {
@@ -311,7 +356,6 @@ addEventListener('mouseup', (e) => {
 });
 addEventListener('contextmenu', (e) => e.preventDefault());
 
-
 // ---------- HUD ----------
 
 function renderHotbar() {
@@ -319,8 +363,11 @@ function renderHotbar() {
   bar.textContent = '';
   ENTRIES.forEach((entry, i) => {
     const d = document.createElement('div');
-    d.className = (i === slot ? 'on ' : '') + (entry.weapon !== undefined ? 'wslot' : '');
-    if (entry.weapon !== undefined) {
+    d.className = `wslot${i === slot && !buildType ? ' on' : ''}`;
+    if (entry.pick) {
+      d.innerHTML = '<b>⛏</b><small>Pickaxe</small>';
+      d.title = 'Pickaxe — harvest wood, brick, metal';
+    } else {
       const w = combat.slots[entry.weapon];
       if (w) {
         const spec = WEAPONS[w.type];
@@ -328,33 +375,50 @@ function renderHotbar() {
         d.innerHTML = `<b>${spec.tag}</b><small>${w.mag}/${combat.ammo[spec.ammo]}</small>`;
         d.title = weaponLabel(w);
       } else {
-        d.innerHTML = '<b class="empty">✋</b>';
-        d.title = 'Hands — break blocks, open chests';
+        d.innerHTML = '<b class="empty">·</b>';
+        d.title = 'Empty — loot chests';
       }
-    } else {
-      const img = document.createElement('img');
-      img.src = iconUrl(mats[entry.block]);
-      d.appendChild(img);
     }
-    if (i < 9) { const s = document.createElement('span'); s.textContent = i + 1; d.appendChild(s); }
+    const s = document.createElement('span'); s.textContent = i + 1; d.appendChild(s);
     d.addEventListener('click', () => pick(i));
     bar.appendChild(d);
   });
+  // Детали стройки
+  for (const [t, key] of [['w', 'Z'], ['f', 'X'], ['r', 'C']]) {
+    const d = document.createElement('div');
+    d.className = `bslot${buildType === t ? ' on' : ''}`;
+    d.innerHTML = `<i class="pc-${t}"></i><span>${key}</span>`;
+    d.title = PIECE_NAMES[t];
+    d.addEventListener('click', () => enterBuild(t));
+    bar.appendChild(d);
+  }
+  renderMats();
+}
+
+function renderMats() {
+  $('mats').innerHTML = MATS.map((m, i) =>
+    `<div class="${i === buildMat ? 'on' : ''}${mats[m] ? '' : ' zero'}"><i style="background:${MAT_INFO[m].color}"></i>${MAT_INFO[m].name}<b>${mats[m]}</b></div>`).join('') +
+    '<p>V — switch material</p>';
 }
 
 let nameTimer = 0;
-function pick(i) {
-  scopeHeld = false;
-  combat.cancelReload();
-  slot = (i + ENTRIES.length) % ENTRIES.length;
-  [...$('hotbar').children].forEach((d, j) => d.classList.toggle('on', j === slot));
-  const entry = ENTRIES[slot];
-  const w = currentWeapon();
-  $('blockname').textContent = entry.weapon !== undefined ? (w ? weaponLabel(w) : 'Hands') : BLOCKS[entry.block].name;
-  $('blockname').style.color = w ? RARITY[w.rarity].color : '';
+function showName(text, color = '') {
+  $('blockname').textContent = text;
+  $('blockname').style.color = color;
   $('blockname').style.opacity = 1;
   clearTimeout(nameTimer);
   nameTimer = setTimeout(() => { $('blockname').style.opacity = 0; }, 1400);
+}
+
+function pick(i) {
+  scopeHeld = false;
+  combat.cancelReload();
+  if (buildType) { buildType = null; structures.ghost(null); }
+  slot = (i + ENTRIES.length) % ENTRIES.length;
+  renderHotbar();
+  const entry = ENTRIES[slot];
+  const w = currentWeapon();
+  showName(entry.pick ? 'Pickaxe' : w ? weaponLabel(w) : 'Empty slot', w ? RARITY[w.rarity].color : '');
 }
 addEventListener('wheel', (e) => { if (controls.isLocked) pick(slot + Math.sign(e.deltaY)); }, { passive: true });
 
@@ -369,9 +433,20 @@ function renderStatus() {
   if (world) renderHotbar();
 }
 
+// Название локации — при входе в неё.
+let lastPoi = null;
+function updatePoi() {
+  const p = world.poiAt(feet.x, feet.z, 4);
+  if (p === lastPoi) return;
+  lastPoi = p;
+  if (!p) return;
+  $('poi').textContent = p.name;
+  $('poi').classList.remove('on'); void $('poi').offsetWidth; $('poi').classList.add('on');
+}
+
 // ---------- Другие игроки ----------
 
-const others = new Map();     // peerId → { group, target: {x,y,z,r,g,q}, name, gun }
+const others = new Map();     // peerId → { group, target: {x,y,z,r,g,q,a,rr,h}, name, gun }
 
 function nameSprite(text, color) {
   const c = document.createElement('canvas');
@@ -386,25 +461,27 @@ function nameSprite(text, color) {
   g.fillText(text, 128, 43);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
   s.scale.set(2, 0.5, 1);
-  s.position.y = 2.25;
+  s.position.y = 2.35;
   return s;
 }
 
+// Мультяшный персонаж: капсула-тело, круглая голова с глазами, ноги.
 function avatar(name, tier = -1) {
   const color = colorOf(name);
   const g = new THREE.Group();
-  const toon = (c) => new THREE.MeshToonMaterial({ color: c, gradientMap: toonGradient() });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.35), toon(color));
-  body.position.y = 0.95;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), toon(0xffd2a8));
-  head.position.y = 1.75;
-  const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.02), new THREE.MeshBasicMaterial({ color: 0x111111 }));
-  eyes.position.set(0, 1.8, -0.26);
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.3), toon(0x34406a));
-  legs.position.y = 0.2;
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.55, 6, 12), toon(color));
+  body.position.y = 1.05;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), toon(0xffd2a8));
+  head.position.y = 1.72;
+  const eyeGeo = new THREE.SphereGeometry(0.05, 8, 6), eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  const e1 = new THREE.Mesh(eyeGeo, eyeMat), e2 = new THREE.Mesh(eyeGeo, eyeMat);
+  e1.position.set(-0.1, 1.76, -0.27); e2.position.set(0.1, 1.76, -0.27);
+  const legGeo = new THREE.CapsuleGeometry(0.11, 0.4, 4, 8), legMat = toon(0x34406a);
+  const l1 = new THREE.Mesh(legGeo, legMat), l2 = new THREE.Mesh(legGeo, legMat);
+  l1.position.set(-0.14, 0.32, 0); l2.position.set(0.14, 0.32, 0);
+  for (const m of [body, head, l1, l2]) m.castShadow = true;
   const t = TIERS[tier];
-  for (const m of [body, head, legs]) m.castShadow = true;
-  g.add(body, head, eyes, legs, nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
+  g.add(body, head, e1, e2, l1, l2, nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
   return g;
 }
 
@@ -420,7 +497,7 @@ function upsertOther(peerId, d) {
   }
   o.target = d;
   o.group.visible = d.a !== false;              // наблюдателей не видно
-  // Оружие в руках у игрока: тип g и редкость q из pose.
+  // Что в руках: тип g и редкость q из pose.
   const gk = d.g ? `${d.g}:${d.q}` : '';
   if (o.gunKey !== gk) {
     if (o.gun) o.group.remove(o.gun);
@@ -428,8 +505,9 @@ function upsertOther(peerId, d) {
     o.gunKey = gk;
     if (d.g) {
       o.gun = weaponModel(d.g, d.q || 0);
-      o.gun.position.set(0.32, 1.12, -0.25);
-      if (d.g === 'bazooka') o.gun.position.set(0.3, 1.55, 0.05);
+      o.gun.position.set(0.34, 1.12, -0.25);
+      if (d.g === 'bazooka') o.gun.position.set(0.32, 1.5, 0.05);
+      if (d.g === 'pickaxe') o.gun.rotation.x = 1.0;
       o.group.add(o.gun);
     }
   }
@@ -454,7 +532,7 @@ function say(name, text) {
   while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
 }
 
-const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪' };
+const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏' };
 function killfeed(by, victim, w) {
   const line = document.createElement('div');
   line.className = 'kill';
@@ -489,8 +567,9 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
 }
+function hitmarker() { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); }
 
-// ---------- Бой, лут, машины ----------
+// ---------- Бой, лут, раунды ----------
 
 let shakeAmt = 0;
 let swapCandidate = null;
@@ -498,6 +577,7 @@ let swapCandidate = null;
 const ctx = {
   scene, camera,
   world: () => world,
+  structures: () => structures,
   feet: () => feet,
   others,
   net: () => net,
@@ -508,6 +588,7 @@ const ctx = {
   moving: () => moving,
   canPlay: () => royale.alive,
   died: (by) => royale.eliminate(by),
+  damageStructure,
   // Раунд (royale.js)
   onRoundStart, onEliminated, onWinner,
   stormHud,
@@ -517,10 +598,9 @@ const ctx = {
   pointsToast, onSeason: renderSeason,
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
-  hitmarker: () => { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); },
+  hitmarker,
   shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
   knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
-  destroyBlocks,
   dropItems: (pos, items) => loot.drop(pos, items),
   recoil: (type) => vm.kick(type),
 };
@@ -553,16 +633,21 @@ function banner(title, sub = '', ms = 3500) {
 }
 
 function onRoundStart(r, alive) {
+  structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   loot.resetRound(r, r * ROUND_MS);
   combat.resetAll();
+  for (const m of MATS) mats[m] = 0;
+  buildType = null;
   goldenKeyRound = -1;
+  renderHotbar();
   if (alive) {
     flying = false;
     spawn(true);
     season.roundStarted();
-    banner('DROP!', 'Grab weapons from chests — the storm closes in 30s');
+    banner('DROP!', 'Glide down, grab weapons from chests — the storm closes in 30s');
   } else {
     flying = true;
+    gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
     banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · F fly`, 5000);
   }
@@ -570,6 +655,9 @@ function onRoundStart(r, alive) {
 
 function onEliminated(place, by) {
   flying = true;
+  gliding = false;
+  buildType = null;
+  structures.ghost(null);
   vel.set(0, 0, 0);
   feet.y += 6;
   season.placed(place);
@@ -634,12 +722,19 @@ function renderSeason() {
 let net = null;
 let lastPose = 0, lastSent = '';
 
+// Правка постройки от другого игрока: поставил деталь или нанёс урон.
+function onStructEdit(d) {
+  if (d.rr !== undefined && d.rr !== royale.round) return;
+  if (d.a) structures.add({ k: d.k, t: d.t, ix: d.ix, iy: d.iy, iz: d.iz, o: d.o, m: d.m });
+  else if (d.x) structures.damage(d.k, d.x);
+}
+
 let startNet = function () {
   try {
     net = connect(worldId, {
       join(peerId) {
         peers.add(peerId);
-        if (edits.size) net.sync({ e: [...edits].map(([i, e]) => [i, e.b, e.t]) }, peerId);
+        net.sync({ s: structures.syncList(), rr: royale.round }, peerId);
         net.pose(poseData(), peerId);
         loot.syncTo(peerId);
         updateCount();
@@ -651,12 +746,8 @@ let startNet = function () {
         updateCount();
       },
       pose(peerId, d) { upsertOther(peerId, d); },
-      edit(peerId, d) { if (applyEdit(d.i, d.b, d.t)) saveSoon(); },
-      sync(peerId, d) {
-        let changed = false;
-        for (const [i, b, t] of d.e || []) changed = applyEdit(i, b, t) || changed;
-        if (changed) saveSoon();
-      },
+      edit(peerId, d) { onStructEdit(d); },
+      sync(peerId, d) { if (d.rr === royale.round && d.s) structures.applySync(d.s); },
       chat(peerId, d) { say(d.n, d.t); },
       shot(peerId, d) { combat.onShot(peerId, d); },
       hit(peerId, d) { combat.onHit(peerId, d); },
@@ -676,14 +767,14 @@ let startNet = function () {
     net = null;
     updateCount();
   }
-}
+};
 
 function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick, a: royale.alive, rr: royale.round };
-  if (season.tier >= 0) d.h = season.tier;
-  const w = currentWeapon();
+  const w = holding();
   if (w) { d.g = w.type; d.q = w.rarity; }
+  if (season.tier >= 0) d.h = season.tier;
   return d;
 }
 
@@ -706,18 +797,28 @@ addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
   if (!world || !controls.isLocked) return;
-  if (e.code === 'KeyF' && !royale.alive) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }   // полёт — только наблюдателю
+  if (e.code === 'KeyF' && !royale.alive) { flying = !flying; vel.y = 0; toast(flying ? 'Fly on' : 'Fly off'); }
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (e.code === 'KeyE') {
-    const chest = loot.chestNear(camera.getWorldPosition(new THREE.Vector3()), camera.getWorldDirection(new THREE.Vector3()));
+    const chest = loot.chestNear(eye(), look());
     if (chest) openChest(chest);
+  }
+  if (royale.alive) {
+    if (e.code === 'KeyZ') enterBuild('w');
+    if (e.code === 'KeyX') enterBuild('f');
+    if (e.code === 'KeyC') enterBuild('r');
+    if (e.code === 'KeyV') {
+      buildMat = (buildMat + 1) % MATS.length;
+      renderMats();
+      showName(MAT_INFO[MATS[buildMat]].name, MAT_INFO[MATS[buildMat]].color);
+    }
   }
   if (e.code === 'KeyR') { const en = ENTRIES[slot]; if (en.weapon !== undefined) combat.reload(en.weapon); }
   if (e.code === 'KeyG' && swapCandidate && royale.alive) {
     const en = ENTRIES[slot];
     const into = en.weapon !== undefined ? en.weapon : 0;
     loot.swap(swapCandidate, into, combat);
-    pick(into);
+    pick(into + 1);
   }
   if (e.code === 'KeyQ' && royale.alive) {
     const en = ENTRIES[slot];
@@ -726,7 +827,7 @@ addEventListener('keydown', (e) => {
       loot.drop(feet.clone(), [{ k: 'weapon', w: w.type, r: w.rarity, a: w.mag }]);
     }
   }
-  const n = e.code.match(/^Digit([1-9])$/);
+  const n = e.code.match(/^Digit([1-4])$/);
   if (n) pick(+n[1] - 1);
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -745,7 +846,7 @@ renderer.domElement.addEventListener('click', () => { if (world && !controls.isL
 const link = () => `${location.origin}${location.pathname}?w=${worldId}`;
 $('share').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(link()); toast('Link copied'); } catch (e) { /* без буфера — просто откроем X */ }
-  const text = `Drop into my ${NAME} match 🔫🌪 — loot chests, outrun the storm, last one standing wins. Open and play, no install`;
+  const text = `Drop into my ${NAME} match 🔫🌪 — loot chests, build, outrun the storm, last one standing wins. Open and play, no install`;
   open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(link())}`, '_blank', 'noopener');
 });
 
@@ -758,20 +859,18 @@ function start() {
     worldId = randId();
     history.replaceState(null, '', `?w=${worldId}`);
   }
-  $('status').textContent = 'Generating the world…';
+  $('status').textContent = 'Generating the island…';
   setTimeout(() => {
-    world = new World(worldId);
-    mats = makeMaterials();
-    try {
-      for (const [i, b, t] of JSON.parse(localStorage.getItem(storeKey()) || '[]')) applyEdit(i, b, t);
-    } catch (e) { /* битое сохранение — начнём с чистого мира */ }
-    rebuildAll();
-    spawn();
+    world = new GameMap(worldId);
+    terrain = world.mesh();
+    scene.add(terrain);
+    structures.load(world);
+    spawn(false);
     royale.init();              // раунд по часам: сундуки, шторм, жив/наблюдаешь
     pick(0);
     $('wname').textContent = `🌍 ${worldId}`;
     $('intro').hidden = true;
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm']) $(id).hidden = false;
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats']) $(id).hidden = false;
     renderSeason();
     $('pause').hidden = false;
     document.title = `${worldId} — ${NAME}`;
@@ -789,37 +888,45 @@ if (params.has('shot')) {
   $('nick').value = 'Demo';
   start();
   setTimeout(() => {
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross']) $(id).hidden = true;
-    feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + up, z);
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross', 'mats']) $(id).hidden = true;
+    feet.set(x, world.height(x, z) + up, z);
     player.position.set(feet.x, feet.y + EYE, feet.z);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
     flying = true;
+    gliding = false;
   }, 60);
 }
 $('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
 
 // ---------- Цикл ----------
 
-let last = performance.now(), lastRebuild = 0;
+let last = performance.now();
 renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  const t = now / 1000;
   if (world) {
     if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + EYE, feet.z);
 
-    // Автоматическое оружие стреляет, пока зажата ЛКМ.
+    // Зажатая ЛКМ: автоматическое оружие стреляет, кирка машет, стройка ставит детали.
     const en = ENTRIES[slot], w = currentWeapon();
-    if (mouseDown && controls.isLocked && w && WEAPONS[w.type].auto) combat.fire(en.weapon, now / 1000);
+    if (mouseDown && controls.isLocked) {
+      if (buildType) placePiece(t);
+      else if (en.pick) swingPickaxe(t);
+      else if (w && WEAPONS[w.type].auto) combat.fire(en.weapon, t);
+    }
     combat.update(dt);
     loot.update(dt, now);
     royale.update(dt);
+    updateFx(dt);
+    updatePlan();
+    updatePoi();
 
     // Подбор лута и подсказки.
     swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
-    const eyePos = camera.getWorldPosition(new THREE.Vector3());
-    const chest = controls.isLocked && royale.alive ? loot.chestNear(eyePos, camera.getWorldDirection(new THREE.Vector3())) : null;
-    const prompt = chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : '';
+    const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
+    const prompt = chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     const rl = combat.reloading;
     const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
@@ -834,14 +941,6 @@ renderer.setAnimationLoop((now) => {
       player.position.add(new THREE.Vector3((Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt));
       shakeAmt *= Math.max(0, 1 - 6 * dt);
     }
-    // Перестраиваем только задетые чанки, не больше 3 за кадр.
-    if (dirtyChunks.size && now - lastRebuild > 40) {
-      lastRebuild = now;
-      for (const k of [...dirtyChunks].slice(0, 3)) rebuildChunk(k);
-    }
-    const hit = controls.isLocked && !w && !chest ? target() : null;
-    outline.visible = !!hit;
-    if (hit) outline.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
     for (const o of others.values()) {
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y, o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
@@ -849,23 +948,23 @@ renderer.setAnimationLoop((now) => {
     sendPose(now);
     updateCrosshair(w, en);
   }
-  // Солнце с тенью ездит за игроком (тени — только вокруг, карта теней 120×120); небо — за камерой.
+  // Солнце с тенью ездит за игроком (тени — только вокруг); небо — за камерой.
   const c = player.position;
   sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));
-  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 150);
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 180);
   sky.position.copy(c);
-  for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > SX / 2 + 280) cl.position.x -= 560; }
+  for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
   renderer.render(scene, camera);
   if (world && (controls.isLocked || debugView)) {
-    const w = currentWeapon();
-    vm.set(w);
-    vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!w && w.mag > 0 });
+    const h = holding();
+    vm.set(h);
+    vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
   }
 });
 
 let debugView = false;           // для скриншотов в тестах: рисовать оружие в руках без захвата мыши
 
-// Прицел: 4 штриха расходятся по разбросу оружия (и шире на бегу/в прыжке); у дробовика — кольцо; в оптике и с руками — точка.
+// Прицел: 4 штриха расходятся по разбросу оружия; у дробовика — кольцо; в оптике скрыт; кирка/стройка — точка.
 function updateCrosshair(w, en) {
   const c = $('cross');
   const px = innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));     // радианы → пиксели
@@ -877,9 +976,12 @@ function updateCrosshair(w, en) {
 
 // Для отладки и тестов.
 window.__pc = {
-  get world() { return world; }, edits, get net() { return net; }, get others() { return others; }, peers, edit,
-  combat, loot, pick, royale, season,
+  get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
+  combat, loot, pick, royale, season, structures, mats,
+  build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
+  get plan() { return plan; },
+  get feet() { return feet; }, step: (dt) => step(dt), keys,
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
-  tp(x, z, up = 0) { feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + 0.01 + up, z); player.position.set(feet.x, feet.y + EYE, feet.z); },
+  tp(x, z, up = 0) { feet.set(x, structures.ground(x, z, 999) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
 };

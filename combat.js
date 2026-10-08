@@ -1,9 +1,8 @@
 // Бой: оружие разной редкости, патроны, магазин и перезарядка, здоровье и щит (броня), взрывы, эффекты, звуки.
 // Оружие не выдаётся — его находят в сундуках (loot.js). У игрока 3 слота под оружие и запас патронов по типам.
-// Кто стрелял, тот и считает попадания и разрушения: шлёт hit тому, в кого попал, и пачку правок блоков всем.
+// Кто стрелял, тот и считает попадания и разрушения: шлёт hit тому, в кого попал, и урон постройкам всем.
 
 import * as THREE from 'three';
-import { SY, WATER_Y, raycast } from './voxel.js';
 
 // ---------- Справочники ----------
 
@@ -35,7 +34,7 @@ export const AMMO = {
 
 export const MAX_SHIELD = 100;
 const ROCKET = { speed: 34, gravity: 3, life: 5 };
-const EXPLODE_R = 3.2, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус разрушения, радиус и сила урона
+const EXPLODE_R = 4, BUILD_DMG = 250, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус и урон по постройкам, по игрокам
 
 export const weaponLabel = (w) => `${RARITY[w.rarity].name} ${WEAPONS[w.type].name}`;
 
@@ -95,6 +94,9 @@ export function createCombat(ctx) {
     bazooka: (v) => noise(0.45, 500, 0.45 * v),
     boom: (v) => noise(0.9, 400, 0.9 * v),
     pickup: (v) => noise(0.05, 5000, 0.15 * v, 'highpass'),
+    chop: (v) => noise(0.09, 1400, 0.4 * v),
+    build: (v) => noise(0.06, 2600, 0.25 * v),
+    swing: (v) => noise(0.08, 3800, 0.12 * v, 'highpass'),
   };
   const sound = (kind, p) => SOUNDS[kind]?.(p ? volAt(p) : 1);
 
@@ -166,10 +168,9 @@ export function createCombat(ctx) {
     return list;
   }
 
-  function blockDistance(o, d, range) {
-    const hit = raycast(ctx.world(), o, d, range);
-    if (!hit) return range;
-    return rayBox(o, d, new THREE.Vector3(hit.x, hit.y, hit.z), new THREE.Vector3(hit.x + 1, hit.y + 1, hit.z + 1));
+  // Ближайшее препятствие на луче: постройка/объект (её и бьём) или рельеф.
+  function obstacle(o, d, range) {
+    return ctx.structures().raycast(o, d, range) || { t: range, e: null };
   }
 
   // ---------- Стрельба ----------
@@ -183,15 +184,18 @@ export function createCombat(ctx) {
     const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
+    const dmgBuild = new Map();  // постройка → урон
     const tlist = targets();
     for (let i = 0; i < spec.pellets; i++) {
       const d = base.clone();
       if (spread) d.add(new THREE.Vector3((Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread, (Math.random() - 0.5) * 2 * spread)).normalize();
-      let tBest = blockDistance(o, d, spec.range), best = null;
+      const ob = obstacle(o, d, spec.range);
+      let tBest = ob.t, best = null;
       for (const t of tlist) {
         const tt = rayBox(o, d, t.min, t.max);
         if (tt < tBest) { tBest = tt; best = t; }
       }
+      if (!best && ob.e) dmgBuild.set(ob.e.k, (dmgBuild.get(ob.e.k) || 0) + spec.dmg * mult);
       const end = o.clone().addScaledVector(d, Math.min(tBest, spec.range));
       ends.push(end);
       tracer(muzzle, end, spec.pellets > 1 ? 0xffd38a : 0xffe066);
@@ -204,6 +208,7 @@ export function createCombat(ctx) {
       ctx.net()?.hit({ dmg: Math.round(dmg), by: ctx.nick(), w: w.type }, t.id);
       ctx.hitmarker();
     }
+    for (const [k, dmg] of dmgBuild) ctx.damageStructure(k, Math.round(dmg), false);
     ctx.recoil(w.type);
   }
 
@@ -252,16 +257,7 @@ export function createCombat(ctx) {
   function explode(p, own, mult = 1) {
     explosionFx(p);
     if (!own) return;
-    const w = ctx.world();
-    const list = [];
-    const r = Math.ceil(EXPLODE_R);
-    for (let x = -r; x <= r; x++) for (let y = -r; y <= r; y++) for (let z = -r; z <= r; z++) {
-      if (x * x + y * y + z * z > EXPLODE_R * EXPLODE_R) continue;
-      const bx = Math.floor(p.x) + x, by = Math.floor(p.y) + y, bz = Math.floor(p.z) + z;
-      if (by <= 0 || by >= SY || !w.get(bx, by, bz)) continue;
-      list.push([bx, by, bz]);
-    }
-    ctx.destroyBlocks(list);
+    for (const [k, dmg] of ctx.structures().blast(p, EXPLODE_R, BUILD_DMG * mult)) ctx.damageStructure(k, dmg, false);
     for (const t of targets()) {
       const c = t.min.clone().add(t.max).multiplyScalar(0.5);
       const d = c.distanceTo(p);
@@ -279,7 +275,7 @@ export function createCombat(ctx) {
   }
 
   function updateRockets(dt) {
-    const w = ctx.world();
+    const st = ctx.structures();
     for (let i = rockets.length - 1; i >= 0; i--) {
       const r = rockets[i];
       r.age += dt;
@@ -288,7 +284,7 @@ export function createCombat(ctx) {
       let boom = r.age > ROCKET.life;
       for (let k = 0; k < n && !boom; k++) {
         r.pos.addScaledVector(r.vel, dt / n);
-        if (w.solid(Math.floor(r.pos.x), Math.floor(r.pos.y), Math.floor(r.pos.z)) || r.pos.y < WATER_Y + 0.85) boom = true;
+        if (st.solidAt(r.pos)) boom = true;
         else if (r.own && r.age > 0.08) {
           for (const t of targets()) {
             if (r.pos.x > t.min.x - 0.2 && r.pos.x < t.max.x + 0.2 && r.pos.y > t.min.y - 0.2 && r.pos.y < t.max.y + 0.2 &&
@@ -336,6 +332,7 @@ export function createCombat(ctx) {
 
   return {
     get hp() { return hp; },
+    sfx: (kind, p) => sound(kind, p),
     get shield() { return shield; },
     slots, ammo,
     // Текущий разброс оружия в слоте i (для прицела): радианы.

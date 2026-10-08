@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PostRoyale — battle royale in a post</title>
-<meta name="description" content="Battle royale in a post: drop in, loot chests, outrun the storm — last one standing wins.">
+<meta name="description" content="Battle royale in a post: drop in, harvest, build, loot chests, outrun the storm — last one standing wins.">
 <meta property="og:title" content="Drop into my match">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -100,6 +100,63 @@
   #season .sw button { padding: 6px 12px; font-size: 13px; }
   #season p { margin: 8px 0 0; font-size: 11px; color: #8b98a5; }
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: #e7e9ea; color: #0f1419; font-weight: 800; }
+  #bars { position: fixed; left: 20px; bottom: 22px; width: 300px; display: flex; flex-direction: column; gap: 4px; font-weight: 800; font-size: 12px; text-shadow: 0 1px 2px #000; }
+  #bars .row2 { display: flex; align-items: center; gap: 8px; }
+  #bars .bar { flex: 1; height: 14px; border-radius: 5px; background: rgba(11,13,18,.7); overflow: hidden; box-shadow: 0 0 0 1px rgba(255,255,255,.15); }
+  #hpfill { height: 100%; width: 100%; background: var(--green); transition: width .2s; }
+  #hpfill.low { background: #f4212e; }
+  #shfill { height: 100%; width: 0; background: #3d9bff; transition: width .2s; }
+  #bars span { width: 26px; text-align: right; }
+  #flash { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 40px rgba(244,33,46,.0); }
+  #flash.on { animation: hurt .45s; }
+  #flash.shield { animation: hurtsh .45s; }
+  @keyframes hurtsh { 0% { box-shadow: inset 0 0 140px 50px rgba(61,155,255,.7); } 100% { box-shadow: inset 0 0 120px 40px rgba(61,155,255,0); } }
+  @keyframes hurt { 0% { box-shadow: inset 0 0 140px 50px rgba(244,33,46,.75); } 100% { box-shadow: inset 0 0 120px 40px rgba(244,33,46,0); } }
+  #chatlog .kill { background: rgba(244,33,46,.35); font-weight: 800; }
+  #blockname { bottom: 112px; }
+  #hotbar div.wslot { width: 58px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 2px var(--rar, rgba(255,255,255,.15)); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  #hotbar div.wslot.on { box-shadow: inset 0 0 0 3px #fff, 0 0 12px var(--rar, transparent); }
+  #hotbar div.wslot b { font-size: 15px; color: var(--rar, #fff); line-height: 1; }
+  #hotbar div.wslot b.empty { font-size: 18px; }
+  #hotbar div.wslot small { font-size: 10.5px; color: #c3c8d4; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  #hotbar b.emoji { display: flex; height: 100%; align-items: center; justify-content: center; font-size: 22px; }
+  #ammo { position: fixed; right: 14px; bottom: 132px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); font-size: 12.5px; display: grid; gap: 3px; min-width: 150px; }
+  #ammo div { display: flex; align-items: center; gap: 7px; }
+  #ammo div.zero { opacity: .4; }
+  #ammo i { width: 9px; height: 9px; border-radius: 2px; }
+  #ammo b { margin-left: auto; font-variant-numeric: tabular-nums; }
+  #prompt { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(11,13,18,.78); font-weight: 800; font-size: 14px; }
+  #reload { position: fixed; left: 50%; top: 53%; transform: translateX(-50%); font-weight: 800; font-size: 13px; color: #ffad1f; text-shadow: 0 1px 3px #000; }
+  #scope { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 0 32vh, #000 32.4vh); }
+  #scope::before, #scope::after { content: ""; position: absolute; background: rgba(0,0,0,.85); }
+  #scope::before { left: 50%; top: 18vh; bottom: 18vh; width: 2px; }
+  #scope::after { top: 50%; left: calc(50% - 32vh); right: calc(50% - 32vh); height: 2px; }
+  #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; opacity: 0; }
+  #hitmark::before, #hitmark::after { content: ""; position: absolute; left: 10px; top: -2px; width: 2px; height: 26px; background: #fff; }
+  #hitmark::before { transform: rotate(45deg); } #hitmark::after { transform: rotate(-45deg); }
+  #hitmark.on { animation: hm .25s; }
+  @keyframes hm { 0% { opacity: 1; } 100% { opacity: 0; } }
+  /* Материалы, стройка, локация */
+  #mats { position: fixed; right: 14px; bottom: 16px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); display: grid; gap: 3px; min-width: 150px; font-size: 13px; }
+  #mats div { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 6px; }
+  #mats div.on { background: rgba(255,216,26,.18); box-shadow: inset 0 0 0 1px var(--yellow); }
+  #mats div.zero b { opacity: .45; }
+  #mats i { width: 11px; height: 11px; border-radius: 3px; }
+  #mats b { margin-left: auto; font: 400 16px var(--display); font-variant-numeric: tabular-nums; }
+  #mats p { margin: 2px 0 0; font-size: 10.5px; color: #8b98a5; text-align: center; }
+  #hotbar div.bslot { width: 46px; background: rgba(61,155,255,.12); box-shadow: inset 0 0 0 2px rgba(79,180,255,.35); display: flex; align-items: center; justify-content: center; }
+  #hotbar div.bslot:first-of-type, #hotbar div.wslot + div.bslot { margin-left: 8px; }
+  #hotbar div.bslot.on { box-shadow: inset 0 0 0 3px #4fb4ff, 0 0 12px rgba(79,180,255,.6); transform: translateY(-4px); }
+  #hotbar div.bslot i { display: block; background: #4fb4ff; border-radius: 2px; }
+  .pc-w { width: 20px; height: 22px; }
+  .pc-f { width: 24px; height: 9px; transform: skewX(-35deg); }
+  .pc-r { width: 26px; height: 6px; transform: rotate(-38deg); }
+  #hotbar div.wslot small { max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #poi { position: fixed; left: 50%; top: 92px; transform: translateX(-50%); font: 400 40px var(--display); font-style: italic; text-transform: uppercase; color: #fff;
+    -webkit-text-stroke: 1.5px #1a2a8a; text-shadow: 0 4px 0 #1a2a8a; pointer-events: none; opacity: 0; white-space: nowrap; }
+  #poi.on { animation: poi 3.2s ease-out; }
+  @keyframes poi { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 75% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
+  body.shot #poi { display: none !important; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -127,7 +184,7 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>Loot chests 🎁 · stay inside the storm circle 🌪 · E open · Esc menu · T chat</div>
+<div id="hint" hidden>⛏ harvest · Z X C build · loot chests 🎁 · stay in the circle 🌪 · Esc menu</div>
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>
@@ -140,6 +197,8 @@
   <div class="row2"><span>❤</span><div class="bar"><div id="hpfill"></div></div><span id="hptext">100</span></div>
 </div>
 <div id="ammo" hidden></div>
+<div id="mats" hidden></div>
+<div id="poi"></div>
 <div id="prompt" hidden></div>
 <div id="reload"></div>
 <div id="scope" hidden></div>
@@ -155,11 +214,13 @@
     <div id="season"></div>
     <div class="keys">
       <b>WASD</b><span>move · Shift run · Space jump</span>
-      <b>F</b><span>fly — spectators only (Space up, C down)</span>
-      <b>1–3</b><span>weapons (empty = hands) · 4–9 blocks</span>
+      <b>1</b><span>pickaxe — chop trees, rocks, cars, houses for wood / brick / metal</span>
+      <b>2–4</b><span>weapons from chests</span>
+      <b>Z · X · C</b><span>build wall · floor · ramp (10 mats) · V switch material</span>
+      <b>Left click</b><span>shoot · swing · place (hold to spam)</span>
+      <b>Right click</b><span>scope (sniper) · leave build mode</span>
       <b>E</b><span>open chest</span>
-      <b>Left click</b><span>shoot (hold for SMG / AR)</span>
-      <b>Right click</b><span>scope (sniper) · place block</span>
+      <b>F</b><span>fly — spectators only (Space up, C down)</span>
       <b>R · G · Q</b><span>reload · swap for weapon on the ground · drop</span>
       <b>T</b><span>chat</span>
     </div>
