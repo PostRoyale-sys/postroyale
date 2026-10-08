@@ -154,3 +154,61 @@ export function carGeometry(body) {
   for (const [x, z] of [[1.35, 1], [1.35, -1], [-1.35, 1], [-1.35, -1]]) parts.push(part(wheel, 0x23262d, { x, y: 0.42, z, rx: Math.PI / 2 }));
   return merged(parts);
 }
+
+// ---------- Ветер и мультяшный контур ----------
+// Ветер: время в общем uniform; качается то, что выше `from` по высоте модели (кроны, верх кустов).
+export const windUniform = { value: 0 };
+const swayChunk = (from) => `
+  {
+    vec3 wp = vec3(instanceMatrix[3][0], 0.0, instanceMatrix[3][2]);
+    float hh = max(0.0, position.y - ${from.toFixed(2)});
+    transformed.x += sin(uWind * 1.3 + wp.x * 0.15 + wp.z * 0.1) * 0.07 * hh;
+    transformed.z += cos(uWind * 1.1 + wp.z * 0.15 + wp.x * 0.05) * 0.05 * hh;
+  }`;
+
+function patch(mat, key, body) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uWind = windUniform;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWind;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${body}`);
+  };
+  mat.customProgramCacheKey = () => key;
+  return mat;
+}
+
+// Материал с качанием (только для InstancedMesh — берёт позицию экземпляра).
+export const swayMaterial = (mat, from = 2) => patch(mat, `sway${from}`, swayChunk(from));
+
+// Контур «обратной оболочкой»: задние грани, раздутые наружу, тёмно-фиолетовым.
+// box — раздуваем по знаку координаты (у коробок без щелей на рёбрах), иначе — по нормали.
+const OUTLINE = 0x1d1438;
+export function outlineMaterial({ thick = 0.05, box = false, sway = null, instanced = true } = {}) {
+  const m = new THREE.MeshBasicMaterial({ color: OUTLINE, side: THREE.BackSide });
+  const grow = box ? `transformed += sign(position) * ${thick.toFixed(3)};` : `transformed += normalize(normal) * ${thick.toFixed(3)};`;
+  return patch(m, `ol${thick}${box}${sway}${instanced}`, grow + (sway != null && instanced ? swayChunk(sway) : ''));
+}
+
+// Контур для InstancedMesh: тот же набор экземпляров (общий instanceMatrix), рисуется вторым проходом.
+export function instancedOutline(mesh, opts) {
+  const o = new THREE.InstancedMesh(mesh.geometry, outlineMaterial(opts), mesh.instanceMatrix.count);
+  o.instanceMatrix = mesh.instanceMatrix;
+  o.count = mesh.count;
+  o.frustumCulled = false;
+  o.castShadow = false;
+  o.receiveShadow = false;
+  return o;
+}
+
+// Контур для обычной группы (персонажи, вертолёт): каждому непрозрачному мешу — оболочка дочерним объектом.
+export function outlineGroup(group, thick = 0.035) {
+  const mat = outlineMaterial({ thick, instanced: false });
+  const list = [];
+  group.traverse((m) => { if (m.isMesh && !m.isInstancedMesh && !m.material.transparent && m.geometry.attributes.normal) list.push(m); });
+  for (const m of list) {
+    const o = new THREE.Mesh(m.geometry, mat);
+    o.userData.outline = true;
+    m.add(o);
+  }
+  return group;
+}

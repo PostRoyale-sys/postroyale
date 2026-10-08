@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { G, WATER_Y, pieceKey, CAR_COLORS } from './map.js';
 import { rayBox } from './combat.js';
-import { toon, buildTexture, oakGeometry, pineGeometry, rockGeometry, bushGeometry, carGeometry, vcMaterial } from './art.js';
+import { toon, buildTexture, oakGeometry, pineGeometry, rockGeometry, bushGeometry, carGeometry, vcMaterial, swayMaterial, instancedOutline } from './art.js';
 
 export const MATS = ['wood', 'brick', 'metal'];
 export const MAT_INFO = {
@@ -141,8 +141,10 @@ export function createStructures({ scene }) {
       mesh.castShadow = mesh.receiveShadow = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.setColorAt(0, C.set(0xffffff));
-      scene.add(mesh);
-      batches.set(key, { mesh, free: [] });
+      // мультяшный контур: тот же набор экземпляров, коробки раздуваются без щелей на рёбрах
+      const outline = instancedOutline(mesh, { thick: 0.045, box: kind !== 'win' });
+      scene.add(mesh, outline);
+      batches.set(key, { mesh, outline, free: [] });
     }
     return batches.get(key);
   }
@@ -150,6 +152,7 @@ export function createStructures({ scene }) {
     const kind = e.t === 'r' ? 'r' : e.t === 'w' && e.v === 'win' ? 'win' : e.t;
     const b = batch(kind, e.m);
     const i = b.free.length ? b.free.pop() : b.mesh.count++;
+    b.outline.count = b.mesh.count;
     M.compose(e.place.pos, Q.setFromEuler(e.place.rot), V1);
     b.mesh.setMatrixAt(i, M);
     b.mesh.setColorAt(i, C.set(e.tint ?? MAT_INFO[e.m].tint));
@@ -168,11 +171,16 @@ export function createStructures({ scene }) {
 
   function objMesh(kind, count) {
     const geo = kind === 'oak' ? oakGeometry() : kind === 'pine' ? pineGeometry() : kind === 'rock' ? rockGeometry() : kind === 'bush' ? bushGeometry() : carGeometry(CAR_COLORS[+kind.slice(3)]);
-    const mesh = new THREE.InstancedMesh(geo, vcMaterial(), Math.max(1, count));
+    // кроны деревьев и кусты качаются на ветру (с высоты from), у остального — контур без качания
+    const from = kind === 'oak' ? 2.6 : kind === 'pine' ? 1.8 : kind === 'bush' ? 0.15 : null;
+    const mesh = new THREE.InstancedMesh(geo, from != null ? swayMaterial(vcMaterial(), from) : vcMaterial(), Math.max(1, count));
     mesh.frustumCulled = false;
     mesh.castShadow = kind !== 'bush';
     mesh.receiveShadow = true;
-    scene.add(mesh);
+    mesh.count = Math.max(1, count);
+    const outline = instancedOutline(mesh, { thick: kind === 'bush' ? 0.03 : 0.05, sway: from });
+    mesh.userData.outline = outline;
+    scene.add(mesh, outline);
     return mesh;
   }
   function objMatrix(o, on) {
@@ -235,7 +243,7 @@ export function createStructures({ scene }) {
   function reset() {
     for (const e of [...pieces.values()]) { hide(e); unindex(e); }
     pieces.clear();
-    for (const b of batches.values()) { b.mesh.count = 0; b.free.length = 0; }
+    for (const b of batches.values()) { b.mesh.count = 0; b.outline.count = 0; b.free.length = 0; }
     grid.clear();
     for (const p of map.pieces) addPiece(p, true);
     for (const o of objects) {
@@ -248,7 +256,7 @@ export function createStructures({ scene }) {
 
   function load(m) {
     map = m;
-    for (const mesh of objMeshes.values()) { scene.remove(mesh); mesh.dispose(); }
+    for (const mesh of objMeshes.values()) { scene.remove(mesh, mesh.userData.outline); mesh.dispose(); }
     objMeshes.clear();
     objects.length = 0;
     const kinds = new Map();

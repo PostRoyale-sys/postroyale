@@ -133,6 +133,16 @@ export class GameMap {
     return a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v;
   }
   surfaceY(x, z) { return this.height(x, z); }
+
+  // Высоты рельефа текстурой (для шейдера воды: мелководье, пена у берега). 1 байт: −10…+40 м.
+  heightTexture() {
+    const data = new Uint8Array(N * N);
+    for (let i = 0; i < N * N; i++) data[i] = Math.max(0, Math.min(255, Math.round((this.h[i] + 10) / 50 * 255)));
+    const t = new THREE.DataTexture(data, N, N, THREE.RedFormat, THREE.UnsignedByteType);
+    t.magFilter = t.minFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+  }
   slope(x, z) { return Math.hypot(this.height(x + 1, z) - this.height(x - 1, z), this.height(x, z + 1) - this.height(x, z - 1)) / 2; }
   roadDist(x, z) { let d = Infinity; for (const [a, b] of this.roads) d = Math.min(d, segDist(x, z, a, b)); return d; }
   poiAt(x, z, pad = 0) { return this.pois.find((p) => Math.hypot(p.x - x, p.z - z) < POI_R + pad) || null; }
@@ -144,6 +154,32 @@ export class GameMap {
     geo.translate(MAP / 2, 0, MAP / 2);
     const pos = geo.attributes.position;
     const col = new Float32Array(pos.count * 3);
+    // «Запечённое» затенение (AO): тени во впадинах, у стволов, камней, машин и стен домов.
+    // Считается один раз здесь, в игре ничего не стоит.
+    const occ = new Map();                       // клетка 8 м → [x, z, радиус, сила]
+    const addOcc = (x, z, r, k) => { const key = `${Math.floor(x / 8)},${Math.floor(z / 8)}`; if (!occ.has(key)) occ.set(key, []); occ.get(key).push([x, z, r, k]); };
+    for (const o of this.objects) {
+      if (o.kind === 'oak') addOcc(o.x, o.z, 3.2 * o.s, 0.32);
+      else if (o.kind === 'pine') addOcc(o.x, o.z, 2.4 * o.s, 0.3);
+      else if (o.kind === 'rock') addOcc(o.x, o.z, 1.9 * o.s, 0.35);
+      else if (o.kind === 'car') addOcc(o.x, o.z, 3, 0.3);
+    }
+    for (const p of this.pieces) if (p.t === 'w' && p.iy * G === this.pois.find((q) => Math.abs(q.x - p.ix * G) < 40 && Math.abs(q.z - p.iz * G) < 40)?.y) {
+      const x = p.o === 'x' ? (p.ix + 0.5) * G : p.ix * G, z = p.o === 'x' ? p.iz * G : (p.iz + 0.5) * G;
+      addOcc(x, z, 2.6, 0.28);
+    }
+    const aoAt = (x, z, h) => {
+      let ao = 1;
+      // вогнутость рельефа: впадина темнее
+      const lap = (this.height(x + 3, z) + this.height(x - 3, z) + this.height(x, z + 3) + this.height(x, z - 3)) / 4 - h;
+      ao -= Math.min(0.22, Math.max(0, lap * 0.18));
+      const cx = Math.floor(x / 8), cz = Math.floor(z / 8);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [ox, oz, r, k] of occ.get(`${cx + i},${cz + j}`) || []) {
+        const d = Math.hypot(x - ox, z - oz);
+        if (d < r) ao -= k * (1 - d / r) ** 1.5;
+      }
+      return Math.max(0.5, ao);
+    };
     const c = new THREE.Color();
     const SAND = new THREE.Color(0xf5dc8f), GRASS = new THREE.Color(0x6fd13f), GRASS2 = new THREE.Color(0x58bb35),
       ROCK = new THREE.Color(0xa7a9b4), ROAD = new THREE.Color(0xc9a46c), PLAZA = new THREE.Color(0xd8d2c4), SNOW = new THREE.Color(0xf4f8ff);
@@ -160,6 +196,7 @@ export class GameMap {
       const rd = this.roadDist(x, z);
       if (h > 2.2 && rd < 3) c.lerp(ROAD, 1 - smooth(1.8, 3, rd));
       for (const p of this.pois) { const d = Math.hypot(x - p.x, z - p.z); if (d < POI_R) c.lerp(PLAZA, 1 - smooth(POI_R - 5, POI_R, d)); }
+      if (h > -1) c.multiplyScalar(aoAt(x, z, h));
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));

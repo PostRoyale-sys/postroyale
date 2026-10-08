@@ -13,7 +13,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { GameMap, MAP, WATER_Y, rng, seedOf } from './map.js';
-import { toonGradient, toon } from './art.js';
+import { toonGradient, toon, windUniform, outlineGroup } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
 import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel, rayBox } from './combat.js';
@@ -21,7 +21,8 @@ import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
-import { SKINS, skinById, unlocked, lockLabel, buildCharacter } from './skins.js';
+import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
+import { createWater } from './water.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
 
@@ -57,6 +58,9 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;           // карта теней пересчитывается по необходимости (см. цикл)
+let shadowDirty = true, shadowT = 0;
+const shadowAt = new THREE.Vector3(1e9, 0, 0);
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -113,11 +117,30 @@ const clouds = new THREE.Group();
   scene.add(clouds);
 }
 
-const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP * 8, MAP * 8).rotateX(-Math.PI / 2),
-  toon(0x29c9e6, { transparent: true, opacity: 0.82, emissive: 0x06425a }));
-water.position.set(MAP / 2, WATER_Y, MAP / 2);
-water.receiveShadow = true;
-scene.add(water);
+const water = createWater(MAP * 8, MAP / 2);
+scene.add(water.mesh);
+
+// Далёкие острова на горизонте: силуэты в дымке (свой туман не нужен — цвет уже «воздушный»).
+{
+  // пологий купол с неровным краем — силуэт острова
+  const geo = new THREE.SphereGeometry(1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), a = Math.atan2(z, x);
+    const k = 1 + Math.sin(a * 3) * 0.12 + Math.sin(a * 7 + 1) * 0.06;
+    pos.setX(i, x * k); pos.setZ(i, z * k);
+    pos.setY(i, pos.getY(i) * (0.8 + Math.sin(a * 2 + 0.5) * 0.25));
+  }
+  geo.computeVertexNormals();
+  const far = [[-0.3, 640, 140, 38], [0.9, 720, 200, 52], [1.9, 600, 110, 30], [2.7, 780, 240, 64], [3.9, 650, 160, 44], [5.0, 700, 120, 34], [5.7, 760, 180, 48]];
+  for (const [ang, d, r, h] of far) {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x86b4cf, fog: false }));
+    m.scale.set(r, h, r * 0.8);
+    m.position.set(MAP / 2 + Math.cos(ang) * d, -2, MAP / 2 + Math.sin(ang) * d);
+    m.userData.farIsland = true;
+    scene.add(m);
+  }
+}
 
 const controls = new PointerLockControls(camera, renderer.domElement);
 const player = controls.object ?? controls.getObject();
@@ -131,6 +154,17 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.45, 0.55, 0.82);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// Цветокоррекция: чуть больше насыщенности и контраста, мягкая виньетка (в sRGB, после OutputPass).
+const grade = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, uSat: { value: 1.14 }, uCon: { value: 1.06 }, uVig: { value: 0.22 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uSat, uCon, uVig; varying vec2 vUv;
+    void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      c.rgb = mix(vec3(l), c.rgb, uSat); c.rgb = (c.rgb - 0.5) * uCon + 0.5;
+      float v = smoothstep(0.85, 0.2, length(vUv - 0.5)); c.rgb *= mix(1.0 - uVig, 1.0, v);
+      gl_FragColor = c; }`,
+});
+composer.addPass(grade);
 const fxaa = new ShaderPass(FXAAShader);
 composer.addPass(fxaa);
 const fitFxaa = () => { const pr = renderer.getPixelRatio(); fxaa.material.uniforms.resolution.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr)); };
@@ -186,7 +220,7 @@ function spawn(drop = true) {
 // Space или клик — прыжок; в конце маршрута выбрасывает сам. Камера — вокруг вертолёта, крутится мышью.
 
 const HELI_Y = 85, HELI_SPEED = 15;
-const heli = buildHeli();
+const heli = outlineGroup(buildHeli(), 0.06);
 heli.visible = false;
 scene.add(heli);
 let flight = null;            // { a, b, dir, t0, dur } — маршрут вертолёта (виден, пока летит)
@@ -318,7 +352,10 @@ function step(dt) {
     }
     const g = structures.ground(feet.x, feet.z, Math.max(feet.y, ny), HALF);
     // На земле прилипаем к опоре, если она чуть ниже (спуск по рампе и склону без подпрыгиваний).
-    if (ny <= g || (onGround && vel.y <= 0 && feet.y - g < 0.6)) { ny = g; vel.y = 0; onGround = true; gliding = false; }
+    if (ny <= g || (onGround && vel.y <= 0 && feet.y - g < 0.6)) {
+      if (!onGround && vel.y < -7) dust(new THREE.Vector3(feet.x, g, feet.z), Math.min(1.6, -vel.y / 10));
+      ny = g; vel.y = 0; onGround = true; gliding = false;
+    }
     else onGround = false;
     feet.y = ny;
     // Вода: плаваем у поверхности.
@@ -374,6 +411,7 @@ function swingPickaxe(now) {
 function damageStructure(k, dmg, harvest) {
   const res = structures.damage(k, dmg);
   if (!res) return;
+  if (res.destroyed) shadowDirty = true;
   net?.edit({ k, x: dmg, rr: royale.round });
   if (harvest) {
     const { mat, n } = structures.harvestOf(res.e, res.destroyed);
@@ -397,10 +435,31 @@ function chips(p, e) {
     fxList.push({ m, v: new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.3, Math.random() - 0.5).multiplyScalar(6), age: 0 });
   }
 }
+// Пыль при приземлении: кольцо пухлых облачков, расходятся и тают.
+const dustGeo = new THREE.IcosahedronGeometry(0.35, 1);
+function dust(p, k = 1) {
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    const m = new THREE.Mesh(dustGeo, new THREE.MeshBasicMaterial({ color: 0xf3ead6, transparent: true, opacity: 0.8 }));
+    m.position.copy(p).add(new THREE.Vector3(Math.cos(a) * 0.4, 0.2, Math.sin(a) * 0.4));
+    scene.add(m);
+    fxList.push({ m, v: new THREE.Vector3(Math.cos(a) * 3.5 * k, 0.8, Math.sin(a) * 3.5 * k), age: 0, dust: true });
+  }
+}
+
 function updateFx(dt) {
   for (let i = fxList.length - 1; i >= 0; i--) {
     const f = fxList[i];
     f.age += dt;
+    if (f.dust) {
+      // пыль: тормозит, растёт, тает
+      f.v.multiplyScalar(Math.max(0, 1 - 3 * dt));
+      f.m.position.addScaledVector(f.v, dt);
+      f.m.scale.setScalar(1 + f.age * 2.5);
+      f.m.material.opacity = 0.8 * (1 - f.age / 0.9);
+      if (f.age > 0.9) { scene.remove(f.m); fxList.splice(i, 1); }
+      continue;
+    }
     f.v.y -= 20 * dt;
     f.m.position.addScaledVector(f.v, dt);
     if (f.age > 0.6) { scene.remove(f.m); fxList.splice(i, 1); }
@@ -421,6 +480,7 @@ function placePiece(now) {
   if (mats[plan.m] < BUILD_COST) { toast(`Need ${BUILD_COST} ${MAT_INFO[plan.m].name}`); nextBuild = now + 0.5; return; }
   const { k, t, ix, iy, iz, o, m } = plan;
   if (!structures.add({ k, t, ix, iy, iz, o, m })) return;
+  shadowDirty = true;
   mats[m] -= BUILD_COST;
   nextBuild = now + BUILD_RATE;
   combat.sfx('build');
@@ -743,6 +803,7 @@ function banner(title, sub = '', ms = 3500) {
 
 function onRoundStart(r, alive) {
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
+  shadowDirty = true;
   loot.resetRound(r, r * ROUND_MS);
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
@@ -860,6 +921,7 @@ let lastPose = 0, lastSent = '';
 // Правка постройки от другого игрока: поставил деталь или нанёс урон.
 function onStructEdit(d) {
   if (d.rr !== undefined && d.rr !== royale.round) return;
+  shadowDirty = true;
   if (d.a) structures.add({ k: d.k, t: d.t, ix: d.ix, iy: d.iy, iz: d.iz, o: d.o, m: d.m });
   else if (d.x) structures.damage(d.k, d.x);
 }
@@ -912,6 +974,7 @@ function poseData() {
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
+  if (gliding) d.st = 'g'; else if (!onGround) d.st = 'a';
   return d;
 }
 
@@ -999,6 +1062,8 @@ function loadWorld(id) {
   scene.add(terrain);
   structures.load(world);
   grass.setMap(world);
+  water.setHeights(world.heightTexture(), MAP);
+  shadowDirty = true;
 }
 
 function start() {
@@ -1109,9 +1174,9 @@ function makeHero() {
   hero = avatar(($('nick').value.trim() || nick).slice(0, 16), -1, mySkin);
   hero.remove(hero.children.find((c) => c.isSprite));        // ник — в карточке игрока, над головой не нужен
   const pk = weaponModel('pickaxe');
-  pk.position.set(0.34, 1.12, -0.25);
-  pk.rotation.x = 1.0;
-  hero.add(pk);
+  pk.rotation.x = 1.15;                                  // кирка в правой руке, навершие вверх-вперёд
+  pk.position.set(0, -0.5, 0);
+  hero.userData.rig.a2.add(pk);
   // круглая платформа под ногами, как в лобби
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 32), toon(0x4fb4ff, { emissive: 0x0b3a7a }));
   pad.position.y = -0.08;
@@ -1164,6 +1229,7 @@ function lobbyFrame(dt, t) {
     hero.position.copy(camera.localToWorld(V_HERO.set(heroShift + mouse.sx * 0.15, -1.55, -5.0)));
     const v = camera.position.clone().sub(hero.position);
     hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.7) * 0.22 + mouse.sx * 0.35;
+    animateCharacter(hero, t, 'idle');
     hero.position.y += Math.sin(t * 1.6) * 0.04;
     rimLight.position.copy(camera.localToWorld(V_TMP.set(1.6, 0.6, -7.4)));
     fillLight.position.copy(camera.localToWorld(V_TMP.set(-1.8, -0.2, -3.6)));
@@ -1399,8 +1465,14 @@ renderer.setAnimationLoop((now) => {
       shakeAmt *= Math.max(0, 1 - 6 * dt);
     }
     for (const o of others.values()) {
+      const prev = o.group.position.clone();
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y, o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
+      // поза по движению: планирует / в воздухе / бежит / стоит
+      const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
+      o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
+      const st = o.target.st === 'g' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : 'idle';
+      animateCharacter(o.group, t, st, Math.min(1, o.spd / RUN), !!o.target.g && o.target.g !== 'pickaxe');
     }
     sendPose(now);
     updateCrosshair(w, en);
@@ -1411,7 +1483,14 @@ renderer.setAnimationLoop((now) => {
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 180);
   sky.position.copy(c);
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
-  if (playing) grass.update(feet, t);              // в лобби камера высоко — траву не видно, не считаем
+  if (playing) grass.update(feet, t);             // в лобби камера высоко — траву не видно, не считаем
+  windUniform.value = t;
+  water.update(t);
+  // Тени: при сдвиге на 1.5 м, после правок построек и не реже 10 раз в секунду (движутся другие игроки)
+  if (shadowDirty || c.distanceTo(shadowAt) > 1.5 || t - shadowT > (playing ? 0.1 : 0.05)) {
+    renderer.shadowMap.needsUpdate = true;
+    shadowAt.copy(c); shadowT = t; shadowDirty = false;
+  }
   if (settings.bloom) composer.render(); else renderer.render(scene, camera);
   countFps(now);
   if (playing && !riding && (controls.isLocked || debugView)) {

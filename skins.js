@@ -3,7 +3,7 @@
 // Часть скинов открывается уровнем сезона (500 очков на уровень), Gold Holder — только держателям токена.
 
 import * as THREE from 'three';
-import { toon } from './art.js';
+import { toon, outlineGroup } from './art.js';
 
 // rarity — индекс в RARITY (combat.js): 0 Common … 4 Legendary.
 export const SKINS = [
@@ -43,11 +43,17 @@ export function buildCharacter(skinId, fallbackColor) {
   const head = ball(0.3, skinMat, 0, 1.72, 0);
   const eyeMat = s.extra === 'laser' ? new THREE.MeshBasicMaterial({ color: 0xff2a2a }) : new THREE.MeshBasicMaterial({ color: 0x111111 });
   const e1 = ball(s.extra === 'laser' ? 0.065 : 0.05, eyeMat, -0.1, 1.76, -0.27), e2 = ball(s.extra === 'laser' ? 0.065 : 0.05, eyeMat, 0.1, 1.76, -0.27);
+  // ноги и руки на шарнирах (бёдра и плечи) — для анимации бега, прыжка, планирования
   const legMat = toon(s.legs);
   const legGeo = new THREE.CapsuleGeometry(0.11, 0.4, 4, 8);
-  const l1 = new THREE.Mesh(legGeo, legMat), l2 = new THREE.Mesh(legGeo, legMat);
-  l1.position.set(-0.14, 0.32, 0); l2.position.set(0.14, 0.32, 0);
-  g.add(body, head, e1, e2, l1, l2);
+  const limb = (geo, mat, x, y, len) => { const p = new THREE.Group(); p.position.set(x, y, 0); const m = new THREE.Mesh(geo, mat); m.position.y = -len; p.add(m); return p; };
+  const l1 = limb(legGeo, legMat, -0.14, 0.62, 0.3), l2 = limb(legGeo, legMat, 0.14, 0.62, 0.3);
+  const armGeo = new THREE.CapsuleGeometry(0.085, 0.38, 4, 8);
+  const a1 = limb(armGeo, bodyMat, -0.41, 1.42, 0.24), a2 = limb(armGeo, bodyMat, 0.41, 1.42, 0.24);
+  const hands = [a1, a2].map((a) => { const h = ball(0.085, skinMat, 0, -0.5, 0); a.add(h); return h; });
+  a1.rotation.z = -0.12; a2.rotation.z = 0.12;
+  g.add(body, head, e1, e2, l1, l2, a1, a2);
+  g.userData.rig = { l1, l2, a1, a2, body, head, hands };
 
   const hc = toon(s.hatColor ?? s.body ?? fallbackColor);
   switch (s.hat) {
@@ -94,6 +100,30 @@ export function buildCharacter(skinId, fallbackColor) {
     }
     case 'lips': g.add(box(0.2, 0.05, 0.04, toon(0xc0392b), 0, 1.63, -0.28)); break;
   }
-  for (const m of g.children) m.castShadow = true;
+  g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+  outlineGroup(g, 0.03);
   return g;
+}
+
+// Анимация персонажа: state — 'idle' | 'run' | 'air' | 'glide'; speed — 0…1 (доля бега); armed — держит оружие.
+export function animateCharacter(g, t, state, speed = 1, armed = false) {
+  const r = g.userData.rig;
+  if (!r) return;
+  let lx = 0, rx = 0, ax1 = 0, ax2 = 0, az1 = -0.12, az2 = 0.12;
+  if (state === 'run') {
+    const w = Math.sin(t * 11) * 0.75 * speed;
+    lx = w; rx = -w; ax1 = -w * 0.8; ax2 = w * 0.8;
+  } else if (state === 'air') {
+    lx = -0.5; rx = 0.35; ax1 = -0.6; ax2 = -0.4; az1 = -0.5; az2 = 0.5;
+  } else if (state === 'glide') {
+    lx = 0.35; rx = 0.25; az1 = -1.35 + Math.sin(t * 3) * 0.08; az2 = 1.35 - Math.sin(t * 3) * 0.08; ax1 = ax2 = 0;
+  } else {
+    const br = Math.sin(t * 2.2);
+    az1 = -0.12 - br * 0.04; az2 = 0.12 + br * 0.04;
+  }
+  if (armed && state !== 'glide') { ax2 = -1.25; az2 = 0.1; ax1 = -1.0; az1 = 0.35; }  // руки вперёд — держит оружие
+  const k = 0.25;                                       // плавность перехода между позами
+  r.l1.rotation.x += (lx - r.l1.rotation.x) * k; r.l2.rotation.x += (rx - r.l2.rotation.x) * k;
+  r.a1.rotation.x += (ax1 - r.a1.rotation.x) * k; r.a2.rotation.x += (ax2 - r.a2.rotation.x) * k;
+  r.a1.rotation.z += (az1 - r.a1.rotation.z) * k; r.a2.rotation.z += (az2 - r.a2.rotation.z) * k;
 }
