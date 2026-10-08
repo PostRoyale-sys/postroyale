@@ -4,23 +4,19 @@
   html,body{margin:0;width:400px;height:400px;overflow:hidden;font-family:"Lilita One",sans-serif}
   body{background:radial-gradient(circle at 35% 25%,#5fb2ff 0%,#2f6dff 40%,#3a2bd8 75%,#6a24c4 100%)}
   svg{position:absolute;inset:0}
-  .t{position:absolute;left:-56px;right:0;top:214px;text-align:center;font-size:122px;font-style:italic;color:#ffd81a;line-height:1;
+  .t{position:absolute;left:-120px;right:0;top:200px;text-align:center;font-size:122px;font-style:italic;color:#ffd81a;line-height:1;
      -webkit-text-stroke:9px #16207a;paint-order:stroke fill;text-shadow:0 8px 0 #16207a}
 </style></head><body>
 <svg width="400" height="400" viewBox="0 0 400 400">
   <!-- кольцо шторма -->
   <circle cx="200" cy="200" r="178" fill="none" stroke="#b77bff" stroke-width="10" stroke-dasharray="26 14" opacity=".85"/>
-  <!-- изометрический блок травы -->
-  <g transform="translate(200 150)">
-    <polygon points="0,-92 96,-44 0,4 -96,-44" fill="#7ee04a"/>
-    <polygon points="0,-80 72,-44 0,-8 -72,-44" fill="#9bf06a" opacity=".55"/>
-    <polygon points="-96,-44 0,4 0,108 -96,60" fill="#b0743f"/>
-    <polygon points="96,-44 0,4 0,108 96,60" fill="#8c5a30"/>
-    <path d="M-96,-44 L0,4 L0,30 C-12,24 -20,36 -32,26 C-44,16 -52,24 -64,12 C-76,2 -84,8 -96,-18 Z" fill="#62c43a"/>
-    <path d="M96,-44 L0,4 L0,30 C12,22 22,34 34,22 C46,12 56,20 66,8 C78,-2 86,4 96,-20 Z" fill="#4fae2e"/>
-    <polygon points="0,-92 96,-44 0,4 -96,-44" fill="none" stroke="#16207a" stroke-width="7" stroke-linejoin="round"/>
-    <polygon points="-96,-44 0,4 0,108 -96,60" fill="none" stroke="#16207a" stroke-width="7" stroke-linejoin="round"/>
-    <polygon points="96,-44 0,4 0,108 96,60" fill="none" stroke="#16207a" stroke-width="7" stroke-linejoin="round"/>
+  <!-- кирка по диагонали: рукоять + фиолетовое навершие -->
+  <g transform="translate(200 175) rotate(-38)" stroke="#16207a" stroke-width="8" stroke-linejoin="round">
+    <rect x="-13" y="-30" width="26" height="190" rx="10" fill="#a8693a"/>
+    <rect x="-13" y="70" width="26" height="22" fill="#7a4a26" stroke="none"/>
+    <path d="M -128 -38 Q 0 -112 128 -38 L 112 -14 Q 0 -66 -112 -14 Z" fill="#8a5cff"/>
+    <path d="M -100 -42 Q 0 -90 100 -42" fill="none" stroke="#c9b4ff" stroke-width="7" stroke-linecap="round"/>
+    <rect x="-24" y="-66" width="48" height="50" rx="8" fill="#5b6472"/>
   </g>
 </svg>
 <div class="t">PR</div>
