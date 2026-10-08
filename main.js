@@ -15,6 +15,7 @@ import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT } from './season.js';
+import { SKINS, skinById, unlocked, lockLabel, buildCharacter } from './skins.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
@@ -448,32 +449,21 @@ function nameSprite(text, color) {
   return s;
 }
 
-// Мультяшный персонаж: капсула-тело, круглая голова с глазами, ноги.
-function avatar(name, tier = -1) {
+// Мультяшный персонаж в выбранном скине (skins.js) + табличка с ником.
+function avatar(name, tier = -1, skinId = 'default') {
   const color = colorOf(name);
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.33, 0.55, 6, 12), toon(color));
-  body.position.y = 1.05;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), toon(0xffd2a8));
-  head.position.y = 1.72;
-  const eyeGeo = new THREE.SphereGeometry(0.05, 8, 6), eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-  const e1 = new THREE.Mesh(eyeGeo, eyeMat), e2 = new THREE.Mesh(eyeGeo, eyeMat);
-  e1.position.set(-0.1, 1.76, -0.27); e2.position.set(0.1, 1.76, -0.27);
-  const legGeo = new THREE.CapsuleGeometry(0.11, 0.4, 4, 8), legMat = toon(0x34406a);
-  const l1 = new THREE.Mesh(legGeo, legMat), l2 = new THREE.Mesh(legGeo, legMat);
-  l1.position.set(-0.14, 0.32, 0); l2.position.set(0.14, 0.32, 0);
-  for (const m of [body, head, l1, l2]) m.castShadow = true;
+  const g = buildCharacter(skinId, color);
   const t = TIERS[tier];
-  g.add(body, head, e1, e2, l1, l2, nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
+  g.add(nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
   return g;
 }
 
 function upsertOther(peerId, d) {
   let o = others.get(peerId);
-  const tier = d.h ?? -1;
-  if (!o || o.name !== d.n || o.tier !== tier) {
+  const tier = d.h ?? -1, skin = d.k || 'default';
+  if (!o || o.name !== d.n || o.tier !== tier || o.skin !== skin) {
     if (o) scene.remove(o.group);
-    o = { group: avatar(d.n, tier), name: d.n, tier, target: d };
+    o = { group: avatar(d.n, tier, skin), name: d.n, tier, skin, target: d };
     o.group.position.set(d.x, d.y, d.z);
     scene.add(o.group);
     others.set(peerId, o);
@@ -786,6 +776,7 @@ function poseData() {
   const w = holding();
   if (w) { d.g = w.type; d.q = w.rarity; }
   if (season.tier >= 0) d.h = season.tier;
+  if (mySkin !== 'default') d.k = mySkin;
   return d;
 }
 
@@ -961,7 +952,9 @@ for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
-    $('lobby').classList.toggle('paneled', b.dataset.tab !== 'play');
+    $('lobby').classList.toggle('paneled', b.dataset.tab !== 'play' && b.dataset.tab !== 'locker');
+    $('lobby').classList.toggle('lockered', b.dataset.tab === 'locker');
+    if (b.dataset.tab === 'locker') renderLocker();
     moveTabInd();
   });
 }
@@ -973,7 +966,7 @@ let hero = null, heroTimer = 0;
 function makeHero() {
   if (playing) return;
   if (hero) scene.remove(hero);
-  hero = avatar(($('nick').value.trim() || nick).slice(0, 16));
+  hero = avatar(($('nick').value.trim() || nick).slice(0, 16), -1, mySkin);
   hero.remove(hero.children.find((c) => c.isSprite));        // ник — в карточке игрока, над головой не нужен
   const pk = weaponModel('pickaxe');
   pk.position.set(0.34, 1.12, -0.25);
@@ -1016,6 +1009,7 @@ const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
 addEventListener('mousemove', (e) => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = e.clientY / innerHeight * 2 - 1; });
 
 const V_HERO = new THREE.Vector3(), V_TMP = new THREE.Vector3();
+let heroShift = 0.55;                // во вкладке Locker персонаж отъезжает вправо, освобождая место сетке
 function lobbyFrame(dt, t) {
   // мягко догоняем мышь — камера чуть смещается, остров «дышит»
   mouse.sx += (mouse.x - mouse.sx) * Math.min(1, dt * 3);
@@ -1026,7 +1020,8 @@ function lobbyFrame(dt, t) {
   camera.lookAt(MAP / 2, 14, MAP / 2);
   camera.updateMatrixWorld();
   if (hero) {
-    hero.position.copy(camera.localToWorld(V_HERO.set(0.55 + mouse.sx * 0.15, -1.55, -5.4)));
+    heroShift += ((document.getElementById('lobby').classList.contains('lockered') ? 1.35 : 0.55) - heroShift) * Math.min(1, dt * 4);
+    hero.position.copy(camera.localToWorld(V_HERO.set(heroShift + mouse.sx * 0.15, -1.55, -5.0)));
     const v = camera.position.clone().sub(hero.position);
     hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.7) * 0.22 + mouse.sx * 0.35;
     hero.position.y += Math.sin(t * 1.6) * 0.04;
@@ -1081,6 +1076,36 @@ setInterval(() => {
   $('hotdrop').style.opacity = 0;
   setTimeout(() => { $('hotdrop').textContent = world.pois[hotIdx % world.pois.length].name; $('hotdrop').style.opacity = 1; }, 300);
 }, 3500);
+
+// ---------- Шкафчик (Locker): выбор скина ----------
+// Выбранный скин — на персонаже в лобби сразу; закрытые — по уровню сезона или для держателей токена.
+
+let mySkin = 'default';
+try { mySkin = localStorage.getItem('pr:skin') || 'default'; } catch (e) { /* по умолчанию */ }
+const levelNow = () => Math.floor(season.stats.points / 500) + 1;
+if (!unlocked(skinById(mySkin), levelNow(), season.tier)) mySkin = 'default';
+
+function renderLocker() {
+  const lvl = levelNow();
+  $('locker').innerHTML = '';
+  for (const s of SKINS) {
+    const open = unlocked(s, lvl, season.tier);
+    const c = document.createElement('button');
+    c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${open ? '' : ' locked'}`;
+    const col = `#${(s.body ?? 0x8b5cff).toString(16).padStart(6, '0')}`;
+    c.style.setProperty('--sc', col);
+    c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${open ? RARITY[s.rarity].name : lockLabel(s)}</small>`;
+    c.addEventListener('click', () => {
+      if (!open) { $('lockerhint').textContent = s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
+      mySkin = s.id;
+      try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
+      $('lockerhint').textContent = `Equipped: ${s.name}`;
+      renderLocker();
+      makeHero();
+    });
+    $('locker').appendChild(c);
+  }
+}
 
 // Приглашения: ссылка на матч, который сейчас выбран в лобби.
 const inviteLink = () => `${location.origin}${location.pathname}?w=${lobbyId()}`;
@@ -1274,7 +1299,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats,
+  combat, loot, pick, royale, season, structures, mats, scene, camera,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls,
