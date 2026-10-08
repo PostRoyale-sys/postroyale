@@ -63,3 +63,11 @@ http://127.0.0.1:8766 — создать мир; вторая вкладка с 
 - P2P: комфортно до ~10–20 игроков в одном мире (каждый соединяется с каждым). Для больших комнат нужен сервер-ретранслятор.
 - Мир не хранится на сервере: если все вышли, правки остаются только в браузерах тех, кто там был.
 - Нет мобильного управления.
+
+## Бренд / аккаунт в X (`brand/`)
+
+- `x-avatar-400x400.png` — аватарка (исходник `avatar.html`: изометрический блок травы, «PR», кольцо шторма).
+- `x-header-1500x500.png` — шапка (исходник `header.html` + `bg-header.png` — кадр из игры).
+- Кадры игры для промо: `?w=postroyale&shot=x,z,высота,yaw,pitch` — старт без интерфейса и сети, камера в точке;
+  снимать headless Chrome: `--headless=new --use-angle=swiftshader --enable-unsafe-swiftshader --force-device-scale-factor=2 --window-size=1500,500 --virtual-time-budget=15000 --screenshot=...`.
+- Имя: PostRoyale · юзернеймы (были свободны 2026-10-08): @PostRoyale, @PostRoyaleGG, @playpostroyale, @PostRoyaleHQ.

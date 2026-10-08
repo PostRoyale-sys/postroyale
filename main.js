@@ -634,7 +634,7 @@ function renderSeason() {
 let net = null;
 let lastPose = 0, lastSent = '';
 
-function startNet() {
+let startNet = function () {
   try {
     net = connect(worldId, {
       join(peerId) {
@@ -779,6 +779,23 @@ function start() {
   }, 20);
 }
 $('go').addEventListener('click', start);
+
+// Режим съёмки для промо (?shot=x,z,высота,yaw,pitch): старт без экрана входа, без интерфейса и сети,
+// камера в заданной точке. Используется для шапки/аватарки в X: headless Chrome делает скриншот.
+if (params.has('shot')) {
+  const [x = 80, z = 80, up = 20, yaw = -2.3, pitch = -0.3] = params.get('shot').split(',').map(Number);
+  document.body.classList.add('shot');
+  startNet = () => {};
+  $('nick').value = 'Demo';
+  start();
+  setTimeout(() => {
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross']) $(id).hidden = true;
+    feet.set(x, world.surfaceY(Math.floor(x), Math.floor(z)) + up, z);
+    player.position.set(feet.x, feet.y + EYE, feet.z);
+    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    flying = true;
+  }, 60);
+}
 $('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
 
 // ---------- Цикл ----------
