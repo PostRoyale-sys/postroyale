@@ -163,7 +163,8 @@ export function createCombat(ctx) {
     for (const [peerId, o] of ctx.others) {
       if (o.target?.a === false) continue;               // наблюдатель — не цель
       const p = o.group.position;
-      list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + 1.95, p.z + 0.4) });
+      const top = o.target?.cr ? 1.35 : 1.95;              // присевший — ниже
+      list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + top, p.z + 0.4) });
     }
     return list;
   }
@@ -180,7 +181,7 @@ export function createCombat(ctx) {
     const o = camera.getWorldPosition(new THREE.Vector3());
     const base = camera.getWorldDirection(new THREE.Vector3());
     const scoped = spec.scope && ctx.scoped();
-    const spread = scoped ? 0 : spec.spread * (ctx.moving() ? 1.6 : 1);
+    const spread = scoped ? 0 : spec.spread * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
     const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
@@ -340,7 +341,7 @@ export function createCombat(ctx) {
       const w = slots[i];
       if (!w) return 0;
       const spec = WEAPONS[w.type];
-      return (spec.spread || 0) * (ctx.moving() ? 1.6 : 1);
+      return (spec.spread || 0) * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
     },
     get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
 

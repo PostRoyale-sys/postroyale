@@ -283,6 +283,32 @@
   #season .sw button { padding: 6px 12px; font-size: 13px; }
   #season p { margin: 8px 0 0; font-size: 11px; color: #8b98a5; }
   #prompt.ride { top: 76%; padding: 12px 26px; font: 400 26px var(--display); letter-spacing: .04em; background: rgba(255,210,26,.92); color: #2a1400; box-shadow: 0 6px 0 #b86400, 0 12px 30px rgba(0,0,0,.35); animation: glow 2s ease-in-out infinite; }
+  /* Способности и кредиты */
+  #abil { position: fixed; bottom: 16px; left: calc(50% - 352px); display: flex; gap: 6px; }
+  #abil div { position: relative; width: 52px; height: 52px; border-radius: 12px; display: grid; place-items: center; background: rgba(11,13,18,.72);
+    box-shadow: inset 0 0 0 2px rgba(255,216,26,.55); }
+  #abil div.empty { box-shadow: inset 0 0 0 2px rgba(255,255,255,.12); color: #8b98a5; }
+  #abil i { font-style: normal; font-size: 24px; line-height: 1; }
+  #abil span { position: absolute; left: 5px; top: 2px; font-size: 10.5px; font-weight: 800; text-shadow: 0 1px 2px #000; }
+  #abil b { position: absolute; right: 4px; bottom: 2px; font: 400 13px var(--display); color: var(--yellow); }
+  #credits { position: fixed; bottom: 76px; left: calc(50% - 352px); padding: 4px 10px; border-radius: 999px; background: rgba(11,13,18,.72); font: 400 15px var(--display); color: var(--yellow); }
+  #buy { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(14,8,48,.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+  #buy .card { width: min(760px, 94vw); padding: 22px 24px; border-radius: 22px; background: linear-gradient(170deg, rgba(30,60,170,.95), rgba(40,22,120,.95)); box-shadow: 0 0 0 2px rgba(255,255,255,.18), 0 20px 50px rgba(0,0,0,.4); }
+  #buy h2 { margin: 0 0 14px; font: 400 32px var(--display); font-style: italic; text-transform: uppercase; }
+  #buy .bc { float: right; font-style: normal; font-size: 22px; color: var(--yellow); }
+  .bgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .acard { position: relative; display: grid; justify-items: start; gap: 3px; padding: 14px; border-radius: 16px; text-align: left; color: #fff; font-family: Inter, var(--font);
+    background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); transition: transform .15s, background .2s; }
+  .acard:hover { transform: translateY(-2px); background: rgba(255,255,255,.14); }
+  .acard i { font-style: normal; font-size: 30px; }
+  .acard b { font: 400 17px var(--display); text-transform: uppercase; letter-spacing: .02em; }
+  .acard small { font-size: 12px; color: #c9d6ff; min-height: 30px; }
+  .acard span { margin-top: 4px; padding: 3px 10px; border-radius: 99px; background: rgba(255,216,26,.2); color: var(--yellow); font-weight: 800; font-size: 13px; }
+  .acard em { position: absolute; top: 10px; right: 12px; font-style: normal; font-weight: 800; font-size: 12px; color: #c9d6ff; }
+  .acard.cant { opacity: .55; }
+  #buymsg { min-height: 18px; margin: 12px 0 6px; font-weight: 700; font-size: 13px; color: #c9d6ff; }
+  .bfoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: #c9d6ff; }
+  .bfoot b { color: #fff; }
   #prompt.wait { top: 76%; padding: 10px 22px; font: 400 22px var(--display); letter-spacing: .04em; background: rgba(11,13,18,.72); color: #e7e9ea; }
   #fps { position: fixed; right: 14px; top: 66px; z-index: 40; padding: 4px 9px; border-radius: 8px; background: rgba(11,13,18,.6); font: 700 11.5px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
   #fps.good { color: #7dffb0; } #fps.ok { color: #ffd81a; } #fps.bad { color: #ff6b6b; }
@@ -352,7 +378,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -471,7 +497,7 @@
           <div><i>🪂</i><b>Drop</b>Glide onto the island, steer with WASD</div>
           <div><i>🎁</i><b>Loot</b>Open chests for weapons, ammo, shields</div>
           <div><i>⛏</i><b>Build</b>Harvest wood, brick, metal — build walls &amp; ramps</div>
-          <div><i>🌪</i><b>Survive</b>Stay inside the shrinking circle</div>
+          <div><i>🌪</i><b>Survive</b>Stay inside the shrinking circle · buy abilities with B</div>
           <div><i>🏆</i><b>Win</b>Last one standing — Victory Royale</div>
         </div>
         <h4>Controls</h4>
@@ -483,7 +509,9 @@
           <b>Left click</b><span>shoot · swing · place (hold to spam)</span>
           <b>Right click</b><span>scope (sniper) · leave build mode</span>
           <b>E</b><span>open chest</span>
-          <b>R · G · Q</b><span>reload · swap for weapon on the ground · drop</span>
+          <b>R · G · H</b><span>reload · swap for weapon on the ground · drop</span>
+          <b>Alt</b><span>crouch (hold) — smaller, slower, more accurate</span>
+          <b>B · F · Q</b><span>buy abilities · use ability 1 · use ability 2</span>
           <b>T · Esc</b><span>chat · menu</span>
         </div>
       </div>
@@ -498,7 +526,7 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>⛏ harvest · Z X C build · loot chests 🎁 · stay in the circle 🌪 · Esc menu</div>
+<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · stay in the circle 🌪 · Esc menu</div>
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>
@@ -512,6 +540,17 @@
 </div>
 <div id="ammo" hidden></div>
 <div id="mats" hidden></div>
+<div id="abil" hidden></div>
+<div id="credits" hidden></div>
+<!-- Меню покупки способностей (B) -->
+<div id="buy" hidden>
+  <div class="card">
+    <h2>Abilities <span class="bc">💰 <b id="buycred">0</b></span></h2>
+    <div class="bgrid" id="buygrid"></div>
+    <p id="buymsg"></p>
+    <div class="bfoot"><span>Use with <b>F</b> and <b>Q</b> · earn 💰 for kills, bots, chests, survival</span><button class="primary" id="buyclose">Close (B)</button></div>
+  </div>
+</div>
 <div id="poi"></div>
 <div id="prompt" hidden></div>
 <div id="reload"></div>
@@ -531,7 +570,9 @@
       <b>WASD</b><span>move · Shift run · Space jump</span>
       <b>1 · 2–4</b><span>pickaxe · weapons</span>
       <b>Z · X · C · V</b><span>wall · floor · ramp · material</span>
-      <b>E · R · G · Q</b><span>chest · reload · swap · drop</span>
+      <b>E · R · G · H</b><span>chest · reload · swap · drop</span>
+      <b>Alt</b><span>crouch</span>
+      <b>B · F · Q</b><span>buy abilities · ability 1 · ability 2</span>
       <b>T</b><span>chat</span>
     </div>
   </div>

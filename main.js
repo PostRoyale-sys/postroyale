@@ -25,12 +25,13 @@ import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter 
 import { createWater } from './water.js';
 import { createBots } from './bots.js';
 import { createLobbyScene } from './lobby.js';
+import { createAbilities, ABILITIES } from './abilities.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
-const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
+const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08;
 const GRAVITY = 30, JUMP = 9, WALK = 5.5, RUN = 8, GLIDE = 13;
 const PICK_REACH = 3.4, PICK_RATE = 0.42, BUILD_RATE = 0.12;
 const POSE_HZ = 10;
@@ -192,7 +193,9 @@ const structures = createStructures({ scene });
 // ---------- Физика игрока ----------
 
 const vel = new THREE.Vector3();
-let onGround = false, moving = false, gliding = false;   // полёта нет: только ходьба, прыжок и планирование при высадке
+let onGround = false, moving = false, gliding = false, crouching = false;
+let eyeH = EYE;                                // высота глаз: плавно опускается при приседании
+const bodyH = () => (crouching ? CROUCH_H : HEIGHT);   // полёта нет: только ходьба, прыжок и планирование при высадке
 const keys = new Set();
 const feet = new THREE.Vector3();          // позиция ног; камера — на высоте глаз
 const knockVel = new THREE.Vector3();
@@ -203,7 +206,7 @@ function moveAxis(axis, d) {
   const s = d / steps;
   for (let i = 0; i < steps; i++) {
     feet[axis] += s;
-    if (structures.blocked(feet.x, feet.y, feet.z, HEIGHT, HALF)) { feet[axis] -= s; return true; }
+    if (structures.blocked(feet.x, feet.y, feet.z, bodyH(), HALF)) { feet[axis] -= s; return true; }
   }
   return false;
 }
@@ -325,7 +328,12 @@ function ghostStep(dt) {
 function step(dt) {
   if (!royale.alive) { ghostStep(dt); return; }
   const scoped = isScoped();
-  const speed = gliding ? GLIDE : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
+  // Присед (Alt, удерживать): ниже, медленнее, точнее. Встать нельзя, если над головой пол/рампа.
+  const wantCrouch = (keys.has('AltLeft') || keys.has('AltRight')) && !gliding;
+  if (wantCrouch) crouching = true;
+  else if (crouching && !structures.blocked(feet.x, feet.y, feet.z, HEIGHT, HALF)) crouching = false;
+  eyeH += ((crouching ? CROUCH_EYE : EYE) - eyeH) * Math.min(1, dt * 12);
+  const speed = gliding ? GLIDE : crouching ? WALK * 0.45 : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd);
   fwd.y = 0;
@@ -350,7 +358,7 @@ function step(dt) {
     vel.y = Math.max(vel.y - GRAVITY * dt, gliding ? -9 : -45);
     let ny = feet.y + vel.y * dt;
     if (vel.y > 0) {
-      const top = structures.ceiling(feet.x, feet.y, ny, feet.z, HEIGHT, HALF);
+      const top = structures.ceiling(feet.x, feet.y, ny, feet.z, bodyH(), HALF);
       if (ny > top) { ny = top; vel.y = 0; }
     }
     const g = structures.ground(feet.x, feet.z, Math.max(feet.y, ny), HALF);
@@ -366,7 +374,16 @@ function step(dt) {
   }
   feet.x = Math.max(-60, Math.min(MAP + 60, feet.x));
   feet.z = Math.max(-60, Math.min(MAP + 60, feet.z));
-  player.position.set(feet.x, feet.y + EYE, feet.z);
+  player.position.set(feet.x, feet.y + eyeH, feet.z);
+}
+
+// Направление ввода WASD (для рывка способностью).
+function moveDir() {
+  const fwd = camera.getWorldDirection(new THREE.Vector3()); fwd.y = 0; fwd.normalize();
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x), d = new THREE.Vector3();
+  if (keys.has('KeyW')) d.add(fwd); if (keys.has('KeyS')) d.sub(fwd);
+  if (keys.has('KeyD')) d.add(right); if (keys.has('KeyA')) d.sub(right);
+  return d.lengthSq() ? d.normalize() : d;
 }
 
 // ---------- Хотбар: кирка + 3 слота оружия; режим стройки ----------
@@ -762,7 +779,9 @@ const ctx = {
   me: () => ({ alive: royale.alive, riding, nick, feet }),
   upsert: (k, d) => upsertOther(k, d),
   removeBots, isHost, hostId,
-  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); if (rankedMatch) ranked.add('botkill'); } },
+  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
+  blocksSight: (a, b) => abilities.blocksSight(a, b),
+  crouched: () => crouching,
   riding: () => riding,
   onRoundEnd,
   died: (by) => royale.eliminate(by),
@@ -793,10 +812,62 @@ let rankedMatch = false;           // этот матч — рейтинговы
 // Очки за событие: сезонные — всегда, RP — только в рейтинговом матче.
 function award(kind) {
   season.add(kind);
+  abilities.earn(kind);
   if (rankedMatch) ranked.add(kind);
 }
 const vm = createViewmodel(renderer, camera);
 const bots = createBots(ctx);
+const abilities = createAbilities({
+  scene, camera, others,
+  world: () => world, structures: () => structures, combat: () => combat, net: () => net, feet: () => feet,
+  toast: (t) => pointsToast(t), onChange: () => renderAbilities(),
+  canUse: () => playing && royale.alive && !riding,
+  moveDir,
+  dash: (d) => { knockVel.copy(d).multiplyScalar(36); vel.y = Math.max(vel.y, 3); onGround = false; combat.sfx('swing'); },
+  launch: (vy) => { vel.y = vy; onGround = false; combat.sfx('bazooka'); },
+});
+
+// HUD способностей: два слота (F, Q) и кредиты.
+function renderAbilities() {
+  $('credits').textContent = `💰 ${abilities.credits}`;
+  $('abil').innerHTML = ['F', 'Q'].map((key, i) => {
+    const s = abilities.slots[i], a = s && ABILITIES[s.id];
+    return `<div class="${a ? '' : 'empty'}" title="${a ? `${a.name} — ${a.desc}` : 'Empty — buy abilities with B'}"><span>${key}</span>${a ? `<i>${a.icon}</i><b>×${s.n}</b>` : '<i>＋</i>'}</div>`;
+  }).join('');
+  if (buyOpen) renderBuy();
+}
+
+// Меню покупки (B): карточки способностей, цена, заряды.
+let buyOpen = false;
+function renderBuy() {
+  $('buygrid').innerHTML = '';
+  for (const [id, a] of Object.entries(ABILITIES)) {
+    const have = abilities.slots.find((x) => x && x.id === id)?.n || 0;
+    const c = document.createElement('button');
+    c.className = `acard${abilities.credits < a.price ? ' cant' : ''}`;
+    c.innerHTML = `<i>${a.icon}</i><b>${a.name}</b><small>${a.desc}</small><span>💰 ${a.price}</span><em>${have}/${a.max}</em>`;
+    c.addEventListener('click', () => {
+      const err = abilities.buy(id);
+      $('buymsg').textContent = err || `✓ ${a.name} → slot ${abilities.slots.findIndex((x) => x && x.id === id) === 0 ? 'F' : 'Q'}`;
+    });
+    $('buygrid').appendChild(c);
+  }
+  $('buycred').textContent = abilities.credits;
+}
+function openBuy() {
+  if (!playing || !royale.alive) return;
+  buyOpen = true;
+  $('buymsg').textContent = '';
+  renderBuy();
+  $('buy').hidden = false;
+  controls.unlock();
+}
+function closeBuy() {
+  buyOpen = false;
+  $('buy').hidden = true;
+  controls.lock();                     // клик/клавиша — жест пользователя, захват мыши вернётся
+}
+$('buyclose').addEventListener('click', closeBuy);
 
 // Попадание: по боту — хосту ботов (или себе, если хост ты), по игроку — ему по сети.
 function sendHit(id, d) {
@@ -836,6 +907,7 @@ function onRoundStart(r, alive) {
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
   bots.roundStart(r);
+  abilities.reset();
   loot.resetRound(r, r * ROUND_MS);
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
@@ -989,6 +1061,7 @@ let startNet = function () {
       win(peerId, d) { royale.onWin(peerId, d); },
       bots(peerId, d) { bots.onBots(peerId, d); },
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
+      abil(peerId, d) { abilities.onNet(peerId, d); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
@@ -1009,6 +1082,7 @@ function poseData() {
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
+  if (crouching) d.cr = 1;
   if (gliding) d.st = 'g'; else if (!onGround) d.st = 'a';
   return d;
 }
@@ -1030,10 +1104,13 @@ setInterval(() => { if (net && world) net.pose(poseData()); }, 1500);
 
 addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
+  if (buyOpen && (e.code === 'KeyB' || e.code === 'Escape')) { e.preventDefault(); closeBuy(); return; }
+  if (e.code === 'AltLeft' || e.code === 'AltRight') e.preventDefault();     // не уводить фокус в меню браузера
   keys.add(e.code);
   if (!playing || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (riding) { if (e.code === 'Space') jumpOut(); return; }
+  if (e.code === 'KeyB') { openBuy(); return; }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(eye(), look());
@@ -1056,7 +1133,10 @@ addEventListener('keydown', (e) => {
     loot.swap(swapCandidate, into, combat);
     pick(into + 1);
   }
-  if (e.code === 'KeyQ' && royale.alive) {
+  if (e.code === 'KeyB') openBuy();
+  if (e.code === 'KeyF' && royale.alive) abilities.use(0);
+  if (e.code === 'KeyQ' && royale.alive) abilities.use(1);
+  if (e.code === 'KeyH' && royale.alive) {
     const en = ENTRIES[slot];
     if (en.weapon !== undefined && combat.slots[en.weapon]) {
       const w = combat.take(en.weapon);
@@ -1071,7 +1151,7 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 controls.addEventListener('lock', () => { $('pause').hidden = true; $('cross').hidden = !playing; });
 controls.addEventListener('unlock', () => {
   keys.clear(); mouseDown = false; scopeHeld = false;
-  if ($('chatbox').hidden) $('pause').hidden = false;
+  if ($('chatbox').hidden && !buyOpen) $('pause').hidden = false;
   $('cross').hidden = true;
 });
 $('resume').addEventListener('click', () => controls.lock());
@@ -1122,7 +1202,8 @@ function start() {
     pick(0);
     $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats']) $(id).hidden = false;
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats', 'abil', 'credits']) $(id).hidden = false;
+    renderAbilities();
     renderSeason();
     $('pause').hidden = controls.isLocked;          // мышь захвачена кликом по PLAY — сразу в игру, без паузы
     $('cross').hidden = !controls.isLocked;
@@ -1550,7 +1631,7 @@ renderer.setAnimationLoop((now) => {
     updateHeli(t);
     if (riding) { /* камеру ставит updateHeli */ }
     else if (controls.isLocked) step(dt);
-    else player.position.set(feet.x, feet.y + EYE, feet.z);
+    else player.position.set(feet.x, feet.y + eyeH, feet.z);
 
     // Зажатая ЛКМ: автоматическое оружие стреляет, кирка машет, стройка ставит детали.
     const en = ENTRIES[slot], w = currentWeapon();
@@ -1562,6 +1643,7 @@ renderer.setAnimationLoop((now) => {
     combat.update(dt);
     loot.update(dt, now);
     bots.update(dt);
+    abilities.update(dt);
     royale.update(dt);
     updateFx(dt);
     updatePlan();
@@ -1591,6 +1673,7 @@ renderer.setAnimationLoop((now) => {
       const prev = o.group.position.clone();
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y, o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
+      o.group.scale.y += ((o.target.cr ? 0.72 : 1) - o.group.scale.y) * 0.3;       // присел — ниже
       // поза по движению: планирует / в воздухе / бежит / стоит
       const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
       o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
@@ -1670,7 +1753,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats, bots, sendHit, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: () => jumpOut(),

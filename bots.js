@@ -138,6 +138,7 @@ export function createBots(ctx) {
       if (d > bd) continue;
       const hit = st.raycast(eye, to.clone().normalize(), d);
       if (hit && hit.t < d - 0.5) continue;           // стена/дерево/холм на пути
+      if (ctx.blocksSight?.(eye, h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)))) continue;   // дым
       bd = d; best = h;
     }
     b.target = best ? best.pos.clone() : null;
