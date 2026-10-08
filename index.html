@@ -22,19 +22,54 @@
     font: 15px var(--font); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); transition: box-shadow .2s; }
   input:focus { box-shadow: inset 0 0 0 2px var(--blue); }
 
-  #intro { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
-    background: radial-gradient(900px 600px at 30% 10%, rgba(120,200,255,.55), transparent 60%), linear-gradient(160deg, #1b6dff 0%, #3a2bd8 55%, #7a2bd8 100%); }
-  .box { width: min(520px, 100%); }
-  h1 { margin: 0 0 10px; font: 400 64px/0.98 var(--display); text-transform: uppercase; font-style: italic; letter-spacing: .01em; color: #fff;
-    text-shadow: 0 4px 0 #1a2a8a, 0 8px 24px rgba(0,0,0,.35); }
-  h1 em { font-style: italic; color: var(--yellow); }
-  .sub { color: #dbe8ff; font-size: 17px; margin: 0 0 24px; }
-  .row { display: flex; gap: 8px; }
-  .row input { flex: 1; min-width: 0; }
   .primary { padding: 13px 26px; background: var(--yellow); color: #1a1a2e; font: 400 19px var(--display); text-transform: uppercase; letter-spacing: .02em;
     border-radius: 12px; box-shadow: 0 4px 0 #c99a00, 0 8px 18px rgba(0,0,0,.25); }
   .primary:hover { filter: brightness(1.06); }
-  #status { min-height: 22px; margin-top: 14px; color: #8b98a5; }
+  #status { min-height: 22px; margin-top: 10px; color: #dbe8ff; text-align: right; font-weight: 700; }
+
+  /* ---------- Лобби ---------- */
+  #lobby { position: fixed; inset: 0; display: flex; flex-direction: column; padding: 18px 28px 28px; box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(20,30,120,.55) 0%, rgba(20,30,120,0) 22%, rgba(20,30,120,0) 60%, rgba(40,20,120,.6) 100%); }
+  .lb-top { display: flex; align-items: center; gap: 28px; }
+  .lb-logo { font: 400 34px var(--display); font-style: italic; color: #fff; -webkit-text-stroke: 1.5px #16207a; text-shadow: 0 4px 0 #16207a; letter-spacing: .01em; }
+  .lb-logo b { color: var(--yellow); font-weight: 400; }
+  #tabs { display: flex; gap: 6px; }
+  #tabs button { padding: 9px 18px; border-radius: 10px; background: rgba(11,13,40,.35); color: #dbe8ff; font: 400 18px var(--display); text-transform: uppercase; letter-spacing: .03em; }
+  #tabs button:hover { background: rgba(255,255,255,.15); color: #fff; }
+  #tabs button.on { background: #fff; color: #1a2a8a; box-shadow: 0 4px 0 #9fb2ff; }
+  .lb-pts { margin-left: auto; padding: 8px 14px; border-radius: 10px; background: rgba(11,13,40,.45); font: 400 18px var(--display); color: #fff; }
+  .lb-pts span { color: var(--yellow); }
+  .tab { display: none; flex: 1; min-height: 0; }
+  .tab.on { display: flex; }
+  #tab-play { align-items: flex-end; justify-content: space-between; gap: 24px; }
+  .lb-card { padding: 18px 20px; border-radius: 18px; background: linear-gradient(170deg, rgba(30,60,170,.88), rgba(40,22,120,.9)); box-shadow: 0 0 0 2px rgba(255,255,255,.16), 0 18px 40px rgba(0,0,0,.35); }
+  .lb-left { width: min(380px, 100%); display: flex; flex-direction: column; gap: 8px; }
+  .lb-card label { font: 400 15px var(--display); text-transform: uppercase; letter-spacing: .04em; color: #c9d6ff; margin-top: 4px; }
+  .lb-card input { width: 100%; box-sizing: border-box; background: rgba(0,0,0,.25); }
+  .seg { display: flex; padding: 3px; border-radius: 999px; background: rgba(0,0,0,.25); }
+  .seg button { flex: 1; padding: 9px 10px; background: transparent; color: #c9d6ff; font-size: 14px; }
+  .seg button.on { background: #fff; color: #1a2a8a; }
+  .lb-left .sub { margin: 6px 0 0; font-size: 13.5px; color: #c9d6ff; }
+  .lb-right { display: flex; flex-direction: column; align-items: flex-end; }
+  #roundinfo { margin-bottom: 12px; padding: 8px 14px; border-radius: 999px; background: rgba(11,13,40,.55); font-weight: 800; font-size: 14px; }
+  #roundinfo b { color: var(--yellow); }
+  .primary.big { padding: 18px 64px; font-size: 40px; border-radius: 16px; box-shadow: 0 7px 0 #c99a00, 0 14px 30px rgba(0,0,0,.35); }
+  .lb-wide { margin: 24px auto auto; width: min(620px, 100%); max-height: calc(100vh - 120px); overflow: auto; box-sizing: border-box; }
+  .lb-card h3 { margin: 4px 0 10px; font: 400 24px var(--display); font-style: italic; text-transform: uppercase; }
+  .rules { margin: 0 0 18px; padding-left: 20px; color: #dbe8ff; line-height: 1.55; }
+  .rules b { color: #fff; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; color: #c3c8d4; font-size: 14px; }
+  .keys b { color: #fff; }
+  #tab-season #season { margin: 0; background: none; padding: 0; }
+
+  /* ---------- Настройки (лобби и пауза) ---------- */
+  .settings { display: grid; gap: 12px; text-align: left; }
+  .settings .srow { display: grid; grid-template-columns: 1fr 160px 44px; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; }
+  .settings .srow output { text-align: right; font-variant-numeric: tabular-nums; color: var(--yellow); }
+  .settings input[type=range] { padding: 0; width: 100%; accent-color: var(--yellow); background: none; box-shadow: none; }
+  .settings .tog { padding: 6px 12px; font-size: 13px; background: rgba(0,0,0,.3); color: #c9d6ff; justify-self: end; grid-column: 2 / 4; }
+  .settings .tog.on { background: var(--yellow); color: #1a1a2e; }
+  @media (max-width: 760px) { #tabs button { padding: 7px 10px; font-size: 14px; } .lb-logo { font-size: 24px; } #tab-play { flex-direction: column; align-items: stretch; } .lb-right { align-items: stretch; } }
 
   #top { position: fixed; top: 14px; left: 14px; display: flex; align-items: center; gap: 8px; }
   .pill { padding: 7px 13px; border-radius: 999px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); font-weight: 700; font-size: 13.5px; }
@@ -58,11 +93,10 @@
 
   #hint { position: fixed; top: 14px; right: 14px; padding: 7px 13px; border-radius: 999px; background: rgba(11,13,18,.72); font-size: 13px; color: #c3c8d4; }
   #pause { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(11,13,18,.45); }
-  #pause .card { padding: 26px 28px; border-radius: 22px; background: linear-gradient(170deg, rgba(30,60,170,.95), rgba(40,22,120,.95)); box-shadow: 0 0 0 2px rgba(255,255,255,.18), 0 20px 50px rgba(0,0,0,.4); text-align: center; width: min(420px, 90vw); }
-  #pause h2 { margin: 0 0 6px; font: 400 34px var(--display); font-style: italic; text-transform: uppercase; }
-  #pause p { margin: 0 0 18px; color: #c9d6ff; }
-  #pause .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; text-align: left; margin: 0 auto 20px; width: fit-content; color: #c3c8d4; font-size: 14px; }
-  #pause .keys b { color: #fff; }
+  #pause .card { display: grid; gap: 14px; padding: 26px 28px; border-radius: 22px; background: linear-gradient(170deg, rgba(30,60,170,.95), rgba(40,22,120,.95)); box-shadow: 0 0 0 2px rgba(255,255,255,.18), 0 20px 50px rgba(0,0,0,.4); text-align: center; width: min(420px, 90vw); }
+  #pause h2 { margin: 0; font: 400 34px var(--display); font-style: italic; text-transform: uppercase; }
+  #pause .prow { display: flex; gap: 8px; } #pause .prow button { flex: 1; padding: 10px; background: rgba(0,0,0,.3); color: #fff; font-size: 14px; }
+  #pause .keys { text-align: left; }
   /* Прицел: --gap задаёт main.js по разбросу оружия */
   #cross { position: fixed; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; --gap: 6px; }
   #cross i { position: absolute; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.55); transition: transform .08s linear; }
@@ -180,13 +214,63 @@
 <div id="game"></div>
 <div id="cross" hidden><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b class="dot"></b><span class="ring"></span></div>
 
-<div id="intro">
-  <div class="box">
-    <h1><span class="name">PostRoyale</span><br>last one <em>standing</em>.</h1>
-    <p class="sub" id="introsub">Make a match, post the link on X — everyone who opens it drops in with you: loot chests, outrun the storm, be the last one alive. New round every 8 minutes. No install, no account.</p>
-    <div class="row"><input id="nick" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false"><button class="primary" id="go">Create a match</button></div>
-    <div id="status"></div>
-  </div>
+<!-- Лобби: живой остров на фоне, персонаж по центру, вкладки -->
+<div id="lobby">
+  <header class="lb-top">
+    <div class="lb-logo">POST<b>ROYALE</b></div>
+    <nav id="tabs">
+      <button data-tab="play" class="on">Play</button>
+      <button data-tab="season">Season</button>
+      <button data-tab="howto">How to play</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <div class="lb-pts"><span id="lbpts">0</span> pts</div>
+  </header>
+
+  <section class="tab on" id="tab-play">
+    <div class="lb-card lb-left">
+      <label for="nick">Name</label>
+      <input id="nick" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false">
+      <label>Match</label>
+      <div class="seg"><button id="m-new" class="on">New match</button><button id="m-join">Join with code</button></div>
+      <input id="code" maxlength="24" placeholder="Match code, e.g. k3x9q2ab" autocomplete="off" spellcheck="false" hidden>
+      <p class="sub" id="introsub">Make a match, post the link on X — everyone who opens it drops in with you. New round every 8 minutes. No install, no account.</p>
+    </div>
+    <div class="lb-right">
+      <div id="roundinfo"></div>
+      <button class="primary big" id="go">Play</button>
+      <div id="status"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-season"><div class="lb-card lb-wide"><div id="season"></div></div></section>
+
+  <section class="tab" id="tab-howto">
+    <div class="lb-card lb-wide">
+      <h3>How a match works</h3>
+      <ol class="rules">
+        <li><b>Drop.</b> Glide down onto the island — steer with WASD.</li>
+        <li><b>Loot.</b> Open chests (E) in houses and under trees: weapons, ammo, shields, medkits.</li>
+        <li><b>Harvest &amp; build.</b> Pickaxe trees, rocks, cars and houses for wood, brick and metal — then build walls, floors and ramps.</li>
+        <li><b>Survive the storm.</b> The circle shrinks — outside it you take damage.</li>
+        <li><b>Win.</b> Last one standing gets the Victory Royale.</li>
+      </ol>
+      <h3>Controls</h3>
+      <div class="keys">
+        <b>WASD</b><span>move · Shift run · Space jump</span>
+        <b>1</b><span>pickaxe</span>
+        <b>2–4</b><span>weapons from chests · mouse wheel cycles</span>
+        <b>Z · X · C</b><span>build wall · floor · ramp (10 mats) · V switch material</span>
+        <b>Left click</b><span>shoot · swing · place (hold to spam)</span>
+        <b>Right click</b><span>scope (sniper) · leave build mode</span>
+        <b>E</b><span>open chest</span>
+        <b>R · G · Q</b><span>reload · swap for weapon on the ground · drop</span>
+        <b>T · Esc</b><span>chat · menu</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-settings"><div class="lb-card lb-wide"><h3>Settings</h3><div class="settings" data-settings></div></div></section>
 </div>
 
 <div id="top" hidden>
@@ -220,20 +304,16 @@
 <div id="pause" hidden>
   <div class="card">
     <h2>Paused</h2>
-    <p>Click to jump back in</p>
-    <div id="season"></div>
-    <div class="keys">
+    <button class="primary" id="resume">Resume</button>
+    <div class="settings" data-settings></div>
+    <div class="prow"><button id="howto2">Controls</button><button id="leave">Leave to lobby</button></div>
+    <div class="keys" id="pkeys" hidden>
       <b>WASD</b><span>move · Shift run · Space jump</span>
-      <b>1</b><span>pickaxe — chop trees, rocks, cars, houses for wood / brick / metal</span>
-      <b>2–4</b><span>weapons from chests</span>
-      <b>Z · X · C</b><span>build wall · floor · ramp (10 mats) · V switch material</span>
-      <b>Left click</b><span>shoot · swing · place (hold to spam)</span>
-      <b>Right click</b><span>scope (sniper) · leave build mode</span>
-      <b>E</b><span>open chest</span>
-      <b>R · G · Q</b><span>reload · swap for weapon on the ground · drop</span>
+      <b>1 · 2–4</b><span>pickaxe · weapons</span>
+      <b>Z · X · C · V</b><span>wall · floor · ramp · material</span>
+      <b>E · R · G · Q</b><span>chest · reload · swap · drop</span>
       <b>T</b><span>chat</span>
     </div>
-    <button class="primary" id="resume">Resume</button>
   </div>
 </div>
 

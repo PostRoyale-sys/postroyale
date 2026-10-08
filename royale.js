@@ -39,6 +39,7 @@ export function createRoyale(ctx) {
   // Стена шторма: открытый цилиндр.
   const wall = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 160, 96, 1, true),
     new THREE.MeshBasicMaterial({ color: 0x9b4dff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+  wall.visible = false;
   scene.add(wall);
 
   const roundOf = (now) => Math.floor(now / ROUND_MS);

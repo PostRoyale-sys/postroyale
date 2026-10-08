@@ -98,7 +98,7 @@ export function createCombat(ctx) {
     build: (v) => noise(0.06, 2600, 0.25 * v),
     swing: (v) => noise(0.08, 3800, 0.12 * v, 'highpass'),
   };
-  const sound = (kind, p) => SOUNDS[kind]?.(p ? volAt(p) : 1);
+  const sound = (kind, p) => SOUNDS[kind]?.((p ? volAt(p) : 1) * (ctx.volume?.() ?? 1));
 
   // ---------- Эффекты ----------
 

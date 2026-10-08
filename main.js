@@ -21,7 +21,8 @@ const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3;
 const GRAVITY = 30, JUMP = 9, WALK = 5.5, RUN = 8, GLIDE = 13;
 const PICK_REACH = 3.4, PICK_RATE = 0.42, BUILD_RATE = 0.12;
 const POSE_HZ = 10;
-const FOV = 80, SCOPE_FOV = 22;
+let FOV = 80;                                  // меняется в настройках
+const SCOPE_FOV = 22;
 
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.name').forEach((n) => { n.textContent = NAME; });
@@ -37,10 +38,6 @@ const ANIMALS = ['Frog', 'Cat', 'Ape', 'Bull', 'Bear', 'Whale', 'Pepe', 'Doge', 
 let nick = localStorage.getItem('pc:nick') || `${ANIMALS[Math.floor(Math.random() * ANIMALS.length)]}${Math.floor(Math.random() * 900 + 100)}`;
 $('nick').value = nick;
 
-if (worldId) {
-  $('go').textContent = 'Join match';
-  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and drop in — loot chests, build, outrun the storm, be the last one standing.`;
-}
 
 // ---------- Сцена ----------
 
@@ -125,6 +122,7 @@ addEventListener('resize', () => {
 // ---------- Карта и постройки ----------
 
 let world = null, terrain = null;
+let playing = false;                       // false — лобби (остров на фоне), true — в матче
 const structures = createStructures({ scene });
 
 // ---------- Физика игрока ----------
@@ -318,7 +316,7 @@ function spectatorNotice() {
 }
 
 renderer.domElement.addEventListener('mousedown', (e) => {
-  if (!controls.isLocked || !world) return;
+  if (!controls.isLocked || !playing) return;
   if (!royale.alive) { spectatorNotice(); return; }
   const w = currentWeapon();
   if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
@@ -580,6 +578,7 @@ const ctx = {
   points: (k) => season.add(k),
   // Сезон (season.js)
   pointsToast, onSeason: renderSeason,
+  volume: () => settings.vol,
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
   hitmarker,
@@ -674,6 +673,7 @@ function pointsToast(text) {
 
 function renderSeason() {
   const s = season.stats, w = season.wallet, t = season.tierInfo(season.tier);
+  $('lbpts').textContent = s.points.toLocaleString('en');
   $('season').innerHTML = `<div class="sh"><b>Season 1</b><span>${s.points.toLocaleString('en')} pts</span></div>
     <div class="sg"><div><b>${s.kills}</b>kills</div><div><b>${s.wins}</b>wins</div><div><b>${s.chests}</b>chests</div><div><b>${s.rounds}</b>drops</div></div>`;
   const row = document.createElement('div');
@@ -777,7 +777,7 @@ setInterval(() => { if (net && world) net.pose(poseData()); }, 1500);
 addEventListener('keydown', (e) => {
   if (document.activeElement?.tagName === 'INPUT') return;
   keys.add(e.code);
-  if (!world || !controls.isLocked) return;
+  if (!playing || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
@@ -820,7 +820,7 @@ controls.addEventListener('unlock', () => {
   $('cross').hidden = true;
 });
 $('resume').addEventListener('click', () => controls.lock());
-renderer.domElement.addEventListener('click', () => { if (world && !controls.isLocked) controls.lock(); });
+renderer.domElement.addEventListener('click', () => { if (playing && !controls.isLocked) controls.lock(); });
 
 // ---------- Поделиться ----------
 
@@ -833,24 +833,34 @@ $('share').addEventListener('click', async () => {
 
 // ---------- Старт ----------
 
+// Остров для id: генерируем, только если он ещё не тот же (лобби уже мог его построить).
+function loadWorld(id) {
+  if (world?.id === id) return;
+  if (terrain) { scene.remove(terrain); terrain.geometry.dispose(); }
+  world = new GameMap(id);
+  terrain = world.mesh();
+  scene.add(terrain);
+  structures.load(world);
+}
+
 function start() {
+  if (playing) return;
   nick = ($('nick').value.trim() || nick).slice(0, 16);
   localStorage.setItem('pc:nick', nick);
-  if (!worldId) {
-    worldId = randId();
-    history.replaceState(null, '', `?w=${worldId}`);
-  }
+  worldId = lobbyId();
+  history.replaceState(null, '', `?w=${worldId}`);
   $('status').textContent = 'Generating the island…';
+  $('go').disabled = true;
   setTimeout(() => {
-    world = new GameMap(worldId);
-    terrain = world.mesh();
-    scene.add(terrain);
-    structures.load(world);
+    loadWorld(worldId);
+    if (hero) { scene.remove(hero); hero = null; }
+    playing = true;
+    camera.rotation.set(0, 0, 0, 'YXZ');
     spawn(false);
-    royale.init();              // раунд по часам: сундуки, шторм, жив/наблюдаешь
+    royale.init();              // раунд по часам: сундуки, шторм, высадка
     pick(0);
     $('wname').textContent = `🌍 ${worldId}`;
-    $('intro').hidden = true;
+    $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats']) $(id).hidden = false;
     renderSeason();
     $('pause').hidden = false;
@@ -860,23 +870,160 @@ function start() {
 }
 $('go').addEventListener('click', start);
 
-// Режим съёмки для промо (?shot=x,z,высота,yaw,pitch): старт без экрана входа, без интерфейса и сети,
-// камера в заданной точке. Используется для шапки/аватарки в X: headless Chrome делает скриншот.
-if (params.has('shot')) {
-  const [x = 80, z = 80, up = 20, yaw = -2.3, pitch = -0.3] = params.get('shot').split(',').map(Number);
-  document.body.classList.add('shot');
-  startNet = () => {};
-  $('nick').value = 'Demo';
-  start();
-  setTimeout(() => {
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross', 'mats']) $(id).hidden = true;
-    feet.set(x, world.height(x, z) + up, z);
-    player.position.set(feet.x, feet.y + EYE, feet.z);
-    camera.rotation.set(pitch, yaw, 0, 'YXZ');
-    gliding = false;
-  }, 60);
-}
 $('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+
+// ---------- Лобби ----------
+// Фон — живой остров матча (камера облетает), по центру — твой персонаж с киркой. Вкладки: игра, сезон, правила, настройки.
+
+const lobbyNewId = randId();
+let mode = worldId ? 'join' : 'new';
+const cleanCode = (v) => v.trim().toLowerCase().replace(/^.*[?&]w=/, '').replace(/[^a-z0-9_-]/g, '').slice(0, 24);
+const lobbyId = () => (mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
+if (worldId) {
+  $('code').value = worldId;
+  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and hit Play — you drop in with everyone who opened the link.`;
+}
+
+function setMode(m) {
+  mode = m;
+  $('m-new').classList.toggle('on', m === 'new');
+  $('m-join').classList.toggle('on', m === 'join');
+  $('code').hidden = m !== 'join';
+  if (m === 'join') $('code').focus();
+  previewSoon();
+}
+$('m-new').addEventListener('click', () => setMode('new'));
+$('m-join').addEventListener('click', () => setMode('join'));
+
+let previewTimer = 0;
+function previewSoon() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => { if (!playing) loadWorld(lobbyId()); }, 500);
+}
+$('code').addEventListener('input', previewSoon);
+setMode(mode);
+
+for (const b of document.querySelectorAll('#tabs button')) {
+  b.addEventListener('click', () => {
+    for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
+    for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
+  });
+}
+
+// Персонаж в лобби: тот же мультяшный аватар с киркой, имя — над головой.
+let hero = null, heroTimer = 0;
+function makeHero() {
+  if (playing) return;
+  if (hero) scene.remove(hero);
+  hero = avatar(($('nick').value.trim() || nick).slice(0, 16));
+  const pk = weaponModel('pickaxe');
+  pk.position.set(0.34, 1.12, -0.25);
+  pk.rotation.x = 1.0;
+  hero.add(pk);
+  // круглая платформа под ногами, как в лобби
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 32), toon(0x4fb4ff, { emissive: 0x0b3a7a }));
+  pad.position.y = -0.08;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.05, 8, 40), new THREE.MeshBasicMaterial({ color: 0xffd81a }));
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = 0.01;
+  hero.add(pad, rim);
+  scene.add(hero);
+}
+$('nick').addEventListener('input', () => { clearTimeout(heroTimer); heroTimer = setTimeout(makeHero, 300); });
+
+const V_HERO = new THREE.Vector3();
+function lobbyFrame(dt, t) {
+  const a = t * 0.04;
+  camera.position.set(MAP / 2 + Math.cos(a) * 150, 62, MAP / 2 + Math.sin(a) * 150);
+  camera.lookAt(MAP / 2, 6, MAP / 2);
+  camera.updateMatrixWorld();
+  if (hero) {
+    hero.position.copy(camera.localToWorld(V_HERO.set(1.1, -1.75, -5.2)));
+    const v = camera.position.clone().sub(hero.position);
+    hero.rotation.y = Math.atan2(-v.x, -v.z) + Math.sin(t * 0.8) * 0.25;
+  }
+}
+
+// Состояние раунда в лобби: можно ли высадиться прямо сейчас.
+function updateRoundInfo() {
+  if (playing) return;
+  const into = Date.now() % ROUND_MS, left = ROUND_MS - into;
+  $('roundinfo').innerHTML = left > 90e3
+    ? `🟢 Match live · <b>drop in now</b> · round ends in ${mmss(left / 1000)}`
+    : `⏳ Final circle · next drop in <b>${mmss(left / 1000)}</b>`;
+}
+setInterval(updateRoundInfo, 500);
+
+// ---------- Настройки ----------
+
+const SETTINGS_KEY = 'pr:settings';
+const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true };
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { /* по умолчанию */ }
+
+function applySettings() {
+  controls.pointerSpeed = settings.sens;
+  FOV = settings.fov;
+  if (!isScoped()) { camera.fov = FOV; camera.updateProjectionMatrix(); }
+  sun.castShadow = settings.shadows;
+  renderer.setPixelRatio(settings.hq ? Math.min(devicePixelRatio, 2) : 1);
+  renderer.setSize(innerWidth, innerHeight);
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* без сохранения */ }
+}
+
+const SLIDERS = [
+  { key: 'sens', label: 'Mouse sensitivity', min: 0.2, max: 2.5, step: 0.05, fmt: (v) => v.toFixed(2) },
+  { key: 'fov', label: 'Field of view', min: 60, max: 110, step: 1, fmt: (v) => `${v}°` },
+  { key: 'vol', label: 'Volume', min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+];
+const TOGGLES = [
+  { key: 'shadows', label: 'Shadows', on: 'On', off: 'Off' },
+  { key: 'hq', label: 'Graphics quality', on: 'High', off: 'Fast' },
+];
+// Одни и те же настройки — во вкладке лобби и в паузе; меняешь в одном месте — обновляется везде.
+function renderSettings() {
+  for (const box of document.querySelectorAll('[data-settings]')) {
+    box.textContent = '';
+    for (const s of SLIDERS) {
+      const row = document.createElement('label');
+      row.className = 'srow';
+      const name = document.createElement('span'); name.textContent = s.label;
+      const input = Object.assign(document.createElement('input'), { type: 'range', min: s.min, max: s.max, step: s.step, value: settings[s.key] });
+      input.dataset.key = s.key;
+      const out = document.createElement('output'); out.textContent = s.fmt(settings[s.key]);
+      input.addEventListener('input', () => {
+        settings[s.key] = +input.value;
+        for (const i of document.querySelectorAll(`input[data-key="${s.key}"]`)) { i.value = input.value; i.nextElementSibling.textContent = s.fmt(+input.value); }
+        applySettings();
+      });
+      row.append(name, input, out);
+      box.appendChild(row);
+    }
+    for (const s of TOGGLES) {
+      const row = document.createElement('div');
+      row.className = 'srow';
+      const name = document.createElement('span'); name.textContent = s.label;
+      const btn = document.createElement('button');
+      btn.className = `tog${settings[s.key] ? ' on' : ''}`;
+      btn.textContent = settings[s.key] ? s.on : s.off;
+      btn.addEventListener('click', () => { settings[s.key] = !settings[s.key]; applySettings(); renderSettings(); });
+      row.append(name, btn);
+      box.appendChild(row);
+    }
+  }
+}
+renderSettings();
+applySettings();
+
+// Пауза: управление и выход в лобби (та же ссылка — можно вернуться в матч).
+$('howto2').addEventListener('click', () => { $('pkeys').hidden = !$('pkeys').hidden; });
+$('leave').addEventListener('click', () => { location.href = `${location.pathname}?w=${worldId}`; });
+
+// Остров для лобби — сразу при открытии страницы.
+if (!params.has('shot')) {
+  $('status').textContent = 'Loading the island…';
+  setTimeout(() => { loadWorld(lobbyId()); makeHero(); renderSeason(); updateRoundInfo(); $('status').textContent = ''; }, 30);
+}
 
 // ---------- Цикл ----------
 
@@ -885,7 +1032,8 @@ renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   const t = now / 1000;
-  if (world) {
+  if (!playing && world) lobbyFrame(dt, t);
+  if (playing) {
     if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + EYE, feet.z);
 
@@ -935,12 +1083,29 @@ renderer.setAnimationLoop((now) => {
   sky.position.copy(c);
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
   renderer.render(scene, camera);
-  if (world && (controls.isLocked || debugView)) {
+  if (playing && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
   }
 });
+
+// Режим съёмки для промо (?shot=x,z,высота,yaw,pitch): старт без экрана входа, без интерфейса и сети,
+// камера в заданной точке. Используется для шапки/аватарки в X: headless Chrome делает скриншот.
+if (params.has('shot')) {
+  const [x = 80, z = 80, up = 20, yaw = -2.3, pitch = -0.3] = params.get('shot').split(',').map(Number);
+  document.body.classList.add('shot');
+  startNet = () => {};
+  $('nick').value = 'Demo';
+  start();
+  setTimeout(() => {
+    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross', 'mats']) $(id).hidden = true;
+    feet.set(x, world.height(x, z) + up, z);
+    player.position.set(feet.x, feet.y + EYE, feet.z);
+    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    gliding = false;
+  }, 60);
+}
 
 let debugView = false;           // для скриншотов в тестах: рисовать оружие в руках без захвата мыши
 
