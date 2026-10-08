@@ -19,15 +19,21 @@ export const SKINS = [
   { id: 'rug', name: 'Rug Puller', rarity: 3, body: 0x7a2fd6, legs: 0x3d1a70, hat: 'beanie', hatColor: 0x2a2a3a, extra: 'rug', icon: '🧶', level: 6 },
   { id: 'diamond', name: 'Diamond Hands', rarity: 4, body: 0x7fe0ff, legs: 0x3fa9d6, glow: 0x1a6080, hat: 'crystal', extra: 'cape', capeColor: 0x2f8cff, icon: '💎', level: 8 },
   { id: 'gold', name: 'Gold Holder', rarity: 4, body: 0xffc928, legs: 0xc98a00, glow: 0x4a3000, hat: 'crown', extra: 'cape', capeColor: 0xd23b3b, icon: '👑', holder: true },
+  // магазин рейтинга (ranked.js, за RP)
+  { id: 'champ', name: 'Ranked Champ', rarity: 4, body: 0x2f6fd6, legs: 0x1c3f86, glow: 0x0a2050, hat: 'crown', extra: 'cape', capeColor: 0xffc928, icon: '🏆', shop: true },
+  { id: 'knight', name: 'Rugged Knight', rarity: 3, body: 0x8a94a6, legs: 0x5b6472, hat: 'knight', icon: '🛡', shop: true },
+  { id: 'neon', name: 'Neon Degen', rarity: 3, body: 0xff4fd8, legs: 0x2a0a40, glow: 0x5a0a4a, hat: 'beanie', hatColor: 0x5dff9a, icon: '💗', shop: true },
+  { id: 'candle', name: 'Green Candle', rarity: 2, body: 0x2fbf71, legs: 0x1f8a50, glow: 0x0a3a1a, hat: 'wick', icon: '🕯', shop: true },
 ];
 export const skinById = (id) => SKINS.find((s) => s.id === id) || SKINS[0];
 
-// Открыт ли скин: по уровню сезона и уровню держателя (tier ≥ 0 — держит токен).
-export function unlocked(skin, level, tier) {
+// Открыт ли скин: по уровню сезона, уровню держателя (tier ≥ 0 — держит токен) или покупке в магазине (owns).
+export function unlocked(skin, level, tier, owns = () => false) {
+  if (skin.shop) return owns(skin.id);
   if (skin.holder) return tier >= 0;
   return level >= (skin.level || 1);
 }
-export const lockLabel = (skin) => (skin.holder ? '🔒 Holders' : `🔒 LV ${skin.level}`);
+export const lockLabel = (skin) => (skin.shop ? '🛒 Shop' : skin.holder ? '🔒 Holders' : `🔒 LV ${skin.level}`);
 
 const box = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); return m; };
 const ball = (r, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); return m; };
@@ -77,6 +83,17 @@ export function buildCharacter(skinId, fallbackColor) {
       const band = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.2, 0.12, 10, 1, true), gold); band.position.y = 2.0; g.add(band);
       for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2; const sp = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 6), gold); sp.position.set(Math.cos(a) * 0.2, 2.12, Math.sin(a) * 0.2); g.add(sp); }
       g.add(ball(0.04, toon(0xff3b5a, { emissive: 0x400010 }), 0, 2.0, -0.22));
+      break;
+    }
+    case 'knight': {
+      const steel = toon(0xc9d1dc), dark = new THREE.MeshBasicMaterial({ color: 0x111111 });
+      g.add(ball(0.34, steel, 0, 1.76, 0, 1, 1.05, 1), box(0.5, 0.06, 0.06, dark, 0, 1.76, -0.32), box(0.04, 0.22, 0.3, toon(0xd23b3b), 0, 2.12, 0));
+      break;
+    }
+    case 'wick': {
+      g.add(box(0.04, 0.22, 0.04, toon(0x222222), 0, 2.1, 0));
+      const flame = ball(0.09, new THREE.MeshBasicMaterial({ color: 0xffb23a }), 0, 2.27, 0, 1, 1.6, 1);
+      g.add(flame);
       break;
     }
     case 'crystal': {

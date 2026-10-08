@@ -24,6 +24,7 @@ import { createSeason, TIERS, TOKEN_MINT } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
 import { createWater } from './water.js';
 import { createBots } from './bots.js';
+import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
 
@@ -760,7 +761,7 @@ const ctx = {
   me: () => ({ alive: royale.alive, riding, nick, feet }),
   upsert: (k, d) => upsertOther(k, d),
   removeBots, isHost, hostId,
-  onBotKilled: (by) => { if (by === nick && royale.alive) season.add('kill'); },
+  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); if (rankedMatch) ranked.add('botkill'); } },
   riding: () => riding,
   onRoundEnd,
   died: (by) => royale.eliminate(by),
@@ -769,7 +770,7 @@ const ctx = {
   onRoundStart, onEliminated, onWinner,
   stormHud,
   stormDamage: (d) => combat.takeDamage(d, 'Storm', 'storm'),
-  points: (k) => season.add(k),
+  points: (k) => award(k),
   // Сезон (season.js)
   pointsToast, onSeason: renderSeason,
   volume: () => settings.vol,
@@ -785,6 +786,14 @@ const combat = createCombat(ctx);
 const loot = createLoot(ctx);
 const royale = createRoyale(ctx);
 const season = createSeason(ctx);
+const ranked = createRanked({ toast: (t) => pointsToast(t), onChange: () => renderRanked() });
+let rankedMatch = false;           // этот матч — рейтинговый (остров дня и есть допуск): начисляем RP
+
+// Очки за событие: сезонные — всегда, RP — только в рейтинговом матче.
+function award(kind) {
+  season.add(kind);
+  if (rankedMatch) ranked.add(kind);
+}
 const vm = createViewmodel(renderer, camera);
 const bots = createBots(ctx);
 
@@ -808,7 +817,7 @@ function openChest(chest) {
   const key = season.tier >= 0 && goldenKeyRound !== royale.round;
   if (!loot.open(chest, key ? 1 : 0)) return;
   if (key) { goldenKeyRound = royale.round; toast('🔑 Golden key: +1 rarity'); }
-  season.add('chest');
+  award('chest');
 }
 
 let bannerTimer = 0;
@@ -851,11 +860,12 @@ function onEliminated(place, by) {
   vel.set(0, 0, 0);
   feet.y += 3;                                    // призрак поднимается над местом гибели
   season.placed(place);
+  if (rankedMatch && (place === 2 || place === 3)) ranked.add(place === 2 ? 'top2' : 'top3');
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
 
 function onWinner(name, me) {
-  if (me) season.add('win');
+  if (me) award('win');
   banner(me ? '🏆 VICTORY ROYALE' : `🏆 ${name} wins`, me ? 'Last one standing!' : 'Last one standing', 6000);
   say('🏆', ` ${name} won the round`);
 }
@@ -973,7 +983,7 @@ let startNet = function () {
       dead(peerId, d) {
         combat.onDead(peerId, d);
         royale.onPeerDead();
-        if (d.by === nick && d.n !== nick && royale.alive) season.add('kill');
+        if (d.by === nick && d.n !== nick && royale.alive) award('kill');
       },
       win(peerId, d) { royale.onWin(peerId, d); },
       bots(peerId, d) { bots.onBots(peerId, d); },
@@ -1095,6 +1105,7 @@ function start() {
   nick = ($('nick').value.trim() || nick).slice(0, 16);
   localStorage.setItem('pc:nick', nick);
   worldId = lobbyId();
+  rankedMatch = isRankedWorld(worldId) && ranked.hasAccess();
   history.replaceState(null, '', `?w=${worldId}`);
   $('status').textContent = 'Generating the island…';
   $('go').disabled = true;
@@ -1107,7 +1118,7 @@ function start() {
     spawn(false);
     royale.init();              // раунд по часам: сундуки, шторм, высадка
     pick(0);
-    $('wname').textContent = `🌍 ${worldId}`;
+    $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats']) $(id).hidden = false;
     renderSeason();
@@ -1120,6 +1131,12 @@ function start() {
 // PLAY: вспышка и «вылет» из лобби, затем матч.
 $('go').addEventListener('click', () => {
   if (playing || $('go').disabled) return;
+  if (gameMode === 'ranked' && !ranked.hasAccess()) {
+    $('rk-msg').className = 'sub err';
+    $('rk-msg').textContent = 'Unlock Ranked first: post on X and paste the link';
+    $('rk-url').focus();
+    return;
+  }
   $('go').disabled = true;
   // захват мыши — прямо в обработчике клика (нужен жест пользователя); не дали — после старта откроется пауза
   try { renderer.domElement.requestPointerLock()?.catch?.(() => {}); } catch (e) { /* без захвата */ }
@@ -1137,7 +1154,8 @@ $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); }
 const lobbyNewId = randId();
 let mode = worldId ? 'join' : 'new';
 const cleanCode = (v) => v.trim().toLowerCase().replace(/^.*[?&]w=/, '').replace(/[^a-z0-9_-]/g, '').slice(0, 24);
-const lobbyId = () => (mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
+let gameMode = isRankedWorld(worldId) ? 'ranked' : 'casual';
+const lobbyId = () => (gameMode === 'ranked' ? rankedWorld() : mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
 // Итог прошлого раунда (возврат из матча): ?r=win|end&ws=имена.
 if (params.get('r')) {
   const ws = (params.get('ws') || '').split(',').filter(Boolean);
@@ -1145,7 +1163,7 @@ if (params.get('r')) {
   $('status').classList.add('result');
   history.replaceState(null, '', `?w=${params.get('w')}`);
 }
-if (worldId) {
+if (worldId && !isRankedWorld(worldId)) {
   $('code').value = worldId;
   $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and hit Play — you drop in with everyone who opened the link.`;
 }
@@ -1181,9 +1199,10 @@ for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
-    $('lobby').classList.toggle('paneled', b.dataset.tab !== 'play' && b.dataset.tab !== 'locker');
-    $('lobby').classList.toggle('lockered', b.dataset.tab === 'locker');
+    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('lockered', b.dataset.tab === 'locker' || b.dataset.tab === 'shop');
     if (b.dataset.tab === 'locker') renderLocker();
+    if (b.dataset.tab === 'shop') renderShop();
     moveTabInd();
   });
 }
@@ -1202,9 +1221,10 @@ function makeHero() {
   pk.position.set(0, -0.5, 0);
   hero.userData.rig.a2.add(pk);
   // круглая платформа под ногами, как в лобби
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 32), toon(0x4fb4ff, { emissive: 0x0b3a7a }));
+  const ps = SHOP.find((x) => x.id === ranked.pad);
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.05, 0.16, 32), toon(ps ? ps.color : 0x4fb4ff, { emissive: ps ? new THREE.Color(ps.color).multiplyScalar(0.25) : 0x0b3a7a }));
   pad.position.y = -0.08;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.05, 8, 40), new THREE.MeshBasicMaterial({ color: 0xffd81a }));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.05, 8, 40), new THREE.MeshBasicMaterial({ color: ps ? ps.rim : 0xffd81a }));
   rim.rotation.x = Math.PI / 2;
   rim.position.y = 0.01;
   hero.add(pad, rim);
@@ -1297,7 +1317,7 @@ function renderPlayerCard() {
 let hotIdx = 0;
 function renderPois() {
   if (!world) return;
-  $('pois').innerHTML = world.pois.map((p) => `<span>📍 ${p.name}</span>`).join('');
+  $('pois').innerHTML = world.pois.slice(0, 3).map((p) => `<span>📍 ${p.name}</span>`).join('') + (world.pois.length > 3 ? `<span>+${world.pois.length - 3} more</span>` : '');
   $('hotdrop').textContent = world.pois[hotIdx % world.pois.length]?.name || '—';
 }
 setInterval(() => {
@@ -1313,20 +1333,20 @@ setInterval(() => {
 let mySkin = 'default';
 try { mySkin = localStorage.getItem('pr:skin') || 'default'; } catch (e) { /* по умолчанию */ }
 const levelNow = () => Math.floor(season.stats.points / 500) + 1;
-if (!unlocked(skinById(mySkin), levelNow(), season.tier)) mySkin = 'default';
+if (!unlocked(skinById(mySkin), levelNow(), season.tier, ranked.owns)) mySkin = 'default';
 
 function renderLocker() {
   const lvl = levelNow();
   $('locker').innerHTML = '';
   for (const s of SKINS) {
-    const open = unlocked(s, lvl, season.tier);
+    const open = unlocked(s, lvl, season.tier, ranked.owns);
     const c = document.createElement('button');
     c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${open ? '' : ' locked'}`;
     const col = `#${(s.body ?? 0x8b5cff).toString(16).padStart(6, '0')}`;
     c.style.setProperty('--sc', col);
     c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${open ? RARITY[s.rarity].name : lockLabel(s)}</small>`;
     c.addEventListener('click', () => {
-      if (!open) { $('lockerhint').textContent = s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
+      if (!open) { $('lockerhint').textContent = s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
       mySkin = s.id;
       try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
       $('lockerhint').textContent = `Equipped: ${s.name}`;
@@ -1335,6 +1355,82 @@ function renderLocker() {
     });
     $('locker').appendChild(c);
   }
+}
+
+// ---------- Режимы: Casual / Ranked, допуск через пост в X, магазин за RP ----------
+
+function setGameMode(m) {
+  gameMode = m;
+  $('modeseg').classList.toggle('ranked', m === 'ranked');
+  $('md-casual').classList.toggle('on', m === 'casual');
+  $('md-ranked').classList.toggle('on', m === 'ranked');
+  renderRanked();
+  previewSoon();
+}
+$('md-casual').addEventListener('click', () => setGameMode('casual'));
+$('md-ranked').addEventListener('click', () => setGameMode('ranked'));
+
+function renderRanked() {
+  const rk = gameMode === 'ranked';
+  $('rankbox').hidden = !rk;
+  $('seg').hidden = rk;
+  $('code').hidden = rk || mode !== 'join';
+  $('copyinv').parentElement.hidden = rk;
+  const a = ranked.access;
+  $('rk-locked').hidden = !!a;
+  $('rk-ok').hidden = !a;
+  if (a) {
+    $('rk-handle').textContent = `@${a.handle}`;
+    $('rk-left').textContent = `${Math.max(1, Math.ceil((a.until - Date.now()) / 864e5))} days left`;
+    $('rk-world').textContent = rankedWorld().slice(7);
+  }
+  $('lbrp').textContent = ranked.rp.toLocaleString('en');
+  if ($('shoprp')) $('shoprp').textContent = ranked.rp.toLocaleString('en');
+}
+
+$('rk-post').addEventListener('click', () => {
+  const link = `${location.origin}${location.pathname}`;
+  open(`https://x.com/intent/post?text=${encodeURIComponent(ranked.postText(link))}`, '_blank', 'noopener');
+  $('rk-msg').className = 'sub';
+  $('rk-msg').textContent = 'Posted? Copy the link to your post and paste it above.';
+});
+$('rk-verify').addEventListener('click', async () => {
+  $('rk-msg').className = 'sub';
+  $('rk-msg').textContent = 'Checking your post…';
+  try {
+    const a = await ranked.verify($('rk-url').value);
+    $('rk-msg').className = 'sub ok';
+    $('rk-msg').textContent = `✓ Verified @${a.handle} — Ranked unlocked`;
+    renderRanked();
+  } catch (e) {
+    $('rk-msg').className = 'sub err';
+    $('rk-msg').textContent = e.message || 'Could not check the post';
+  }
+});
+$('rk-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rk-verify').click(); });
+
+function renderShop() {
+  $('shop').innerHTML = '';
+  for (const it of SHOP) {
+    const own = ranked.owns(it.id), equipped = it.kind === 'pad' && ranked.pad === it.id;
+    const c = document.createElement('button');
+    c.className = `skin r${it.rarity}${equipped ? ' on' : ''}${!own && ranked.rp < it.price ? ' cant' : ''}`;
+    c.style.setProperty('--sc', `#${(it.color ?? 0x8b5cff).toString(16).padStart(6, '0')}`);
+    const price = own ? (it.kind === 'skin' ? 'In Locker' : equipped ? 'Equipped' : 'Equip') : `${it.price} RP`;
+    c.innerHTML = `<i>${it.icon}</i><b>${it.name}</b><small>${it.kind === 'skin' ? 'Skin' : 'Lobby pad'}</small><span class="price${own ? ' own' : ''}">${price}</span>`;
+    c.addEventListener('click', () => {
+      if (own) {
+        if (it.kind === 'pad') { ranked.setPad(equipped ? null : it.id); makeHero(); }
+        $('shophint').textContent = it.kind === 'skin' ? 'Equip it in the Locker' : equipped ? 'Pad removed' : `${it.name} equipped`;
+      } else if (ranked.buy(it.id)) {
+        $('shophint').textContent = `✓ Bought ${it.name}${it.kind === 'skin' ? ' — equip it in the Locker' : ''}`;
+        if (it.kind === 'pad') makeHero();
+      } else $('shophint').textContent = `Need ${it.price - ranked.rp} more RP — play Ranked`;
+      renderShop();
+    });
+    $('shop').appendChild(c);
+  }
+  renderRanked();
 }
 
 // Приглашения: ссылка на матч, который сейчас выбран в лобби.
@@ -1436,6 +1532,7 @@ if (!params.has('shot')) {
   setTimeout(() => {
     loadWorld(lobbyId());
     makeHero(); renderSeason(); renderPlayerCard(); renderPois(); updateRoundInfo(); moveTabInd();
+    setGameMode(gameMode);
     setTimeout(() => $('splash').classList.add('done'), 350);
   }, 60);
 }
