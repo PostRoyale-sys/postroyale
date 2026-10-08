@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { World, SX, SY, SZ, WATER_Y, BLOCKS, HOTBAR, makeMaterials, buildChunk, chunksOf, chunkKey, CHUNKS_X, CHUNKS_Z, raycast, iconUrl } from './voxel.js';
+import { World, SX, SY, SZ, WATER_Y, BLOCKS, HOTBAR, makeMaterials, toonGradient, buildChunk, chunksOf, chunkKey, CHUNKS_X, CHUNKS_Z, raycast, iconUrl } from './voxel.js';
 import { connect } from './net.js';
 import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
@@ -34,31 +34,79 @@ let nick = localStorage.getItem('pc:nick') || `${ANIMALS[Math.floor(Math.random(
 $('nick').value = nick;
 
 if (worldId) {
-  $('go').textContent = 'Join world';
-  $('introsub').textContent = `You were invited to world “${worldId}”. Pick a name and jump in — loot chests, build, fight.`;
+  $('go').textContent = 'Join match';
+  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and drop in — loot chests, outrun the storm, be the last one standing.`;
 }
 
 // ---------- Сцена ----------
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
+// Графика в мультяшном стиле: cel-затенение (MeshToonMaterial), мягкие тени от солнца, градиентное небо,
+// пухлые облака, бирюзовая вода, лёгкая дымка у горизонта.
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('game').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const SKY = 0x8fc3ff;
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 70, 200);
-const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 420);
-scene.add(new THREE.HemisphereLight(0xdfefff, 0x5a4a3a, 1.15));
-const sun = new THREE.DirectionalLight(0xffffff, 1.3);
-sun.position.set(-80, 160, 60);
-scene.add(sun);
+const HORIZON = 0xbfe9ff, ZENITH = 0x2f8fff;
+scene.background = new THREE.Color(HORIZON);
+scene.fog = new THREE.Fog(HORIZON, 90, 240);
+const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.05, 600);
+scene.add(new THREE.HemisphereLight(0xd8efff, 0x7a6a48, 1.25));
+const sun = new THREE.DirectionalLight(0xfff0d8, 1.9);
+const SUN_DIR = new THREE.Vector3(-0.45, 1, 0.35).normalize();
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 260 });
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.04;
+scene.add(sun, sun.target);
+
+// Небо: купол с вертикальным градиентом и солнечным ореолом, ездит за камерой.
+const sky = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: { top: { value: new THREE.Color(ZENITH) }, bottom: { value: new THREE.Color(HORIZON) }, sunDir: { value: SUN_DIR } },
+  vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform vec3 top; uniform vec3 bottom; uniform vec3 sunDir; varying vec3 vDir;
+    void main(){ float h = clamp(vDir.y * 1.6, 0.0, 1.0); vec3 c = mix(bottom, top, pow(h, 0.7));
+      float s = max(dot(vDir, sunDir), 0.0); c += vec3(1.0, 0.92, 0.7) * (pow(s, 400.0) * 1.2 + pow(s, 12.0) * 0.18);
+      gl_FragColor = vec4(c, 1.0);
+#include <colorspace_fragment>
+    }`,
+}));
+sky.renderOrder = -1;
+scene.add(sky);
+
+// Облака: кучки белых сфер с cel-затенением, медленно плывут.
+const clouds = new THREE.Group();
+{
+  const mat = new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: toonGradient(), fog: false, emissive: 0x6f8fb0 });
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 26; i++) {
+    const c = new THREE.Group();
+    const n = 4 + (rnd() * 4 | 0);
+    for (let k = 0; k < n; k++) {
+      const p = new THREE.Mesh(geo, mat);
+      const sc = 5 + rnd() * 6;
+      p.scale.set(sc * 1.3, sc * 0.8, sc);
+      p.position.set((k - n / 2) * 6 + rnd() * 3, rnd() * 3, rnd() * 6 - 3);
+      c.add(p);
+    }
+    c.position.set(SX / 2 + (rnd() - 0.5) * 520, 110 + rnd() * 40, SZ / 2 + (rnd() - 0.5) * 520);
+    clouds.add(c);
+  }
+  scene.add(clouds);
+}
 
 const water = new THREE.Mesh(new THREE.PlaneGeometry(SX * 6, SZ * 6).rotateX(-Math.PI / 2),
-  new THREE.MeshLambertMaterial({ color: 0x2a6fd6, transparent: true, opacity: 0.6 }));
+  new THREE.MeshToonMaterial({ color: 0x29c9e6, gradientMap: toonGradient(), transparent: true, opacity: 0.78, emissive: 0x06425a }));
 water.position.set(SX / 2, WATER_Y + 0.85, SZ / 2);
+water.receiveShadow = true;
 scene.add(water);
 
 const controls = new PointerLockControls(camera, renderer.domElement);
@@ -345,15 +393,17 @@ function nameSprite(text, color) {
 function avatar(name, tier = -1) {
   const color = colorOf(name);
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.35), new THREE.MeshLambertMaterial({ color }));
+  const toon = (c) => new THREE.MeshToonMaterial({ color: c, gradientMap: toonGradient() });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.35), toon(color));
   body.position.y = 0.95;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshLambertMaterial({ color: 0xf2c9a0 }));
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), toon(0xffd2a8));
   head.position.y = 1.75;
   const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.02), new THREE.MeshBasicMaterial({ color: 0x111111 }));
   eyes.position.set(0, 1.8, -0.26);
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.3), new THREE.MeshLambertMaterial({ color: 0x2b3140 }));
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.3), toon(0x34406a));
   legs.position.y = 0.2;
   const t = TIERS[tier];
+  for (const m of [body, head, legs]) m.castShadow = true;
   g.add(body, head, eyes, legs, nameSprite(t ? `★ ${name}` : name, t ? t.color : color));
   return g;
 }
@@ -782,6 +832,12 @@ renderer.setAnimationLoop((now) => {
     sendPose(now);
     updateCrosshair(w, en);
   }
+  // Солнце с тенью ездит за игроком (тени — только вокруг, карта теней 120×120); небо — за камерой.
+  const c = player.position;
+  sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 150);
+  sky.position.copy(c);
+  for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > SX / 2 + 280) cl.position.x -= 560; }
   renderer.render(scene, camera);
   if (world && (controls.isLocked || debugView)) {
     const w = currentWeapon();

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 export const SX = 192, SY = 64, SZ = 192;
 export const WATER_Y = 14;
 export const CHUNK = 32;
-const SNOW_Y = 38;
+const SNOW_Y = 44;
 
 // ---------- Блоки ----------
 // tex — текстура всех граней, или { top, side, bottom }; see — сквозь блок видно соседей (листва, стекло).
@@ -31,74 +31,147 @@ export const BLOCKS = [
 ];
 export const HOTBAR = [7, 8, 14, 10, 1, 2, 3, 4, 5, 9, 11, 12, 13, 6];
 
-// ---------- Процедурные текстуры 16×16 ----------
-// Рисуем попиксельно с детерминированным шумом: у всех игроков одинаковые.
+// ---------- Процедурные текстуры 32×32, мультяшный стиль ----------
+// Гладкие заливки с мягкими пятнами и скруглённой фаской (свет сверху-слева, тень снизу-справа),
+// сочная палитра. Шум детерминированный — у всех игроков одинаковые.
 
+const S = 32;
 let seedT = 1;
 const r = () => { seedT = (seedT * 16807) % 2147483647; return seedT / 2147483647; };
-const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
-const rgb = (c, k = 1) => `rgb(${clamp(c[0] * k)},${clamp(c[1] * k)},${clamp(c[2] * k)})`;
+const hex = (c, k = 1) => `rgb(${c.map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',')})`;
 
 function paint(fn) {
   const c = document.createElement('canvas');
-  c.width = c.height = 16;
+  c.width = c.height = S;
   const g = c.getContext('2d');
-  fn(g, (x, y, col, a = 1) => { g.globalAlpha = a; g.fillStyle = col; g.fillRect(x, y, 1, 1); g.globalAlpha = 1; });
+  fn(g);
   return c;
 }
-const noiseFill = (px, base, amp) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(x, y, rgb(base, 1 + (r() - 0.5) * amp)); };
-const bevel = (px, light, dark) => { for (let i = 0; i < 16; i++) { px(i, 0, light); px(0, i, light); px(i, 15, dark); px(15, i, dark); } };
+// Вертикальный градиент заливки.
+function fill(g, top, bottom, y0 = 0, y1 = S) {
+  const gr = g.createLinearGradient(0, y0, 0, y1);
+  gr.addColorStop(0, hex(top)); gr.addColorStop(1, hex(bottom));
+  g.fillStyle = gr; g.fillRect(0, y0, S, y1 - y0);
+}
+// Мягкие пятна (радиальные градиенты), с переносом через край — текстура тайлится без шва.
+function blobs(g, col, n, rmin, rmax, alpha = 0.5, y0 = 0, y1 = S) {
+  for (let i = 0; i < n; i++) {
+    const x = r() * S, y = y0 + r() * (y1 - y0), rad = rmin + r() * (rmax - rmin);
+    for (const dx of [-S, 0, S]) {
+      const gr = g.createRadialGradient(x + dx, y, 0, x + dx, y, rad);
+      gr.addColorStop(0, `rgba(${col.join(',')},${alpha})`); gr.addColorStop(1, `rgba(${col.join(',')},0)`);
+      g.fillStyle = gr; g.fillRect(x + dx - rad, y - rad, rad * 2, rad * 2);
+    }
+  }
+}
+// Скруглённая фаска по краю блока: подчёркивает форму без контурных линий.
+function bevel(g, k = 1) {
+  const edge = (x0, y0, x1, y1, col) => { const gr = g.createLinearGradient(x0, y0, x1, y1); gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)'); return gr; };
+  g.fillStyle = edge(0, 0, 0, 4, `rgba(255,255,255,${0.32 * k})`); g.fillRect(0, 0, S, 4);
+  g.fillStyle = edge(0, 0, 4, 0, `rgba(255,255,255,${0.2 * k})`); g.fillRect(0, 0, 4, S);
+  g.fillStyle = edge(0, S, 0, S - 5, `rgba(0,0,0,${0.3 * k})`); g.fillRect(0, S - 5, S, 5);
+  g.fillStyle = edge(S, 0, S - 4, 0, `rgba(0,0,0,${0.22 * k})`); g.fillRect(S - 4, 0, 4, S);
+}
+function roundRect(g, x, y, w, h, rad, col) { g.fillStyle = col; g.beginPath(); g.roundRect(x, y, w, h, rad); g.fill(); }
+
+const GRASS = [104, 206, 66], GRASS_HI = [160, 238, 96], DIRT = [176, 116, 72], DIRT_DK = [132, 82, 50];
 
 const PAINTERS = {
-  grassTop: (g, px) => { noiseFill(px, [92, 158, 62], 0.35); for (let i = 0; i < 26; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([120, 190, 80], 1 + (r() - 0.5) * 0.2)); },
-  grassSide: (g, px) => {
-    noiseFill(px, [125, 88, 58], 0.3);
-    for (let i = 0; i < 10; i++) px(r() * 16 | 0, 5 + (r() * 11 | 0), rgb([95, 66, 44]));
-    for (let x = 0; x < 16; x++) { const h = 3 + (r() * 3 | 0); for (let y = 0; y < h; y++) px(x, y, rgb([92, 158, 62], 1 + (r() - 0.5) * 0.3)); }
+  grassTop: (g) => { fill(g, [112, 214, 70], [94, 196, 60]); blobs(g, GRASS_HI, 7, 4, 9, 0.45); blobs(g, [70, 168, 52], 5, 3, 7, 0.35); bevel(g, 0.7); },
+  grassSide: (g) => {
+    fill(g, DIRT, DIRT_DK); blobs(g, [196, 140, 92], 5, 2, 5, 0.4, 12, S); blobs(g, [110, 66, 40], 4, 2, 4, 0.4, 12, S);
+    // травяная «шапка» с волнистыми каплями
+    g.fillStyle = hex(GRASS); g.beginPath(); g.moveTo(0, 0); g.lineTo(S, 0);
+    for (let x = S; x >= 0; x -= 4) g.quadraticCurveTo(x + 2, 9 + r() * 6, x - 2, 7 + r() * 3);
+    g.closePath(); g.fill();
+    const gr = g.createLinearGradient(0, 0, 0, 10); gr.addColorStop(0, hex(GRASS_HI, 1)); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, 6);
+    bevel(g, 0.8);
   },
-  dirt: (g, px) => { noiseFill(px, [125, 88, 58], 0.32); for (let i = 0; i < 14; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([92, 64, 42])); },
-  stone: (g, px) => {
-    noiseFill(px, [128, 128, 132], 0.22);
-    for (let i = 0; i < 5; i++) { let x = r() * 16 | 0, y = r() * 16 | 0; for (let k = 0; k < 4; k++) { px(x, y, rgb([92, 92, 96])); x = (x + (r() < 0.5 ? 1 : 0)) % 16; y = (y + 1) % 16; } }
+  dirt: (g) => { fill(g, DIRT, DIRT_DK); blobs(g, [200, 146, 96], 6, 2, 5, 0.45); blobs(g, [110, 66, 40], 6, 2, 4, 0.45); bevel(g); },
+  stone: (g) => {
+    fill(g, [170, 180, 192], [140, 150, 164]); blobs(g, [200, 208, 218], 5, 4, 8, 0.4); blobs(g, [110, 118, 132], 4, 3, 7, 0.35);
+    g.strokeStyle = 'rgba(90,98,112,.55)'; g.lineWidth = 1.2; g.lineCap = 'round';
+    for (let i = 0; i < 3; i++) { let x = r() * S, y = r() * S; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 3; k++) { x += (r() - 0.5) * 10; y += 3 + r() * 5; g.lineTo(x, y); } g.stroke(); }
+    bevel(g);
   },
-  cobble: (g, px) => {
-    noiseFill(px, [110, 110, 114], 0.25);
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x + (y >> 2) * 3) % 5 === 0 || y % 4 === 0) px(x, y, rgb([70, 70, 74]));
+  cobble: (g) => {
+    fill(g, [96, 104, 118], [84, 92, 106]);
+    const rows = [[0, 9], [10, 11], [22, 10]];
+    rows.forEach(([y, h], ri) => { let x = ri % 2 ? -6 : 0; while (x < S) { const w = 9 + r() * 6; const c = 150 + r() * 34; roundRect(g, x + 1, y + 1, w - 2, h - 2, 4, hex([c, c + 6, c + 16])); g.fillStyle = 'rgba(255,255,255,.22)'; g.fillRect(x + 3, y + 2, w - 7, 2); x += w; } });
+    bevel(g, 0.6);
   },
-  sand: (g, px) => { noiseFill(px, [219, 205, 148], 0.12); for (let i = 0; i < 12; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([196, 180, 122])); },
-  logSide: (g, px) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(x, y, rgb([102, 76, 46], (x % 4 === 0 ? 0.72 : 1) * (1 + (r() - 0.5) * 0.18))); },
-  logTop: (g, px) => {
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      const d = Math.hypot(x - 7.5, y - 7.5);
-      px(x, y, d > 6.8 ? rgb([102, 76, 46], 0.8) : rgb([176, 140, 88], (Math.floor(d) % 2 ? 0.86 : 1) * (1 + (r() - 0.5) * 0.08)));
+  sand: (g) => {
+    fill(g, [252, 226, 150], [240, 208, 128]); blobs(g, [255, 240, 186], 5, 4, 8, 0.5);
+    g.strokeStyle = 'rgba(214,176,98,.45)'; g.lineWidth = 1.4;
+    for (let y = 6; y < S; y += 9) { g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(10, y - 3, 20, y + 3, S, y); g.stroke(); }
+    bevel(g, 0.6);
+  },
+  logSide: (g) => {
+    fill(g, [150, 98, 58], [124, 78, 44]);
+    for (let x = 2; x < S; x += 6 + (r() * 3 | 0)) { g.fillStyle = 'rgba(80,46,24,.45)'; g.fillRect(x, 0, 1.5, S); g.fillStyle = 'rgba(255,214,160,.18)'; g.fillRect(x + 2, 0, 1.5, S); }
+    bevel(g, 0.6);
+  },
+  logTop: (g) => {
+    fill(g, [124, 78, 44], [124, 78, 44]);
+    for (let rad = 13; rad > 0; rad -= 3) { g.fillStyle = hex(rad % 2 ? [236, 190, 120] : [214, 164, 98]); g.beginPath(); g.arc(16, 16, rad, 0, Math.PI * 2); g.fill(); }
+    bevel(g, 0.6);
+  },
+  leaves: (g) => {
+    // пучки листьев-кружков; промежутки прозрачные (cutout)
+    for (let i = 0; i < 26; i++) {
+      const x = r() * S, y = r() * S, rad = 4 + r() * 4, k = 0.85 + r() * 0.3;
+      for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) {
+        const gr = g.createRadialGradient(x + dx - 1.5, y + dy - 1.5, 0, x + dx, y + dy, rad);
+        gr.addColorStop(0, hex([118, 214, 82], k)); gr.addColorStop(1, hex([46, 150, 52], k));
+        g.fillStyle = gr; g.beginPath(); g.arc(x + dx, y + dy, rad, 0, Math.PI * 2); g.fill();
+      }
     }
   },
-  leaves: (g, px) => {
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      if (r() < 0.16) continue;                       // просветы — прозрачные пиксели (cutout)
-      px(x, y, rgb([52, 122, 48], 1 + (r() - 0.5) * 0.45));
+  planks: (g) => {
+    for (let i = 0; i < 4; i++) {
+      const c = 0.92 + r() * 0.14;
+      const gr = g.createLinearGradient(0, i * 8, 0, i * 8 + 8); gr.addColorStop(0, hex([238, 176, 104], c)); gr.addColorStop(1, hex([206, 142, 76], c));
+      g.fillStyle = gr; g.fillRect(0, i * 8, S, 8);
+      g.fillStyle = 'rgba(120,70,30,.6)'; g.fillRect(0, i * 8 + 7, S, 1.2);
+      const sx = (i % 2 ? 9 : 23); g.fillRect(sx, i * 8, 1.2, 8);
+      g.fillStyle = 'rgba(150,90,40,.5)'; g.beginPath(); g.arc(sx + (i % 2 ? 8 : -8), i * 8 + 4, 1.1, 0, Math.PI * 2); g.fill();
     }
+    bevel(g, 0.7);
   },
-  planks: (g, px) => {
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      const seam = y % 4 === 3 || (x === ((y >> 2) % 2 ? 4 : 11));
-      px(x, y, seam ? rgb([120, 88, 50]) : rgb([182, 142, 86], 1 + (r() - 0.5) * 0.12));
+  brick: (g) => {
+    fill(g, [236, 222, 204], [216, 200, 182]);
+    for (let row = 0; row < 4; row++) for (let col = -1; col < 3; col++) {
+      const x = col * 16 + (row % 2) * 8, y = row * 8, c = 0.9 + r() * 0.16;
+      const gr = g.createLinearGradient(0, y, 0, y + 7); gr.addColorStop(0, hex([232, 102, 72], c)); gr.addColorStop(1, hex([196, 72, 52], c));
+      g.fillStyle = gr; g.beginPath(); g.roundRect(x + 1, y + 1, 14, 6, 2); g.fill();
     }
+    bevel(g, 0.5);
   },
-  brick: (g, px) => {
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      const mortar = y % 4 === 3 || (x + ((y >> 2) % 2) * 4) % 8 === 7;
-      px(x, y, mortar ? rgb([196, 188, 176]) : rgb([158, 66, 52], 1 + (r() - 0.5) * 0.22));
-    }
+  gold: (g) => {
+    fill(g, [255, 222, 74], [240, 168, 24]); blobs(g, [255, 248, 190], 3, 5, 9, 0.6);
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.beginPath(); g.ellipse(9, 8, 4, 2, -0.6, 0, Math.PI * 2); g.fill();
+    bevel(g, 1.2);
   },
-  gold: (g, px) => { noiseFill(px, [246, 205, 64], 0.1); bevel(px, rgb([255, 245, 170]), rgb([190, 140, 30])); px(4, 4, '#fff'); px(5, 4, '#fff8'); },
-  emerald: (g, px) => { noiseFill(px, [42, 196, 108], 0.12); bevel(px, rgb([150, 255, 190]), rgb([20, 120, 60])); for (let i = 3; i < 13; i++) px(i, i, rgb([120, 240, 170])); },
-  candle: (g, px) => { noiseFill(px, [226, 40, 52], 0.12); bevel(px, rgb([255, 120, 120]), rgb([140, 20, 28])); },
-  glass: (g, px) => { bevel(px, rgb([235, 248, 255]), rgb([180, 210, 225])); for (let i = 0; i < 4; i++) px(3 + i, 6 - i, '#fff', 0.8); },
-  snow: (g, px) => { noiseFill(px, [244, 248, 252], 0.06); for (let i = 0; i < 8; i++) px(r() * 16 | 0, r() * 16 | 0, rgb([215, 228, 240])); },
-  snowSide: (g, px) => {
-    noiseFill(px, [125, 88, 58], 0.3);
-    for (let x = 0; x < 16; x++) { const h = 3 + (r() * 3 | 0); for (let y = 0; y < h; y++) px(x, y, rgb([244, 248, 252], 1 + (r() - 0.5) * 0.05)); }
+  emerald: (g) => {
+    fill(g, [80, 236, 150], [24, 170, 96]);
+    g.fillStyle = 'rgba(255,255,255,.35)'; g.beginPath(); g.moveTo(16, 3); g.lineTo(29, 16); g.lineTo(16, 29); g.lineTo(3, 16); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.8)'; g.beginPath(); g.ellipse(11, 10, 3, 1.5, -0.7, 0, Math.PI * 2); g.fill();
+    bevel(g, 1.2);
+  },
+  candle: (g) => { fill(g, [255, 92, 96], [210, 36, 60]); blobs(g, [255, 170, 160], 3, 4, 8, 0.45); bevel(g, 1.1); },
+  glass: (g) => {
+    g.fillStyle = 'rgba(200,236,255,.25)'; g.fillRect(0, 0, S, S);
+    g.strokeStyle = 'rgba(255,255,255,.95)'; g.lineWidth = 2.5; g.strokeRect(1.25, 1.25, S - 2.5, S - 2.5);
+    g.fillStyle = 'rgba(255,255,255,.85)'; g.save(); g.translate(10, 12); g.rotate(-0.7); g.fillRect(-6, -1.2, 12, 2.4); g.fillRect(-2, 4, 7, 1.6); g.restore();
+  },
+  snow: (g) => { fill(g, [252, 254, 255], [226, 238, 252]); blobs(g, [196, 220, 248], 4, 4, 8, 0.4); bevel(g, 0.6); },
+  snowSide: (g) => {
+    fill(g, DIRT, DIRT_DK); blobs(g, [110, 66, 40], 4, 2, 4, 0.4, 12, S);
+    g.fillStyle = hex([248, 252, 255]); g.beginPath(); g.moveTo(0, 0); g.lineTo(S, 0);
+    for (let x = S; x >= 0; x -= 5) g.quadraticCurveTo(x + 2, 10 + r() * 5, x - 3, 7 + r() * 3);
+    g.closePath(); g.fill();
+    bevel(g, 0.7);
   },
 };
 
@@ -107,20 +180,34 @@ function tex(name) {
   if (!texCache.has(name)) {
     seedT = [...name].reduce((h, c) => h * 31 + c.charCodeAt(0), 7) % 2147483646 + 1;
     const t = new THREE.CanvasTexture(paint(PAINTERS[name]));
-    t.magFilter = t.minFilter = THREE.NearestFilter;
+    t.magFilter = THREE.LinearFilter;                 // мягко, а не пиксельно
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.anisotropy = 4;
     t.colorSpace = THREE.SRGBColorSpace;
     texCache.set(name, t);
   }
   return texCache.get(name);
 }
 
+// Ступенчатый свет для мультяшного (cel) затенения: 4 тона.
+let toonRamp = null;
+export function toonGradient() {
+  if (!toonRamp) {
+    toonRamp = new THREE.DataTexture(new Uint8Array([120, 120, 120, 255, 175, 175, 175, 255, 225, 225, 225, 255, 255, 255, 255, 255]), 4, 1);
+    toonRamp.magFilter = toonRamp.minFilter = THREE.NearestFilter;
+    toonRamp.needsUpdate = true;
+  }
+  return toonRamp;
+}
+
 // Материал на блок: один на все грани или массив [px, nx, py, ny, pz, nz] для BoxGeometry.
 export function makeMaterials() {
   return BLOCKS.map((b) => {
     if (!b) return null;
-    const mk = (name) => new THREE.MeshLambertMaterial({
+    const mk = (name) => new THREE.MeshToonMaterial({
       map: tex(name),
-      transparent: false,
+      gradientMap: toonGradient(),
+      transparent: !!b.glass,
       alphaTest: b.cutout ? 0.5 : 0,
       side: b.cutout ? THREE.DoubleSide : THREE.FrontSide,
       emissive: b.glow || 0x000000,
@@ -264,6 +351,7 @@ export function buildChunk(world, mats, cx, cz) {
     }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    mesh.castShadow = mesh.receiveShadow = true;
     meshes.push(mesh);
   });
   return meshes;
