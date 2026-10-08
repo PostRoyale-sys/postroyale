@@ -344,7 +344,6 @@ export function createCombat(ctx) {
     },
     get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
 
-    reset() { hp = 100; shield = 0; changed(); },
     // Новый раунд: пустые руки, ни патронов, ни щита.
     resetAll() {
       slots.fill(null);

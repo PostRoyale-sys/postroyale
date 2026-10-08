@@ -3,7 +3,7 @@
 //
 // Раунд ROUND_MS: первые DROP_MS — высадка (шторма нет), дальше зона сужается по фазам, урон снаружи растёт.
 // Умер — выбыл до конца раунда (наблюдатель). Последний живой из тех, кто играл раунд, — победитель.
-// Зашёл в середине раунда (позже JOIN_WINDOW) — наблюдаешь до следующей высадки.
+// Зашёл в середине раунда — высаживаешься сразу; только в последние LATE_CUTOFF мс (зона почти схлопнулась) — ждёшь следующей высадки.
 
 import * as THREE from 'three';
 import { MAP, WATER_Y, rng, seedOf } from './map.js';
@@ -12,7 +12,7 @@ const SX = MAP, SZ = MAP;
 
 export const ROUND_MS = 8 * 60e3;
 export const DROP_MS = 30e3;
-const JOIN_WINDOW = 45e3;
+const LATE_CUTOFF = 90e3;
 
 // [начало, конец (с), радиус от → до, урон/с снаружи]
 const R0 = Math.hypot(SX, SZ) / 2;
@@ -74,12 +74,12 @@ export function createRoyale(ctx) {
     get won() { return won; },
     aliveCount: () => aliveOthers() + (alive ? 1 : 0),
 
-    // Первый вход в мир: играем, если высадка ещё идёт; иначе наблюдаем.
+    // Первый вход в мир: играем сразу, если до конца раунда больше LATE_CUTOFF; иначе ждём следующего.
     init(now = Date.now()) {
       round = roundOf(now);
       roundStart = round * ROUND_MS;
       center = pickCenter(round);
-      alive = now - roundStart < JOIN_WINDOW;
+      alive = now - roundStart < ROUND_MS - LATE_CUTOFF;
       ctx.onRoundStart(round, alive);
     },
 

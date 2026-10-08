@@ -55,7 +55,7 @@ function segDist(px, pz, a, b) {
 const WALL_TINTS = [0xf6f1e7, 0xa9dcf5, 0xf7d07a, 0xf4a6a0, 0xb4e6a8, 0xd9c6f2];
 const BRICK_TINTS = [0xe07a5a, 0xe8dccb, 0xc9c3bb];
 const ROOF_TINTS = [0xe0534f, 0x3f7fd9, 0x37b08f, 0x6c6f80, 0xf08a3c];
-const CAR_COLORS = [0xe6463f, 0x2f8cff, 0xffc928, 0x2fbf71, 0xf2f2f2];
+export const CAR_COLORS = [0xe6463f, 0x2f8cff, 0xffc928, 0x2fbf71, 0xf2f2f2];
 
 export class GameMap {
   constructor(id) {
@@ -235,10 +235,11 @@ export class GameMap {
       for (let x = hx; x < hx + w; x++) { wall('x', x, hz); wall('x', x, hz + d); }
       for (let z = hz; z < hz + d; z++) { wall('z', hx, z); wall('z', hx + w, z); }
       if (stairs[l]) add({ t: 'r', ix: stairs[l].ix, iy, iz: stairs[l].iz, o: stairs[l].dir });
-      // сундук на этаже (не на лестнице)
+      // сундук на этаже
       if (rand() < 0.6) {
         const cx = hx + Math.floor(rand() * w), cz = hz + Math.floor(rand() * d);
-        if (!stairs[l] || stairs[l].ix !== cx || stairs[l].iz !== cz) {
+        const on = (st) => st && st.ix === cx && st.iz === cz;
+        if (!on(stairs[l]) && !on(stairs[l - 1])) {          // не на лестнице и не над проёмом в полу
           this.chestSpots.push({ x: (cx + 0.5) * G, y: iy * G + 0.05, z: (cz + 0.5) * G, rot: Math.floor(rand() * 4) * Math.PI / 2 });
         }
       }
@@ -283,8 +284,6 @@ export class GameMap {
     }
   }
 }
-
-export const CAR_COLOR_LIST = CAR_COLORS;
 
 // Ключ детали: тип + клетка (+ ориентация у стен). Один ключ — одна деталь.
 export function pieceKey(p) {

@@ -9,7 +9,8 @@
 // своей математикой по пространственной сетке (клетка G×G), без three.js-рейкастов.
 
 import * as THREE from 'three';
-import { G, WATER_Y, pieceKey, CAR_COLOR_LIST } from './map.js';
+import { G, WATER_Y, pieceKey, CAR_COLORS } from './map.js';
+import { rayBox } from './combat.js';
 import { toon, buildTexture, oakGeometry, pineGeometry, rockGeometry, bushGeometry, carGeometry, vcMaterial } from './art.js';
 
 export const MATS = ['wood', 'brick', 'metal'];
@@ -106,19 +107,6 @@ function rampPlane(r, x, z) {
 }
 const inRampCell = (r, x, z, pad = 0) => x >= r.ix * G - pad && x <= (r.ix + 1) * G + pad && z >= r.iz * G - pad && z <= (r.iz + 1) * G + pad;
 
-function rayBox(o, d, min, max) {
-  let t0 = 0, t1 = Infinity;
-  for (const a of ['x', 'y', 'z']) {
-    if (Math.abs(d[a]) < 1e-9) { if (o[a] < min[a] || o[a] > max[a]) return Infinity; continue; }
-    let ta = (min[a] - o[a]) / d[a], tb = (max[a] - o[a]) / d[a];
-    if (ta > tb) [ta, tb] = [tb, ta];
-    t0 = Math.max(t0, ta);
-    t1 = Math.min(t1, tb);
-    if (t0 > t1) return Infinity;
-  }
-  return t0;
-}
-
 // Коробки объектов: ствол/камень/машина — для столкновений; крона — только для пуль.
 function objectBoxes(o) {
   const b = (cx, y0, cz, hx, h, hz) => ({ min: new THREE.Vector3(cx - hx, y0, cz - hz), max: new THREE.Vector3(cx + hx, y0 + h, cz + hz) });
@@ -139,7 +127,6 @@ export function createStructures({ scene }) {
   const objMeshes = new Map();       // вид → InstancedMesh
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), V1 = new THREE.Vector3(1, 1, 1), ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
   const C = new THREE.Color();
-  let changes = 0;                   // счётчик изменений (для внешних кэшей)
 
   // ---------- Отрисовка ----------
 
@@ -180,7 +167,7 @@ export function createStructures({ scene }) {
   }
 
   function objMesh(kind, count) {
-    const geo = kind === 'oak' ? oakGeometry() : kind === 'pine' ? pineGeometry() : kind === 'rock' ? rockGeometry() : kind === 'bush' ? bushGeometry() : carGeometry(CAR_COLOR_LIST[+kind.slice(3)]);
+    const geo = kind === 'oak' ? oakGeometry() : kind === 'pine' ? pineGeometry() : kind === 'rock' ? rockGeometry() : kind === 'bush' ? bushGeometry() : carGeometry(CAR_COLORS[+kind.slice(3)]);
     const mesh = new THREE.InstancedMesh(geo, vcMaterial(), Math.max(1, count));
     mesh.frustumCulled = false;
     mesh.castShadow = kind !== 'bush';
@@ -226,13 +213,11 @@ export function createStructures({ scene }) {
     pieces.set(k, e);
     index(e);
     show(e);
-    changes++;
     return e;
   }
   function removeEntry(e) {
     if (e.kind === 'piece') { hide(e); unindex(e); pieces.delete(e.k); }
     else { e.hp = 0; unindex(e); e.mesh.setMatrixAt(e.inst, ZERO); e.mesh.instanceMatrix.needsUpdate = true; }
-    changes++;
   }
   const entryOf = (k) => (k.startsWith('o:') ? objects[+k.slice(2)] : pieces.get(k));
 
@@ -259,7 +244,6 @@ export function createStructures({ scene }) {
       o.mesh.instanceMatrix.needsUpdate = true;
       index(o);
     }
-    changes++;
   }
 
   function load(m) {
@@ -470,13 +454,10 @@ export function createStructures({ scene }) {
   }
 
   return {
-    MATS, OBJ,
     load, reset,
     get pieces() { return pieces; },
     get objects() { return objects; },
-    get changes() { return changes; },
     has: (k) => { const e = entryOf(k); return !!e && e.hp > 0; },
-    entryOf,
     add: (spec) => addPiece(spec),
     damage,
     harvestOf(e, destroyed) {

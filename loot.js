@@ -24,7 +24,7 @@ function weighted(table, rand = Math.random) {
 }
 
 // bonus — +к редкости (золотой ключ держателя токена).
-export function rollChest(bonus = 0) {
+function rollChest(bonus = 0) {
   let type = weighted(WEAPON_WEIGHTS);
   let rarity = Math.min(RARITY.length - 1, +weighted(Object.fromEntries(RARITY_WEIGHTS.map((w, i) => [i, w]))) + bonus);
   const min = WEAPONS[type].minRarity || 0;

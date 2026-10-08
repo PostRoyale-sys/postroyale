@@ -6,11 +6,11 @@
 
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { GameMap, MAP, G, WATER_Y } from './map.js';
+import { GameMap, MAP, WATER_Y } from './map.js';
 import { toonGradient, toon } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
-import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel } from './combat.js';
+import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel, rayBox } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
@@ -237,7 +237,7 @@ function swingPickaxe(now) {
   for (const [peerId, p] of others) {
     if (p.target?.a === false) continue;
     const c = p.group.position;
-    const t = rayBoxPlayer(o, d, c);
+    const t = rayBox(o, d, new THREE.Vector3(c.x - 0.45, c.y, c.z - 0.45), new THREE.Vector3(c.x + 0.45, c.y + 1.9, c.z + 0.45));
     if (t < PICK_REACH) { net?.hit({ dmg: 20, by: nick, w: 'pickaxe' }, peerId); hitmarker(); combat.sfx('chop'); return; }
   }
   const hit = structures.raycast(o, d, PICK_REACH);
@@ -247,19 +247,6 @@ function swingPickaxe(now) {
     damageStructure(hit.e.k, PICK_DMG, true);
   }
 }
-function rayBoxPlayer(o, d, c) {
-  const min = new THREE.Vector3(c.x - 0.45, c.y, c.z - 0.45), max = new THREE.Vector3(c.x + 0.45, c.y + 1.9, c.z + 0.45);
-  let t0 = 0, t1 = Infinity;
-  for (const a of ['x', 'y', 'z']) {
-    if (Math.abs(d[a]) < 1e-9) { if (o[a] < min[a] || o[a] > max[a]) return Infinity; continue; }
-    let ta = (min[a] - o[a]) / d[a], tb = (max[a] - o[a]) / d[a];
-    if (ta > tb) [ta, tb] = [tb, ta];
-    t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
-    if (t0 > t1) return Infinity;
-  }
-  return t0;
-}
-
 // Урон постройке: локально + всем. harvest — удар киркой: материалы себе.
 function damageStructure(k, dmg, harvest) {
   const res = structures.damage(k, dmg);
@@ -298,7 +285,7 @@ function updateFx(dt) {
 }
 
 // Стройка: деталь перед игроком за BUILD_COST материала.
-let plan = null, nextBuild = 0, lastBuiltKey = '';
+let plan = null, nextBuild = 0;
 function updatePlan() {
   if (!buildType || !royale.alive) { plan = null; structures.ghost(null); return; }
   const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
@@ -313,7 +300,6 @@ function placePiece(now) {
   if (!structures.add({ k, t, ix, iy, iz, o, m })) return;
   mats[m] -= BUILD_COST;
   nextBuild = now + BUILD_RATE;
-  lastBuiltKey = k;
   combat.sfx('build');
   net?.edit({ a: 1, k, t, ix, iy, iz, o, m, rr: royale.round });
   renderMats();
@@ -338,7 +324,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   mouseDown = true;
   const now = performance.now() / 1000;
-  if (buildType) { placePiece(now); return; }
+  if (buildType) { updatePlan(); placePiece(now); return; }      // план — на момент клика, не ждём кадра
   if (ENTRIES[slot].pick) { swingPickaxe(now); return; }
   if (w) combat.fire(ENTRIES[slot].weapon, now);
   else {
@@ -639,7 +625,8 @@ function onRoundStart(r, alive) {
   if (alive) {
     spawn(true);
     season.roundStarted();
-    banner('DROP!', 'Glide down, grab weapons from chests — the storm closes in 30s');
+    const late = Date.now() - r * ROUND_MS > DROP_MS;
+    banner('DROP!', late ? 'Match in progress — glide down, loot fast, watch the storm' : 'Glide down, grab weapons from chests — the storm closes in 30s');
   } else {
     gliding = false;
     const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
@@ -970,8 +957,8 @@ window.__pc = {
   combat, loot, pick, royale, season, structures, mats,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
-  get feet() { return feet; }, step: (dt) => step(dt), keys,
+  get feet() { return feet; }, step: (dt) => step(dt), keys, controls,
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
-  tp(x, z, up = 0) { feet.set(x, structures.ground(x, z, 999) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
+  tp(x, z, up = 0, y = 999) { feet.set(x, structures.ground(x, z, y) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },
 };
