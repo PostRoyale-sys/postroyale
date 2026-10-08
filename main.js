@@ -146,17 +146,9 @@ function moveAxis(axis, d) {
   return false;
 }
 
-const randomLand = () => {
-  for (let i = 0; i < 400; i++) {
-    const x = 20 + Math.random() * (MAP - 40), z = 20 + Math.random() * (MAP - 40);
-    if (world.height(x, z) > 3) return { x, z };
-  }
-  return { x: MAP / 2, z: MAP / 2 };
-};
-
-// Высадка: с высоты над случайной точкой суши, планирование до земли.
+// Высадка: с высоты над случайной точкой суши внутри зоны шторма, планирование до земли.
 function spawn(drop = true) {
-  const { x, z } = randomLand();
+  const { x, z } = royale.dropPoint();
   const g = world.height(x, z);
   feet.set(x, drop ? Math.max(g, 30) + 70 : g + 0.05, z);
   vel.set(0, 0, 0);
@@ -316,8 +308,18 @@ function enterBuild(t) {
 }
 function exitBuild() { buildType = null; structures.ghost(null); renderHotbar(); }
 
+// Наблюдатель ничего не трогает — но пусть видит почему, а не «ничего не работает».
+let specToast = 0;
+function spectatorNotice() {
+  if (royale.alive || performance.now() - specToast < 1500) return;
+  specToast = performance.now();
+  const left = Math.ceil((ROUND_MS - (Date.now() - royale.roundStart)) / 1000);
+  toast(`👁 You're out this round — next drop in ${mmss(left)}`);
+}
+
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !world) return;
+  if (!royale.alive) { spectatorNotice(); return; }
   const w = currentWeapon();
   if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
   if (e.button === 2 && buildType) { exitBuild(); return; }
@@ -777,6 +779,7 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (!world || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
+  if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(eye(), look());
     if (chest) openChest(chest);

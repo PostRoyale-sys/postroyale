@@ -157,12 +157,23 @@
   @keyframes poi { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 75% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
   body.shot #poi { display: none !important; }
 </style>
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-  "trystero": "https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm"
-} }
+<script>
+  // Карта импортов строится здесь: файлы игры грузятся с меткой версии (?v=время загрузки страницы),
+  // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
+  (() => {
+    const v = Date.now().toString(36);
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net'];
+    const imports = {
+      three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
+      'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
+      trystero: 'https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm',
+    };
+    for (const f of own) imports[`./${f}.js`] = `./${f}.js?v=${v}`;
+    const s = document.createElement('script');
+    s.type = 'importmap';
+    s.textContent = JSON.stringify({ imports });
+    document.currentScript.after(s);
+  })();
 </script>
 </head>
 <body>
@@ -226,6 +237,6 @@
   </div>
 </div>
 
-<script type="module" src="main.js"></script>
+<script type="module">import './main.js';</script>
 </body>
 </html>

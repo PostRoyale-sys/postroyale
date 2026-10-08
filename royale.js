@@ -83,6 +83,20 @@ export function createRoyale(ctx) {
       ctx.onRoundStart(round, alive);
     },
 
+    // Точка высадки — внутри зоны, в которую шторм сжимается сейчас (чтобы не умереть сразу после приземления).
+    dropPoint() {
+      const w = ctx.world();
+      const s = storm(Date.now() - roundStart);
+      const ph = PHASES[s.idx];
+      const r = Math.max(4, Math.min(s.r, ph[3]) * 0.8);
+      for (let i = 0; i < 300; i++) {
+        const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * r;
+        const x = center.x + Math.cos(a) * d, z = center.z + Math.sin(a) * d;
+        if (x > 8 && z > 8 && x < SX - 8 && z < SZ - 8 && w.surfaceY(x, z) > WATER_Y + 3) return { x, z };
+      }
+      return { x: center.x, z: center.z };
+    },
+
     // Смерть: выбыл до конца раунда.
     eliminate(by) {
       if (!alive) return;
