@@ -24,23 +24,16 @@ export const SKINS = [
   { id: 'knight', name: 'Rugged Knight', rarity: 3, body: 0x8a94a6, legs: 0x5b6472, hat: 'knight', icon: '🛡', shop: true },
   { id: 'neon', name: 'Neon Degen', rarity: 3, body: 0xff4fd8, legs: 0x2a0a40, glow: 0x5a0a4a, hat: 'beanie', hatColor: 0x5dff9a, icon: '💗', shop: true },
   { id: 'candle', name: 'Green Candle', rarity: 2, body: 0x2fbf71, legs: 0x1f8a50, glow: 0x0a3a1a, hat: 'wick', icon: '🕯', shop: true },
-  // премиум — за монеты 🪙 (вкладка Shop, покупка навсегда — loadout.js)
-  { id: 'lambo', name: 'Lambo Racer', rarity: 2, body: 0xff7a00, legs: 0x2a2a2a, hat: 'racer', hatColor: 0xff7a00, extra: 'shades', icon: '🏎', coin: 600 },
-  { id: 'mm', name: 'Market Maker', rarity: 3, body: 0x1a1a2e, legs: 0x101018, hat: 'tophat', hatColor: 0x101018, extra: 'shades', icon: '🎩', coin: 800 },
-  { id: 'satoshi', name: 'Satoshi Ghost', rarity: 3, body: 0x22222a, legs: 0x15151a, skin: 0xd8d8e0, hat: 'hood', hatColor: 0x22222a, extra: 'shades', icon: '🥷', coin: 900 },
-  { id: 'cyber', name: 'Cyber Degen', rarity: 4, body: 0x2a2a3a, legs: 0x15151f, glow: 0x0a3a4a, hat: 'visor', extra: 'backpack', icon: '🤖', coin: 1000 },
-  { id: 'goldbull', name: 'Golden Bull', rarity: 4, body: 0xffd21a, legs: 0xc98a00, glow: 0x4a3000, hat: 'horns', extra: 'cape', capeColor: 0x2fbf71, icon: '🐃', coin: 1200 },
-  { id: 'angel', name: 'Angel Investor', rarity: 4, body: 0xf6f6ff, legs: 0xd8dcf0, glow: 0x30304a, hat: 'halo', extra: 'wings', icon: '😇', coin: 1500 },
 ];
 export const skinById = (id) => SKINS.find((s) => s.id === id) || SKINS[0];
 
 // Открыт ли скин: по уровню сезона, уровню держателя (tier ≥ 0 — держит токен) или покупке в магазине (owns).
 export function unlocked(skin, level, tier, owns = () => false) {
-  if (skin.shop || skin.coin) return owns(skin.id);
+  if (skin.shop) return owns(skin.id);
   if (skin.holder) return tier >= 0;
   return level >= (skin.level || 1);
 }
-export const lockLabel = (skin) => (skin.coin ? `🪙 ${skin.coin}` : skin.shop ? '🛒 Shop' : skin.holder ? '🔒 Holders' : `🔒 LV ${skin.level}`);
+export const lockLabel = (skin) => (skin.shop ? '🛒 Shop' : skin.holder ? '🔒 Holders' : `🔒 LV ${skin.level}`);
 
 const box = (w, h, d, mat, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); return m; };
 const ball = (r, mat, x, y, z, sx = 1, sy = 1, sz = 1) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); return m; };
@@ -103,32 +96,6 @@ export function buildCharacter(skinId, fallbackColor) {
       g.add(flame);
       break;
     }
-    case 'racer': {
-      // гоночный шлем с чёрным визором
-      g.add(ball(0.34, hc, 0, 1.75, 0, 1, 1.02, 1.05), box(0.44, 0.14, 0.06, toon(0x111111), 0, 1.76, -0.345), box(0.06, 0.3, 0.36, toon(0xffffff), 0, 1.93, 0.02));
-      break;
-    }
-    case 'tophat': {
-      const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.03, 20), hc); brim.position.y = 1.97;
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.21, 0.36, 20), hc); top.position.y = 2.16;
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.215, 0.215, 0.06, 20), toon(0xffc928)); band.position.y = 2.02;
-      g.add(brim, top, band);
-      break;
-    }
-    case 'hood': {
-      // капюшон: сфера чуть больше головы, лицо открыто спереди
-      const hood = new THREE.Mesh(new THREE.SphereGeometry(0.37, 18, 14, Math.PI * 0.27, Math.PI * 1.46), hc);
-      hood.rotation.y = -Math.PI / 2; hood.position.set(0, 1.76, 0.03);
-      g.add(hood);
-      break;
-    }
-    case 'visor': g.add(box(0.5, 0.1, 0.1, new THREE.MeshBasicMaterial({ color: 0x3ff0ff }), 0, 1.77, -0.27), box(0.04, 0.25, 0.04, toon(0x3a3a4a), 0.2, 2.05, 0)); break;
-    case 'halo': {
-      const halo = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.035, 8, 28), new THREE.MeshBasicMaterial({ color: 0xffe36a }));
-      halo.rotation.x = Math.PI / 2; halo.position.y = 2.2;
-      g.add(halo);
-      break;
-    }
     case 'crystal': {
       const c = new THREE.Mesh(new THREE.OctahedronGeometry(0.16), toon(0xbff4ff, { emissive: 0x2a8ab0 })); c.position.set(0, 2.15, 0); c.scale.y = 1.4; g.add(c);
       break;
@@ -146,12 +113,6 @@ export function buildCharacter(skinId, fallbackColor) {
     case 'laser': {
       const beam = new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.75 });
       for (const sx of [-1, 1]) g.add(box(0.035, 0.035, 0.7, beam, sx * 0.1, 1.76, -0.62));
-      break;
-    }
-    case 'shades': if (s.hat !== 'racer' && s.hat !== 'visor') g.add(box(0.38, 0.08, 0.04, toon(0x0a0a0a), 0, 1.77, -0.29)); break;
-    case 'wings': {
-      const wm = toon(0xffffff, { emissive: 0x303040 });
-      for (const sx of [-1, 1]) { const w = box(0.5, 0.7, 0.04, wm, sx * 0.32, 1.25, 0.38); w.rotation.set(0.15, -sx * 0.5, sx * 0.35); g.add(w); }
       break;
     }
     case 'lips': g.add(box(0.2, 0.05, 0.04, toon(0xc0392b), 0, 1.63, -0.28)); break;

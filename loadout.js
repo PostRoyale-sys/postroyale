@@ -11,7 +11,7 @@ export const COIN = { kill: 25, botkill: 10, chest: 3, survive: 5, top3: 20, top
 export const CHARGE_PRICE = { dash: 60, jump: 40, shield: 80, smoke: 70, recon: 60, nade: 100 };
 
 export function createLoadout(ctx) {
-  let st = { coins: 150, stock: {}, picks: ['dash', null], skins: [] };   // немного монет и рывок в наборе — для старта
+  let st = { coins: 150, stock: {}, picks: ['dash', null] };   // немного монет и рывок в наборе — для старта
   try { st = { ...st, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { /* по умолчанию */ }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* квота */ } };
   let loaded = null;              // что заряжено в текущий матч: [{ id, n }] — для возврата
@@ -27,17 +27,7 @@ export function createLoadout(ctx) {
       save();
       ctx.onChange?.();
     },
-    // Премиум-скины за монеты: куплен — навсегда в Locker.
-    ownsSkin: (id) => (st.skins || []).includes(id),
-    buySkin(id, price) {
-      st.skins ||= [];
-      if (st.skins.includes(id) || st.coins < price) return false;
-      st.coins -= price;
-      st.skins.push(id);
-      save();
-      ctx.onChange?.();
-      return true;
-    },
+    give(n) { st.coins += n; save(); ctx.onChange?.(); },
     spend(n) {
       if (st.coins < n) return false;
       st.coins -= n;

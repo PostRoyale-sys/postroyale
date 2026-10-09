@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RARITY } from './combat.js';
 import { toonGradient } from './art.js';
+import { applyFinish } from './wskins.js';
 
 const lam = (color, emissive = 0x000000) => new THREE.MeshToonMaterial({ color, emissive, gradientMap: toonGradient() });
 function box(w, h, d, color, x, y, z, emissive) {
@@ -66,9 +67,11 @@ function addMods(g, type, mods) {
 }
 
 // Модель оружия: ствол вдоль −Z, начало координат — у рукояти. userData.muzzle — точка вспышки.
-export function weaponModel(type, rarity = 0, mods = '') {
+// fin — раскраска скина из кейса (wskins.js): корпус/дерево → цвет «a», металл → «b».
+const FIN_BASE = { a: [DARK, WOOD, OLIVE], b: [METAL, 0x8a5cff] };
+export function weaponModel(type, rarity = 0, mods = '', fin = null) {
   const g = new THREE.Group();
-  if (type === 'pickaxe') return pickaxeModel();
+  if (type === 'pickaxe') { const p = pickaxeModel(); if (fin) applyFinish(p, fin, FIN_BASE); return p; }
   const rc = new THREE.Color(RARITY[rarity].color);
   const accent = (w, h, d, x, y, z) => box(w, h, d, rc, x, y, z, rc.clone().multiplyScalar(0.35));
   let muzzle = -0.3;
@@ -111,6 +114,7 @@ export function weaponModel(type, rarity = 0, mods = '') {
     }
   }
   if (mods) addMods(g, type, mods);
+  if (fin) applyFinish(g, fin, FIN_BASE);
   g.userData.muzzle = new THREE.Vector3(0, 0.03, muzzle);
   return g;
 }
@@ -133,7 +137,7 @@ function handsModel() {
 
 // ---------- От первого лица ----------
 
-export function createViewmodel(renderer, camera, modsOf = () => '') {
+export function createViewmodel(renderer, camera, modsOf = () => '', finOf = () => null) {
   const vscene = new THREE.Scene();
   vscene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 1.4));
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
@@ -150,12 +154,13 @@ export function createViewmodel(renderer, camera, modsOf = () => '') {
 
   function set(weapon) {
     const mods = weapon && weapon.type !== 'pickaxe' ? modsOf(weapon.type) : '';
-    const k = weapon ? `${weapon.type}:${weapon.rarity}:${mods}` : 'hands';
+    const fin = weapon ? finOf(weapon.type) : null;
+    const k = weapon ? `${weapon.type}:${weapon.rarity}:${mods}:${fin}` : 'hands';
     if (k === key) return;
     key = k;
     type = weapon?.type || null;
     if (model) holder.remove(model);
-    model = weapon ? weaponModel(weapon.type, weapon.rarity, mods) : handsModel();
+    model = weapon ? weaponModel(weapon.type, weapon.rarity, mods, fin) : handsModel();
     if (weapon && weapon.type === 'pickaxe') {
       model.rotation.x = 1.0;                 // рукоять вверх и от себя, навершие — вверху справа
       model.add(box(0.1, 0.1, 0.16, SKIN, 0.0, 0, 0.0));

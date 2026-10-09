@@ -82,6 +82,14 @@ export function createRanked(ctx) {
       ctx.onChange?.();
       return true;
     },
+    // Потратить RP (золотые кейсы).
+    spend(n) {
+      if (st.rp < n) return false;
+      st.rp -= n;
+      save();
+      ctx.onChange?.();
+      return true;
+    },
     setPad(id) { if (!id || st.owned.includes(id)) { st.pad = id; save(); ctx.onChange?.(); } },
     postText: (link) => `I'm dropping into ${TAG} 🪂⛏🌪 — a battle royale that lives inside a post. Loot, build, last one standing wins. Play: ${link}`,
   };

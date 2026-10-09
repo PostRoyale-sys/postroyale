@@ -403,9 +403,44 @@
   #ads[data-dot="acog"] { background: radial-gradient(circle at center, transparent 0 27vh, #000 27.5vh); }
   #ads[data-dot="acog"] i { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #ff7a1a; filter: drop-shadow(0 0 4px #ff7a1a); margin-top: 7px; }
   #ads[data-dot="acog"] i::after { content: ""; position: absolute; left: -1px; top: 14px; width: 2px; height: 22vh; background: rgba(0,0,0,.8); }
-  .shopscroll { max-height: 64vh; overflow: auto; padding-right: 4px; }
-  .shoph { margin: 4px 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; opacity: .7; }
-  .shoph:not(:first-child) { margin-top: 16px; }
+  /* Кейсы и инвентарь скинов на оружие */
+  .csp { width: min(640px, 100%); }
+  .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.25); margin-bottom: 12px; }
+  .seg button { padding: 7px 14px; border-radius: 9px; background: none; color: #cfc8e6; font-weight: 700; font-size: 13px; }
+  .seg button.on { background: #fff; color: #1b1450; }
+  .cslist { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .case { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 12px; border-radius: 16px; background: linear-gradient(180deg, color-mix(in srgb, var(--cc) 30%, transparent), rgba(255,255,255,.04)); border: 1px solid color-mix(in srgb, var(--cc) 60%, transparent); }
+  .cbox { width: 96px; height: 80px; display: grid; place-items: center; border-radius: 14px; background: color-mix(in srgb, var(--cc) 40%, #1a1430); box-shadow: 0 10px 30px color-mix(in srgb, var(--cc) 40%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--cc) 80%, #fff); animation: cbob 2.4s ease-in-out infinite; }
+  .case.gold .cbox { background: linear-gradient(135deg, #ffe680, #ffb21a 50%, #c98a00); }
+  .cbox i { font-style: normal; font-size: 40px; }
+  @keyframes cbob { 50% { transform: translateY(-5px) rotate(-2deg); } }
+  .case > b { font-size: 16px; }
+  .odds { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px; font-size: 11px; font-weight: 700; }
+  .cbuy { margin-top: 4px; padding: 9px 18px; border-radius: 11px; background: linear-gradient(180deg, #ffd84a, #ffb21a); color: #2a1a00; font-weight: 800; }
+  .cbuy.cant { filter: grayscale(.7) brightness(.8); }
+  .wsc { position: relative; display: flex; flex-direction: column; gap: 3px; width: 120px; padding: 8px; box-sizing: border-box; border-radius: 12px; background: rgba(20,16,40,.85); border-bottom: 4px solid var(--rc); text-align: left; flex: none; }
+  .wsc .sw { height: 46px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+  .wsc b { font-size: 12px; line-height: 1.15; } .wsc small { font-size: 10px; color: var(--rc); font-weight: 700; }
+  .wsc.on { box-shadow: 0 0 0 2px #6dffa8; }
+  .wsc.big { width: 220px; padding: 14px; } .wsc.big .sw { height: 90px; } .wsc.big b { font-size: 18px; } .wsc.big small { font-size: 13px; }
+  .invgun { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+  .invgun button { padding: 5px 10px; border-radius: 8px; background: rgba(255,255,255,.08); color: #cfc8e6; font-size: 12px; font-weight: 700; }
+  .invgun button.on { background: #fff; color: #1b1450; }
+  .invgrid { display: grid; grid-template-columns: repeat(auto-fill, 120px); gap: 8px; max-height: 44vh; overflow: auto; padding: 2px; }
+  .invb { all: unset; cursor: pointer; position: relative; } .invb:hover .wsc { transform: translateY(-2px); }
+  .invb em { position: absolute; font-style: normal; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 6px; }
+  .invb .cnt { top: 4px; right: 4px; background: rgba(0,0,0,.6); } .invb .eq { top: 4px; left: 4px; background: #2fbf71; color: #062; }
+  .invgrid .empty, .invc { font-size: 13px; color: #cfc8e6; }
+  #csopen { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(6,4,16,.78); backdrop-filter: blur(6px); }
+  #csopen[hidden] { display: none; }
+  .csbox { display: flex; flex-direction: column; align-items: center; gap: 22px; width: min(900px, 94vw); }
+  #csroll { position: relative; width: 100%; overflow: hidden; padding: 14px 0; border-radius: 16px; background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent); }
+  #cstrack { display: flex; gap: 12px; padding-left: 0; will-change: transform; }
+  #csroll .needle { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: #ffd84a; box-shadow: 0 0 12px #ffd84a; }
+  #csres { display: flex; flex-direction: column; align-items: center; gap: 10px; animation: rise .4s cubic-bezier(.2,.9,.25,1) both; }
+  #csres p { margin: 0; font-weight: 700; }
+  #csres .rbtn { display: flex; gap: 10px; } #csres .rbtn button { padding: 10px 22px; border-radius: 12px; font-weight: 800; background: #fff; color: #1b1450; }
+  #csres .rbtn button:first-child { background: linear-gradient(180deg, #6dffa8, #2fbf71); color: #053; }
   /* Gunsmith */
   .gslist { display: flex; flex-direction: column; gap: 10px; max-height: 64vh; overflow: auto; padding-right: 4px; }
   .gsrow { display: grid; grid-template-columns: 120px repeat(4, 1fr); gap: 8px; align-items: stretch; }
@@ -454,7 +489,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -496,6 +531,7 @@
         <button data-tab="locker">Locker</button>
         <button data-tab="abilities">Abilities</button>
         <button data-tab="gunsmith">Gunsmith</button>
+        <button data-tab="cases">Cases</button>
         <button data-tab="shop">Shop</button>
         <button data-tab="season">Season</button>
         <button data-tab="howto">How to play</button>
@@ -584,16 +620,25 @@
       </div>
     </section>
 
+    <section class="tab" id="tab-cases">
+      <div class="glass lockerp csp">
+        <h3>Cases <span class="rpbal coinbal">🪙 <em id="cscoins">0</em> &nbsp;·&nbsp; <em id="csrp">0</em> RP</span></h3>
+        <div class="seg" id="csseg"><button data-v="cases" class="on">Open cases</button><button data-v="inv">Inventory</button></div>
+        <div id="cslist" class="cslist"></div>
+        <div id="csinv" hidden>
+          <div class="invgun" id="invgun"></div>
+          <div class="invgrid" id="invgrid"></div>
+          <p class="invc">Collected <b id="invcount">0</b> · click a skin to equip / remove it</p>
+        </div>
+        <p id="cshint">Weapon skins drop at random. Degen Case — 🪙 coins, Golden Case — RP with better odds. Everyone sees the skin you equip.</p>
+      </div>
+    </section>
+
     <section class="tab" id="tab-shop">
       <div class="glass lockerp">
-        <h3>Shop <span class="rpbal coinbal">🪙 <em id="shopcoins">0</em> &nbsp;·&nbsp; <em id="shoprp">0</em> RP</span></h3>
-        <div class="shopscroll">
-          <h4 class="shoph">Premium skins · 🪙 coins</h4>
-          <div class="lgrid" id="shopcoin"></div>
-          <h4 class="shoph">Ranked rewards · RP</h4>
-          <div class="lgrid" id="shop"></div>
-        </div>
-        <p id="shophint">Premium skins cost 🪙 coins (earned in every match) and are yours forever. RP comes from Ranked. Skins land in your Locker, pads go under your hero.</p>
+        <h3>Shop <span class="rpbal"><em id="shoprp">0</em> RP</span></h3>
+        <div class="lgrid" id="shop"></div>
+        <p id="shophint">Earn RP in Ranked matches. Skins land in your Locker, pads go under your hero in the lobby.</p>
       </div>
     </section>
 
@@ -663,6 +708,12 @@
 <div id="poi"></div>
 <div id="prompt" hidden></div>
 <div id="reload"></div>
+<div id="csopen" hidden>
+  <div class="csbox">
+    <div id="csroll"><div id="cstrack"></div><span class="needle"></span></div>
+    <div id="csres" hidden></div>
+  </div>
+</div>
 <div id="scope" hidden></div>
 <div id="ads" hidden><i></i></div>
 <div id="hitmark"></div>

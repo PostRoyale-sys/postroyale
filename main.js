@@ -28,6 +28,7 @@ import { createLobbyScene } from './lobby.js';
 import { createAbilities, ABILITIES } from './abilities.js';
 import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
 import { createGunsmith, GUN_MODS, GUN_ORDER, modInfo } from './gunsmith.js';
+import { createWeaponSkins, CASES, WS_RARITY, WS_GUNS, GUN_NAME, ALL_SKINS, skinInfo, FINISHES } from './wskins.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli, buildParachute, buildCabin } from './heli.js';
@@ -742,13 +743,14 @@ function upsertOther(peerId, d) {
   o.target = d;
   o.group.visible = d.a !== false && !d.rd;     // наблюдателей и сидящих в вертолёте не видно
   // Что в руках: тип g и редкость q из pose.
-  const gk = d.g ? `${d.g}:${d.q}:${d.wm || ''}` : '';
+  const ws = typeof d.ws === 'string' && FINISHES[d.ws] ? d.ws : null;
+  const gk = d.g ? `${d.g}:${d.q}:${d.wm || ''}:${ws}` : '';
   if (o.gunKey !== gk) {
     if (o.gun) o.group.remove(o.gun);
     o.gun = null;
     o.gunKey = gk;
     if (d.g) {
-      o.gun = weaponModel(d.g, d.q || 0, typeof d.wm === 'string' ? d.wm.slice(0, 4) : '');
+      o.gun = weaponModel(d.g, d.q || 0, typeof d.wm === 'string' ? d.wm.slice(0, 4) : '', ws);
       o.gun.position.set(0.34, 1.12, -0.25);
       if (d.g === 'bazooka') o.gun.position.set(0.32, 1.5, 0.05);
       if (d.g === 'pickaxe') o.gun.rotation.x = 1.0;
@@ -878,10 +880,15 @@ function award(kind) {
   loadout.earn(kind);
   if (rankedMatch) ranked.add(kind);
 }
-const vm = createViewmodel(renderer, camera, (t) => gunsmith.key(t));
+const vm = createViewmodel(renderer, camera, (t) => gunsmith.key(t), (t) => wskins.finishOf(t));
 const bots = createBots(ctx);
 const loadout = createLoadout({ onChange: () => { renderLoadout(); renderGunsmith(); } });
 const gunsmith = createGunsmith({ spend: (n) => loadout.spend(n), onChange: () => renderGunsmith() });
+const wskins = createWeaponSkins({
+  pay: (cur, n) => (cur === 'rp' ? ranked.spend(n) : loadout.spend(n)),
+  refund: (n) => loadout.give(n),
+  onChange: () => { renderCases(); makeHero(); },
+});
 const abilities = createAbilities({
   scene, camera, others,
   world: () => world, structures: () => structures, combat: () => combat, net: () => net, feet: () => feet,
@@ -1168,7 +1175,7 @@ function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick, a: royale.alive, rr: royale.round };
   const w = holding();
-  if (w) { d.g = w.type; d.q = w.rarity; const mk = gunsmith.key(w.type); if (mk) d.wm = mk; }
+  if (w) { d.g = w.type; d.q = w.rarity; const mk = gunsmith.key(w.type); if (mk) d.wm = mk; const fin = wskins.finishOf(w.type); if (fin) d.ws = fin; }
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
@@ -1377,12 +1384,13 @@ for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
-    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop', 'abilities', 'gunsmith'].includes(b.dataset.tab));
-    $('lobby').classList.toggle('lockered', ['locker', 'shop', 'abilities', 'gunsmith'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop', 'abilities', 'gunsmith', 'cases'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('lockered', ['locker', 'shop', 'abilities', 'gunsmith', 'cases'].includes(b.dataset.tab));
     if (b.dataset.tab === 'locker') renderLocker();
     if (b.dataset.tab === 'shop') renderShop();
     if (b.dataset.tab === 'abilities') renderLoadout();
     if (b.dataset.tab === 'gunsmith') renderGunsmith();
+    if (b.dataset.tab === 'cases') renderCases();
     moveTabInd();
   });
 }
@@ -1396,7 +1404,7 @@ function makeHero() {
   if (hero) scene.remove(hero);
   hero = avatar(($('nick').value.trim() || nick).slice(0, 16), -1, mySkin);
   hero.remove(hero.children.find((c) => c.isSprite));        // ник — в карточке игрока, над головой не нужен
-  const pk = weaponModel('pickaxe');
+  const pk = weaponModel('pickaxe', 0, '', wskins.finishOf('pickaxe'));
   pk.rotation.x = 1.15;                                  // кирка в правой руке, навершие вверх-вперёд
   pk.position.set(0, -0.5, 0);
   hero.userData.rig.a2.add(pk);
@@ -1512,21 +1520,20 @@ setInterval(() => {
 let mySkin = 'default';
 try { mySkin = localStorage.getItem('pr:skin') || 'default'; } catch (e) { /* по умолчанию */ }
 const levelNow = () => Math.floor(season.stats.points / 500) + 1;
-const ownsSkin = (id) => ranked.owns(id) || loadout.ownsSkin(id);
-if (!unlocked(skinById(mySkin), levelNow(), season.tier, ownsSkin)) mySkin = 'default';
+if (!unlocked(skinById(mySkin), levelNow(), season.tier, ranked.owns)) mySkin = 'default';
 
 function renderLocker() {
   const lvl = levelNow();
   $('locker').innerHTML = '';
   for (const s of SKINS) {
-    const open = unlocked(s, lvl, season.tier, ownsSkin);
+    const open = unlocked(s, lvl, season.tier, ranked.owns);
     const c = document.createElement('button');
     c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${open ? '' : ' locked'}`;
     const col = `#${(s.body ?? 0x8b5cff).toString(16).padStart(6, '0')}`;
     c.style.setProperty('--sc', col);
     c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${open ? RARITY[s.rarity].name : lockLabel(s)}</small>`;
     c.addEventListener('click', () => {
-      if (!open) { $('lockerhint').textContent = s.coin ? `Buy it in the Shop for 🪙${s.coin} — coins drop in every match` : s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
+      if (!open) { $('lockerhint').textContent = s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
       mySkin = s.id;
       try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
       $('lockerhint').textContent = `Equipped: ${s.name}`;
@@ -1601,6 +1608,92 @@ function renderGunsmith() {
   }
 }
 
+// ---------- Кейсы и инвентарь скинов на оружие ----------
+
+let casesView = 'cases', invGun = 'all', opening = false;
+const RCOL = (r) => WS_RARITY[r].color;
+// Карточка скина: иконка-полоса цвета раскраски, имя, редкость.
+function skinCard(id, extra = '') {
+  const s = skinInfo(id), f = s.f;
+  const sw = `linear-gradient(135deg, #${f.a.toString(16).padStart(6, '0')} 0 55%, #${f.b.toString(16).padStart(6, '0')} 55%)`;
+  return `<div class="wsc${extra}" style="--rc:${RCOL(s.rarity)}"><span class="sw" style="background:${sw}"></span><b>${FINISHES[s.fin].name}</b><small>${GUN_NAME[s.gun]} · ${WS_RARITY[s.rarity].name}</small></div>`;
+}
+
+function renderCases() {
+  if (!$('cslist') || opening) return;
+  $('cscoins').textContent = loadout.coins.toLocaleString('en');
+  $('csrp').textContent = ranked.rp.toLocaleString('en');
+  for (const b of document.querySelectorAll('#csseg button')) b.classList.toggle('on', b.dataset.v === casesView);
+  $('cslist').hidden = casesView !== 'cases';
+  $('csinv').hidden = casesView !== 'inv';
+  if (casesView === 'cases') {
+    $('cslist').innerHTML = '';
+    for (const [cid, c] of Object.entries(CASES)) {
+      const have = c.cur === 'rp' ? ranked.rp : loadout.coins;
+      const el = document.createElement('div');
+      el.className = `case ${cid}`;
+      el.style.setProperty('--cc', c.color);
+      const odds = c.odds.map((p, r) => (p ? `<span style="color:${RCOL(r)}">${WS_RARITY[r].name} ${Math.round(p * 100)}%</span>` : '')).join('');
+      el.innerHTML = `<div class="cbox"><i>${c.icon}</i></div><b>${c.name}</b><div class="odds">${odds}</div>
+        <button class="cbuy${have < c.price ? ' cant' : ''}">Open · ${c.cur === 'rp' ? `${c.price} RP` : `🪙${c.price}`}</button>`;
+      el.querySelector('button').addEventListener('click', () => openCase(cid));
+      $('cslist').appendChild(el);
+    }
+  } else {
+    $('invgun').innerHTML = ['all', ...WS_GUNS].map((g) => `<button data-g="${g}" class="${invGun === g ? 'on' : ''}">${g === 'all' ? 'All' : GUN_NAME[g]}</button>`).join('');
+    for (const b of $('invgun').querySelectorAll('button')) b.addEventListener('click', () => { invGun = b.dataset.g; renderCases(); });
+    const ids = wskins.owned().filter((id) => invGun === 'all' || skinInfo(id).gun === invGun)
+      .sort((p, q) => skinInfo(q).rarity - skinInfo(p).rarity || p.localeCompare(q));
+    $('invgrid').innerHTML = ids.length ? '' : '<p class="empty">No skins yet — open a case.</p>';
+    for (const id of ids) {
+      const s = skinInfo(id), on = wskins.equipped(s.gun) === id;
+      const d = document.createElement('button');
+      d.className = 'invb';
+      d.innerHTML = skinCard(id, on ? ' on' : '') + (wskins.count(id) > 1 ? `<em class="cnt">×${wskins.count(id)}</em>` : '') + (on ? '<em class="eq">Equipped</em>' : '');
+      d.addEventListener('click', () => { wskins.equip(id); $('cshint').textContent = wskins.equipped(s.gun) === id ? `✓ ${s.name} equipped` : `${s.name} removed`; });
+      $('invgrid').appendChild(d);
+    }
+    $('invcount').textContent = `${wskins.owned().length}/${ALL_SKINS.length}`;
+  }
+}
+for (const b of document.querySelectorAll('#csseg button')) b.addEventListener('click', () => { casesView = b.dataset.v; renderCases(); });
+
+// Открытие: лента карточек прокручивается и тормозит на выпавшем скине (как в CS).
+function openCase(cid) {
+  if (opening) return;
+  const c = CASES[cid];
+  const res = wskins.open(cid);
+  if (!res) { $('cshint').textContent = c.cur === 'rp' ? `Need ${c.price - ranked.rp} more RP — play Ranked` : `Need ${c.price - loadout.coins} more 🪙 — coins drop in every match`; return; }
+  opening = true;
+  const WIN = 34, N = 40;
+  const strip = Array(N).fill(res.id);
+  // наполнитель — по шансам этого кейса
+  for (let i = 0; i < N; i++) if (i !== WIN) { const r = Math.random(); const rar = r < c.odds[0] ? 0 : r < c.odds[0] + c.odds[1] ? 1 : r < 1 - c.odds[3] ? 2 : 3; const pool = ALL_SKINS.filter((id) => skinInfo(id).rarity === rar); strip[i] = pool[Math.floor(Math.random() * pool.length)]; }
+  $('csopen').hidden = false;
+  $('csres').hidden = true;
+  const tr = $('cstrack');
+  tr.style.transition = 'none';
+  tr.style.transform = 'translateX(0)';
+  tr.innerHTML = strip.map((id) => skinCard(id)).join('');
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const cw = 132, view = $('csroll').clientWidth;
+    const x = WIN * cw + cw / 2 - view / 2 + (Math.random() - 0.5) * cw * 0.6;
+    tr.style.transition = 'transform 5.2s cubic-bezier(.12,.75,.12,1)';
+    tr.style.transform = `translateX(${-x}px)`;
+  }));
+  combat.sfx('pickup');
+  setTimeout(() => {
+    const s = skinInfo(res.id);
+    $('csres').hidden = false;
+    $('csres').innerHTML = `${skinCard(res.id, ' big')}<p>${res.dup ? `Duplicate — +🪙${res.refund}` : `New skin for your ${GUN_NAME[s.gun]}!`}</p>
+      <div class="rbtn"><button id="cseq">Equip</button><button id="csok">OK</button></div>`;
+    $('cseq').addEventListener('click', () => { if (wskins.equipped(s.gun) !== res.id) wskins.equip(res.id); closeOpen(); $('cshint').textContent = `✓ ${s.name} equipped`; });
+    $('csok').addEventListener('click', closeOpen);
+    if (s.rarity >= 2) combat.sfx('bazooka');
+  }, 5400);
+}
+function closeOpen() { $('csopen').hidden = true; opening = false; renderCases(); }
+
 // ---------- Режимы: Casual / Ranked, допуск через пост в X, магазин за RP ----------
 
 function setGameMode(m) {
@@ -1656,26 +1749,6 @@ $('rk-verify').addEventListener('click', async () => {
 $('rk-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rk-verify').click(); });
 
 function renderShop() {
-  // премиум-скины за монеты
-  $('shopcoins').textContent = loadout.coins.toLocaleString('en');
-  $('shopcoin').innerHTML = '';
-  for (const s of SKINS.filter((x) => x.coin)) {
-    const own = loadout.ownsSkin(s.id);
-    const c = document.createElement('button');
-    c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${!own && loadout.coins < s.coin ? ' cant' : ''}`;
-    c.style.setProperty('--sc', `#${s.body.toString(16).padStart(6, '0')}`);
-    c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${RARITY[s.rarity].name} skin</small><span class="price${own ? ' own' : ''}">${own ? (s.id === mySkin ? 'Equipped' : 'Equip') : `🪙 ${s.coin}`}</span>`;
-    c.addEventListener('click', () => {
-      if (own || loadout.buySkin(s.id, s.coin)) {
-        mySkin = s.id;
-        try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
-        $('shophint').textContent = own ? `Equipped: ${s.name}` : `✓ Bought ${s.name} — equipped`;
-        makeHero();
-      } else $('shophint').textContent = `Need ${s.coin - loadout.coins} more 🪙 — coins drop in every match`;
-      renderShop();
-    });
-    $('shopcoin').appendChild(c);
-  }
   $('shop').innerHTML = '';
   for (const it of SHOP) {
     const own = ranked.owns(it.id), equipped = it.kind === 'pad' && ranked.pad === it.id;
