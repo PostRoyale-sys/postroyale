@@ -71,6 +71,12 @@
   .hero-copy h1 { margin: 0; font: 400 clamp(38px, min(7vw, 9.5vh), 108px)/.86 var(--display); font-style: italic; text-transform: uppercase; letter-spacing: -.005em; }
   .hero-copy h1 span { display: block; background: linear-gradient(180deg, #ffffff 30%, #d9cfff); -webkit-background-clip: text; background-clip: text; color: transparent;
     filter: drop-shadow(0 6px 0 #2a1d86) drop-shadow(0 16px 30px rgba(20,10,80,.45)); }
+  .hero-copy h1 span.g { background-image: linear-gradient(180deg, #c8ffd9 15%, #3ee08a); filter: drop-shadow(0 6px 0 #0b5a34) drop-shadow(0 16px 30px rgba(20,120,70,.45)); }
+  .hero-copy p b.rp { color: #7dffb0; }
+  .earn button.rpbig { padding: 10px 18px 10px 12px; background: linear-gradient(160deg, rgba(125,255,176,.28), rgba(125,255,176,.06)), var(--glass);
+    box-shadow: inset 0 0 0 1.5px rgba(125,255,176,.65), 0 0 24px rgba(125,255,176,.25), 0 10px 24px rgba(10,5,40,.3); }
+  .earn button.rpbig b { font-size: 28px; color: #7dffb0 !important; }
+  .earn button.rpbig i { font-size: 28px; }
   .hero-copy h1 span.y { background-image: linear-gradient(180deg, #fff27a 20%, #ff9d1a); filter: drop-shadow(0 6px 0 #8a3c00) drop-shadow(0 16px 30px rgba(120,50,0,.4)); }
   .hero-copy p { max-width: 430px; margin: 12px 0 0; font-size: 15px; line-height: 1.5; color: #e6e1ff; text-shadow: 0 2px 10px rgba(20,10,60,.6); }
   .hero-copy p b { color: #fff; }
@@ -83,7 +89,7 @@
   .earn i { grid-row: 1 / 3; font-style: normal; font-size: 22px; }
   .earn b { font: 400 20px/1 var(--display); letter-spacing: .02em; }
   .earn span { font-size: 11px; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
-  .earn button:nth-child(1) b { color: #ffd21a; } .earn button:nth-child(2) b { color: #7dffb0; }
+  .earn button:nth-child(2) b { color: #ffd21a; }
   #eholdb.on b { color: #ffd21a; }
   .hot { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; background: rgba(255,122,89,.18); box-shadow: inset 0 0 0 1px rgba(255,150,120,.45);
     font-weight: 800; font-size: 13px; letter-spacing: .02em; color: #ffd9cc; }
@@ -466,11 +472,11 @@
 
     <section class="tab on" id="tab-play">
       <div class="hero-copy">
-        <h1><span class="rise" style="--d:1">Play.</span><span class="rise" style="--d:2">Earn.</span><span class="y rise" style="--d:3">Hold.</span></h1>
-        <p class="rise" style="--d:4" id="introsub">Every match pays out in-game: <b>🪙 coins</b> for abilities in any mode, <b>RP</b> in Ranked for the Shop. Hold <b class="tk">$PR</b> to unlock holder skins, a golden key on chests and season perks.</p>
+        <h1><span class="rise" style="--d:1">Play ranked.</span><span class="g rise" style="--d:2">Earn RP.</span><span class="y rise" style="--d:3">Hold.</span></h1>
+        <p class="rise" style="--d:4" id="introsub"><b class="rp">RP</b> is what you play for: <b>+60</b> for a Victory Royale, <b>+10</b> per elimination, <b>+15–25</b> for top 3 — and you spend it in the <b>Shop</b> on exclusive skins and pads. Unlock Ranked with one post on X a week. Coins 🪙 for abilities drop in every mode; <b class="tk">$PR</b> holders get extra perks.</p>
         <div class="earn rise" style="--d:5">
+          <button data-go="shop" class="rpbig"><i>🏆</i><b id="erp">0</b><span>RP · spend in Shop</span></button>
           <button data-go="abilities"><i>🪙</i><b id="ecoins">0</b><span>coins</span></button>
-          <button data-go="shop"><i>🏆</i><b id="erp">0</b><span>RP</span></button>
           <button data-go="season" id="eholdb"><i>★</i><b id="ehold">Link wallet</b><span class="tk">$PR holder</span></button>
         </div>
       </div>
