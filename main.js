@@ -30,7 +30,7 @@ import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
 import { createGunsmith, GUN_MODS, GUN_ORDER, modInfo } from './gunsmith.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
-import { buildHeli, buildParachute, buildCabin, SEAT_EYE } from './heli.js';
+import { buildHeli, buildParachute, buildCabin } from './heli.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08;
@@ -280,7 +280,7 @@ function startRide(late) {
   gliding = false;
   vel.set(0, 0, 0);
   heli.visible = true;
-  camera.rotation.set(-0.35, Math.atan2(-dir.x, -dir.z) - Math.PI / 2, 0, 'YXZ');   // лицом из правой двери, взгляд чуть вниз
+  camera.rotation.set(-0.25, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
 }
 
 // Сколько метров пролетел вертолёт от начала маршрута.
@@ -318,20 +318,16 @@ function updateHeli(t) {
   heli.rotation.set(0.06, Math.atan2(-flight.dir.x, -flight.dir.z), Math.sin(t * 0.9) * 0.04);
   heli.userData.tick(t);
   // салон виден только своему пассажиру; полоса корпуса изнутри мешает обзору — прячем
-  cabin.visible = riding;
-  for (const m of heli.userData.shell) m.visible = !riding;
-  if (riding) cabin.userData.tick(t);
+  // салон (вид от первого лица) сейчас не используется — камера снаружи
+  cabin.visible = false;
   const d = flown();
   if (riding) {
     if (d >= flight.w1) jumpOut(true);
     else {
       feet.copy(V_HELI);
-      // вид от первого лица из салона (как в Call of Duty): сидим на задней лавке, мышью — осмотреться;
-      // лёгкая тряска от винта
-      heli.updateMatrixWorld(true);
-      player.position.copy(heli.localToWorld(SEAT_EYE.clone()));
-      player.position.x += Math.sin(t * 31) * 0.012 + Math.sin(t * 7.3) * 0.02;
-      player.position.y += Math.sin(t * 27) * 0.015 + Math.sin(t * 3.1) * 0.03;
+      // камера от третьего лица на орбите вокруг вертолёта: направление — от мыши
+      camera.getWorldDirection(V_LOOK);
+      player.position.copy(V_HELI).addScaledVector(V_LOOK, -26).add(new THREE.Vector3(0, 6, 0));
     }
   }
   if (!riding && d >= flight.len) { flight = null; heli.visible = false; }
