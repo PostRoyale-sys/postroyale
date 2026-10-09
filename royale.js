@@ -47,7 +47,10 @@ export function createRoyale(ctx) {
   wall.visible = false;
   scene.add(wall);
 
-  const roundOf = (now) => Math.floor(now / ROUND_MS);
+  // Точка отсчёта матча: 0 — общие часы (Ranked: у всех один раунд); в Casual — момент старта матча,
+  // чтобы всё начиналось с нуля; зашедшие по ссылке подхватывают более раннюю точку (adoptEpoch).
+  let epoch = 0;
+  const roundOf = (now) => Math.floor((now - epoch) / ROUND_MS);
 
   // Центр зоны раунда — из id мира и номера раунда: на суше и не у самого края.
   function pickCenter(r) {
@@ -95,12 +98,22 @@ export function createRoyale(ctx) {
     aliveCount: () => aliveOthers() + (alive ? 1 : 0),
 
     // Первый вход в мир: играем сразу, если до конца раунда больше LATE_CUTOFF; иначе ждём следующего.
-    init(now = Date.now()) {
+    get epoch() { return epoch; },
+    init(now = Date.now(), ep = epoch) {
+      epoch = ep;
+      ended = false; won = false; maxAliveSeen = 0; place = 0;
       round = roundOf(now);
-      roundStart = round * ROUND_MS;
+      roundStart = epoch + round * ROUND_MS;
       setCenter(round);
       alive = now - roundStart < ROUND_MS - LATE_CUTOFF;
       ctx.onRoundStart(round, alive);
+    },
+
+    // Друг начал этот матч раньше — переходим на его отсчёт (раунд начинается заново под его время).
+    adoptEpoch(e) {
+      if (!(e > 0) || e >= epoch - 1000) return false;
+      this.init(Date.now(), e);
+      return true;
     },
 
     // Радиус, внутри которого безопасно сейчас и после текущего сжатия.
@@ -157,7 +170,7 @@ export function createRoyale(ctx) {
       }
       if (r !== round) {
         round = r;
-        roundStart = r * ROUND_MS;
+        roundStart = epoch + r * ROUND_MS;
         setCenter(r);
         alive = true;                     // новая высадка — все в игре
         won = false;

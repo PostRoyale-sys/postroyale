@@ -26,6 +26,7 @@ import { createWater } from './water.js';
 import { createBots } from './bots.js';
 import { createLobbyScene } from './lobby.js';
 import { createAbilities, ABILITIES } from './abilities.js';
+import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli } from './heli.js';
@@ -235,18 +236,38 @@ let riding = false;           // ты внутри
 // Маршрут: заход с моря (APPROACH м, прыгать нельзя) → зона прыжка (отрезок над безопасной частью острова,
 // 2·JR м через центр зоны) → на краю зоны всех, кто не прыгнул, выбрасывает → вертолёт улетает дальше.
 const APPROACH = 70, AFTER = 60;
-function startRide(late) {
+// Общий маршрут раунда (у всех одинаковый — от сида мира и номера раунда; на нём летят и боты).
+let routeCache = null;
+function sharedRoute() {
+  if (routeCache?.round === royale.round && routeCache.epoch === royale.epoch) return routeCache;
   const c = royale.center;
-  const r = late ? null : rng(seedOf(worldId) ^ Math.imul(royale.round + 7, 2654435761));
-  const ang = (r ? r() : Math.random()) * Math.PI * 2;
+  const r = rng(seedOf(worldId) ^ Math.imul(royale.round + 7, 2654435761));
+  const ang = r() * Math.PI * 2;
   const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
-  // полуширина зоны прыжка: в начале раунда — почти весь остров, опоздавшему — только внутри безопасной зоны
-  const JR = late ? Math.max(12, Math.min(90, royale.safeRadius() * 0.8)) : Math.min(150, royale.safeRadius() * 0.9);
-  const approach = late ? 45 : APPROACH;
-  const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -(JR + approach));
-  // общий вылет — от начала раунда (у всех одинаково), личный — от сейчас
-  const t0 = late ? Date.now() / 1000 : royale.roundStart / 1000;
-  flight = { a, dir, t0, w0: approach, w1: approach + 2 * JR, len: approach + 2 * JR + AFTER };
+  const JR = Math.min(150, royale.safeRadius() * 0.9);
+  const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -(JR + APPROACH));
+  const t0 = royale.roundStart / 1000;
+  routeCache = {
+    round: royale.round, epoch: royale.epoch, a, dir, t0, w0: APPROACH, w1: APPROACH + 2 * JR, len: APPROACH + 2 * JR + AFTER, speed: HELI_SPEED,
+    at: (sec) => a.clone().addScaledVector(dir, Math.min(APPROACH + 2 * JR + AFTER, Math.max(0, (sec - t0) * HELI_SPEED))),
+  };
+  return routeCache;
+}
+
+function startRide(late) {
+  if (!late) {
+    const r = sharedRoute();
+    flight = { a: r.a, dir: r.dir, t0: r.t0, w0: r.w0, w1: r.w1, len: r.len };
+  } else {
+    // опоздавшему — свой короткий маршрут над безопасной частью зоны, от «сейчас»
+    const c = royale.center;
+    const ang = Math.random() * Math.PI * 2;
+    const dir = new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
+    const JR = Math.max(12, Math.min(90, royale.safeRadius() * 0.8));
+    const a = new THREE.Vector3(c.x, HELI_Y, c.z).addScaledVector(dir, -(JR + 45));
+    flight = { a, dir, t0: Date.now() / 1000, w0: 45, w1: 45 + 2 * JR, len: 45 + 2 * JR + AFTER };
+  }
+  const dir = flight.dir;
   riding = true;
   gliding = false;
   vel.set(0, 0, 0);
@@ -779,8 +800,9 @@ const ctx = {
   me: () => ({ alive: royale.alive, riding, nick, feet }),
   upsert: (k, d) => upsertOther(k, d),
   removeBots, isHost, hostId,
-  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
+  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
   blocksSight: (a, b) => abilities.blocksSight(a, b),
+  route: () => sharedRoute(),
   crouched: () => crouching,
   riding: () => riding,
   onRoundEnd,
@@ -813,10 +835,12 @@ let rankedMatch = false;           // этот матч — рейтинговы
 function award(kind) {
   season.add(kind);
   abilities.earn(kind);
+  loadout.earn(kind);
   if (rankedMatch) ranked.add(kind);
 }
 const vm = createViewmodel(renderer, camera);
 const bots = createBots(ctx);
+const loadout = createLoadout({ onChange: () => renderLoadout() });
 const abilities = createAbilities({
   scene, camera, others,
   world: () => world, structures: () => structures, combat: () => combat, net: () => net, feet: () => feet,
@@ -908,20 +932,21 @@ function onRoundStart(r, alive) {
   shadowDirty = true;
   bots.roundStart(r);
   abilities.reset();
-  loot.resetRound(r, r * ROUND_MS);
+  if (alive) { loadout.equip(abilities.slots); renderAbilities(); }
+  loot.resetRound(r, royale.roundStart);
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
   buildType = null;
   goldenKeyRound = -1;
   renderHotbar();
   if (alive) {
-    startRide(Date.now() - r * ROUND_MS > 20e3);
+    startRide(Date.now() - royale.roundStart > 20e3);
     season.roundStarted();
-    const late = Date.now() - r * ROUND_MS > DROP_MS;
+    const late = Date.now() - royale.roundStart > 20e3;
     banner('DROP!', late ? 'Match in progress — press SPACE to jump out, loot fast, watch the storm' : 'Press SPACE to jump out of the chopper — the storm starts closing in 90s');
   } else {
     gliding = false;
-    const left = Math.ceil((ROUND_MS - (Date.now() - r * ROUND_MS)) / 1000);
+    const left = Math.ceil((ROUND_MS - (Date.now() - royale.roundStart)) / 1000);
     banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · fly around as a ghost (Space up, C down)`, 5000);
   }
 }
@@ -933,6 +958,7 @@ function onEliminated(place, by) {
   vel.set(0, 0, 0);
   feet.y += 3;                                    // призрак поднимается над местом гибели
   season.placed(place);
+  if (place === 2 || place === 3) loadout.earn(place === 2 ? 'top2' : 'top3');
   if (rankedMatch && (place === 2 || place === 3)) ranked.add(place === 2 ? 'top2' : 'top3');
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
@@ -946,6 +972,7 @@ function onWinner(name, me) {
 // Конец раунда (досрочно — последний живой, или по таймеру — все, кто дожил): итоги и возврат в лобби.
 const LOBBY_DELAY = 7;
 function onRoundEnd({ me, winners, early }) {
+  loadout.giveBack(abilities.slots);
   if (!early) {
     const others = winners.filter((n) => n !== nick);
     if (me) banner('🏆 VICTORY ROYALE', others.length ? `You survived the storm — winners: ${winners.join(', ')}` : 'You survived the storm!', LOBBY_DELAY * 1000);
@@ -1036,6 +1063,7 @@ let startNet = function () {
     net = connect(worldId, {
       join(peerId) {
         peers.add(peerId);
+        if (!isRankedWorld(worldId)) net.match({ e: royale.epoch }, peerId);
         net.sync({ s: structures.syncList(), rr: royale.round }, peerId);
         net.pose(poseData(), peerId);
         loot.syncTo(peerId);
@@ -1062,6 +1090,8 @@ let startNet = function () {
       bots(peerId, d) { bots.onBots(peerId, d); },
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
       abil(peerId, d) { abilities.onNet(peerId, d); },
+      // друг начал этот матч раньше — переходим на его отсчёт (раунд заново)
+      match(peerId, d) { if (!isRankedWorld(worldId) && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
@@ -1198,7 +1228,9 @@ function start() {
     playing = true;
     camera.rotation.set(0, 0, 0, 'YXZ');
     spawn(false);
-    royale.init();              // раунд по часам: сундуки, шторм, высадка
+    // Casual — матч с нуля: раунд начинается сейчас (друзья по ссылке подстроятся под самый ранний старт);
+    // Ranked — общие часы (у всех рейтинговых игроков один раунд на острове дня).
+    royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500);
     pick(0);
     $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
@@ -1259,6 +1291,7 @@ function setMode(m) {
   $('code').hidden = m !== 'join';
   if (m === 'join') $('code').focus();
   previewSoon();
+  updateRoundInfo();
 }
 $('m-new').addEventListener('click', () => setMode('new'));
 $('m-join').addEventListener('click', () => setMode('join'));
@@ -1282,10 +1315,11 @@ for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
-    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop'].includes(b.dataset.tab));
-    $('lobby').classList.toggle('lockered', b.dataset.tab === 'locker' || b.dataset.tab === 'shop');
+    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop', 'abilities'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('lockered', ['locker', 'shop', 'abilities'].includes(b.dataset.tab));
     if (b.dataset.tab === 'locker') renderLocker();
     if (b.dataset.tab === 'shop') renderShop();
+    if (b.dataset.tab === 'abilities') renderLoadout();
     moveTabInd();
   });
 }
@@ -1439,10 +1473,36 @@ function renderLocker() {
   }
 }
 
+// ---------- Вкладка Abilities: склад зарядов за монеты и набор на F/Q ----------
+
+function renderLoadout() {
+  $('lbcoins').textContent = loadout.coins.toLocaleString('en');
+  if (!$('ablist')) return;
+  $('abcoins').textContent = loadout.coins.toLocaleString('en');
+  $('abslots').innerHTML = ['F', 'Q'].map((k, i) => {
+    const id = loadout.picks[i], a = id && ABILITIES[id];
+    return `<div class="${a ? '' : 'empty'}"><span>${k}</span>${a ? `<i>${a.icon}</i><b>${a.name}</b><small>${Math.min(loadout.stock(id), a.max)} charge${Math.min(loadout.stock(id), a.max) === 1 ? '' : 's'} ready</small>` : '<i>＋</i><b>Empty</b><small>pick below</small>'}</div>`;
+  }).join('');
+  $('ablist').innerHTML = '';
+  for (const [id, a] of Object.entries(ABILITIES)) {
+    const c = document.createElement('div');
+    c.className = 'abcard';
+    const p = CHARGE_PRICE[id];
+    c.innerHTML = `<i>${a.icon}</i><b>${a.name}</b><small>${a.desc}</small><div class="abst">In stock: <em>${loadout.stock(id)}</em> · max ${a.max}/match</div>
+      <div class="abbtn"><button class="buyb${loadout.coins < p ? ' cant' : ''}">Buy 🪙${p}</button><button class="sb${loadout.picks[0] === id ? ' on' : ''}">F</button><button class="sb${loadout.picks[1] === id ? ' on' : ''}">Q</button></div>`;
+    const [bb, f, q] = c.querySelectorAll('button');
+    bb.addEventListener('click', () => { $('abhint').textContent = loadout.buy(id) ? `✓ +1 ${a.name} charge` : `Need ${p - loadout.coins} more 🪙 — earn coins in any match`; });
+    f.addEventListener('click', () => loadout.pick(0, id));
+    q.addEventListener('click', () => loadout.pick(1, id));
+    $('ablist').appendChild(c);
+  }
+}
+
 // ---------- Режимы: Casual / Ranked, допуск через пост в X, магазин за RP ----------
 
 function setGameMode(m) {
   gameMode = m;
+  setTimeout(updateRoundInfo, 0);
   $('modeseg').classList.toggle('ranked', m === 'ranked');
   $('md-casual').classList.toggle('on', m === 'casual');
   $('md-ranked').classList.toggle('on', m === 'ranked');
@@ -1528,6 +1588,13 @@ $('shareinv').addEventListener('click', () => {
 // Состояние раунда в лобби: можно ли высадиться прямо сейчас.
 function updateRoundInfo() {
   if (playing) return;
+  if (gameMode === 'casual') {
+    $('tring').style.strokeDashoffset = '0';
+    $('roundinfo').innerHTML = mode === 'join'
+      ? `<b class="live">● Friend's match</b>Drop in with everyone on the link`
+      : `<b class="live">● Fresh match</b>Starts the moment you hit Play · 8 min`;
+    return;
+  }
   const into = Date.now() % ROUND_MS, left = ROUND_MS - into;
   $('tring').style.strokeDashoffset = (125.66 * into / ROUND_MS).toFixed(1);
   $('roundinfo').innerHTML = left > 90e3
@@ -1606,7 +1673,8 @@ applySettings();
 
 // Пауза: управление и выход в лобби (та же ссылка — можно вернуться в матч).
 $('howto2').addEventListener('click', () => { $('pkeys').hidden = !$('pkeys').hidden; });
-$('leave').addEventListener('click', () => { location.href = `${location.pathname}?w=${worldId}`; });
+$('leave').addEventListener('click', () => { loadout.giveBack(abilities.slots); location.href = `${location.pathname}?w=${worldId}`; });
+addEventListener('beforeunload', () => { if (playing) loadout.giveBack(abilities.slots); });
 
 // Остров для лобби — сразу при открытии страницы.
 if (!params.has('shot')) {
@@ -1615,6 +1683,7 @@ if (!params.has('shot')) {
     loadWorld(lobbyId());
     makeHero(); renderSeason(); renderPlayerCard(); renderPois(); updateRoundInfo(); moveTabInd();
     setGameMode(gameMode);
+    renderLoadout();
     setTimeout(() => $('splash').classList.add('done'), 350);
   }, 60);
 }

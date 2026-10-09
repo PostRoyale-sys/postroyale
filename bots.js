@@ -3,7 +3,8 @@
 // Остальные видят ботов как обычных игроков (в others под ключом bot:N); их попадания по ботам уходят хосту
 // (bothit). Если хост вышел, ботов подхватывает следующий — с последних известных позиций.
 //
-// Поведение: высадка планированием внутри зоны → бродят по точкам внутри безопасного круга, уходят от шторма,
+// Поведение (как у людей): общий вертолёт раунда и прыжок над зоной прыжка → приземлились без оружия — к ближайшему
+// сундуку, открыть и взять оружие (пока без оружия — кирка вблизи) → бродят по точкам внутри безопасного круга, уходят от шторма,
 // перепрыгивают препятствия → замечают живого игрока или другого бота в SIGHT м без стен между ними и стреляют
 // (точность падает с расстоянием) → погибая, роняют оружие и патроны.
 
@@ -25,7 +26,7 @@ function degenNick(taken) {
   }
   return `Degen${Math.floor(Math.random() * 9000) + 1000}`;
 }
-const GUNS = ['pistol', 'smg', 'ar', 'shotgun'];
+const MELEE = { dmg: 20, rate: 0.7, reach: 2.4 };     // кирка, пока нет оружия
 
 export function createBots(ctx) {
   const bots = new Map();             // id → состояние (только у хоста)
@@ -45,20 +46,51 @@ export function createBots(ctx) {
     return { x: c.x, z: c.z };
   }
 
+  // Как люди: все боты садятся в общий вертолёт раунда и прыгают в случайный момент над зоной прыжка,
+  // приземляются без оружия и идут лутать сундуки.
   function spawnAll() {
     bots.clear();
     const skins = SKINS.filter((s) => !s.holder && !s.shop);
     const taken = new Set([ctx.me().nick]);
+    const r = ctx.route();
     for (let i = 0; i < COUNT; i++) {
-      const p = zonePoint(0.7);
-      const gun = GUNS[Math.floor(Math.random() * GUNS.length)];
+      const jumpD = r.w0 + rnd(0.1, 0.9) * (r.w1 - r.w0);
       bots.set(i, {
         id: i, name: degenNick(taken), skin: skins[Math.floor(Math.random() * skins.length)].id,
-        pos: new THREE.Vector3(p.x, ctx.world().height(p.x, p.z) + rnd(45, 70), p.z), vy: 0, onGround: false, gliding: true,
-        hp: 100, alive: true, gun, rarity: Math.floor(rnd(0, 3)), yaw: 0,
+        pos: r.at(0), vy: 0, onGround: false, gliding: false, riding: true, jumpAt: r.t0 + jumpD / r.speed,
+        hp: 100, alive: true, gun: null, rarity: 0, yaw: 0, chest: null, nextMelee: 0,
         way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + rnd(2, 4), target: null,
       });
     }
+  }
+
+  // Ближайший неоткрытый сундук, за которым не идёт другой бот.
+  function pickChest(b) {
+    const loot = ctx.loot();
+    let best = null, bd = 150;
+    for (const c of loot.chests) {
+      if (loot.isOpen(c)) continue;
+      if ([...bots.values()].some((o) => o !== b && o.alive && o.chest === c)) continue;
+      const d = Math.hypot(c.pos.x - b.pos.x, c.pos.z - b.pos.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
+  // Лут: дошёл до сундука — открыть и взять выпавшее оружие (или любое оружие, лежащее рядом).
+  function lootStep(b) {
+    const loot = ctx.loot();
+    if (!b.chest || (loot.isOpen(b.chest) && b.chest.pos.distanceTo(b.pos) > 6)) b.chest = pickChest(b);
+    if (!b.chest) return false;
+    if (Math.hypot(b.chest.pos.x - b.pos.x, b.chest.pos.z - b.pos.z) > 2.2) { b.way = { x: b.chest.pos.x, z: b.chest.pos.z }; return true; }
+    if (!loot.isOpen(b.chest)) loot.open(b.chest);
+    for (const it of loot.items.values()) {
+      if (it.k !== 'weapon' || it.pos.distanceTo(b.pos) > 4.5) continue;
+      const got = loot.takeItem(it.id);
+      if (got) { b.gun = got.w; b.rarity = got.r || 0; b.chest = null; b.way = null; return false; }
+    }
+    b.chest = pickChest(b);
+    return true;
   }
 
   // Подхват ботов новым хостом — с последних известных позиций.
@@ -68,7 +100,7 @@ export function createBots(ctx) {
       if (!k.startsWith('bot:') || o.target?.rr !== round) continue;
       const d = o.target;
       bots.set(+k.slice(4), { id: +k.slice(4), name: d.n, skin: d.k || 'default', pos: new THREE.Vector3(d.x, d.y, d.z), vy: 0, onGround: false, gliding: false,
-        hp: 100, alive: d.a !== false, gun: d.g || 'pistol', rarity: d.q || 0, yaw: d.r || 0, way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + 2, target: null });
+        hp: 100, alive: d.a !== false, gun: d.g && d.g !== 'pickaxe' ? d.g : null, rarity: d.q || 0, yaw: d.r || 0, riding: false, chest: null, nextMelee: 0, way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + 2, target: null });
     }
   }
 
@@ -79,12 +111,13 @@ export function createBots(ctx) {
     const rs = ctx.royale();
     // от шторма — к центру; иначе — по своим точкам внутри круга
     const c = rs.center, outside = Math.hypot(b.pos.x - c.x, b.pos.z - c.z) > rs.safeRadius() * 0.95;
-    if (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
+    const looting = !outside && !b.gun && !b.gliding && lootStep(b);
+    if (!looting && (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2)) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
     let dx = b.way.x - b.pos.x, dz = b.way.z - b.pos.z;
-    // в бою — держим дистанцию: подходим до 18 м и кружим
     if (b.target) {
       const tx = b.target.x - b.pos.x, tz = b.target.z - b.pos.z, td = Math.hypot(tx, tz);
-      if (td > 18) { dx = tx; dz = tz; } else { dx = -tz; dz = tx; }
+      if (!b.gun) { dx = tx; dz = tz; }                       // с киркой — вплотную
+      else if (td > 18) { dx = tx; dz = tz; } else { dx = -tz; dz = tx; }   // с оружием — держим дистанцию и кружим
     }
     const len = Math.hypot(dx, dz) || 1;
     const sp = (b.gliding ? 8 : SPEED) * dt;
@@ -124,14 +157,14 @@ export function createBots(ctx) {
   // Цели бота: живые игроки и другие живые боты (кроме себя) — ближайшая видимая.
   function targetsFor(b) {
     const list = humans();
-    for (const o of bots.values()) if (o !== b && o.alive && !o.gliding) list.push({ id: key(o.id), name: o.name, pos: o.pos, bot: o });
+    for (const o of bots.values()) if (o !== b && o.alive && !o.gliding && !o.riding) list.push({ id: key(o.id), name: o.name, pos: o.pos, bot: o });
     return list;
   }
 
   function think(b) {
     const st = ctx.structures();
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
-    let best = null, bd = SIGHT;
+    let best = null, bd = b.gun ? SIGHT : 9;               // без оружия ввязываются только вблизи
     for (const h of targetsFor(b)) {
       const to = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(eye);
       const d = to.length();
@@ -147,8 +180,21 @@ export function createBots(ctx) {
 
   function shoot(b, now) {
     const h = b.victim;
-    if (!h || now < b.nextShot) return;
+    if (!h) return;
     if (h.bot && !h.bot.alive) { b.victim = b.target = null; return; }
+    if (!b.gun) {
+      // кирка: бьёт, если вплотную
+      if (now < b.nextMelee || h.pos.distanceTo(b.pos) > MELEE.reach) return;
+      b.nextMelee = now + MELEE.rate;
+      b.yaw = Math.atan2(-(h.pos.x - b.pos.x), -(h.pos.z - b.pos.z));
+      ctx.combat().sfx('chop', b.pos);
+      const d = { dmg: MELEE.dmg, by: b.name, w: 'pickaxe' };
+      if (h.id === null) ctx.combat().takeDamage(d.dmg, d.by, d.w);
+      else if (h.bot) damage(h.bot.id, d);
+      else ctx.net()?.hit(d, h.id);
+      return;
+    }
+    if (now < b.nextShot) return;
     const spec = WEAPONS[b.gun];
     b.nextShot = now + Math.max(0.3, spec.rate * 2.4) + Math.random() * 0.45;
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
@@ -159,11 +205,13 @@ export function createBots(ctx) {
     const chance = Math.min(0.95, Math.max(0.3, 0.85 - d / 110) + (h.bot ? 0.1 : 0));
     const hit = Math.random() < chance;
     const end = hit ? aim : aim.clone().add(new THREE.Vector3(rnd(-2, 2), rnd(-1, 1.5), rnd(-2, 2)));
-    const shot = { w: b.gun, o: eye.toArray().map((v) => +v.toFixed(2)), e: [end.toArray().map((v) => +v.toFixed(2))] };
+    // базука у бота — мгновенный выстрел с трассером (без ракеты), урон как у взрыва
+    const shot = { w: spec.rocket ? 'sniper' : b.gun, o: eye.toArray().map((v) => +v.toFixed(2)), e: [end.toArray().map((v) => +v.toFixed(2))] };
     ctx.combat().onShot('bot', shot);                 // трассер и звук у себя
     ctx.net()?.shot(shot);                            // и у всех
     if (!hit) return;
-    const dmg = Math.round((spec.pellets > 1 ? spec.dmg * 4 : spec.dmg) * (h.bot ? 1.1 : 0.85));
+    const base = spec.rocket ? 70 : spec.pellets > 1 ? spec.dmg * 4 : spec.dmg;
+    const dmg = Math.round(base * (h.bot ? 1.1 : 0.85));
     if (h.id === null) ctx.combat().takeDamage(dmg, b.name, b.gun);
     else if (h.bot) damage(h.bot.id, { dmg, by: b.name, w: b.gun });     // бот по боту — считаем здесь же
     else ctx.net()?.hit({ dmg, by: b.name, w: b.gun }, h.id);
@@ -179,14 +227,17 @@ export function createBots(ctx) {
     ctx.killfeed(d.by, b.name, d.w);
     ctx.net()?.dead({ n: b.name, by: d.by, w: d.w });
     ctx.onBotKilled(d.by);
-    const spec = WEAPONS[b.gun];
-    ctx.loot().drop(b.pos.clone(), [{ k: 'weapon', w: b.gun, r: b.rarity, a: spec.mag }, { k: 'ammo', w: spec.ammo, a: spec.ammo === 'shells' ? 10 : 30 }]);
+    if (b.gun) {
+      const spec = WEAPONS[b.gun];
+      ctx.loot().drop(b.pos.clone(), [{ k: 'weapon', w: b.gun, r: b.rarity, a: spec.mag }, { k: 'ammo', w: spec.ammo, a: spec.ammo === 'shells' ? 10 : 30 }]);
+    }
     publish();
   }
 
   // Позиции ботов — себе в others и всем по сети.
   function poseOf(b) {
-    const d = { x: +b.pos.x.toFixed(2), y: +b.pos.y.toFixed(2), z: +b.pos.z.toFixed(2), r: +b.yaw.toFixed(2), n: b.name, a: b.alive, rr: round, k: b.skin, g: b.gun, q: b.rarity };
+    const d = { x: +b.pos.x.toFixed(2), y: +b.pos.y.toFixed(2), z: +b.pos.z.toFixed(2), r: +b.yaw.toFixed(2), n: b.name, a: b.alive, rr: round, k: b.skin, g: b.gun || 'pickaxe', q: b.rarity };
+    if (b.riding) d.rd = 1;
     if (b.gliding) d.st = 'g'; else if (!b.onGround) d.st = 'a';
     return d;
   }
@@ -228,8 +279,14 @@ export function createBots(ctx) {
       thinkT -= dt;
       const doThink = thinkT <= 0;
       if (doThink) thinkT = 0.25;
+      const nowS = Date.now() / 1000;
       for (const b of bots.values()) {
         if (!b.alive) continue;
+        if (b.riding) {
+          const r = ctx.route();
+          if (nowS >= b.jumpAt) { b.riding = false; b.gliding = true; b.vy = 0; b.pos.copy(r.at(b.jumpAt)); b.pos.y -= 2.5; }
+          else { b.pos.copy(r.at(nowS)); continue; }
+        }
         move(b, dt);
         if (doThink && !b.gliding) think(b);
         if (!b.gliding) shoot(b, now);

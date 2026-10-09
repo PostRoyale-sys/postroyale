@@ -233,6 +233,17 @@ export function createLoot(ctx) {
       return swap;
     },
 
+    // Для ботов: открыт ли сундук; забрать предмет с земли (у всех исчезает).
+    isOpen,
+    takeItem(id) {
+      const it = items.get(id);
+      if (!it) return null;
+      const out = pub(it);
+      remove(id);
+      ctx.net()?.take({ id });
+      return out;
+    },
+
     // G: забрать оружие с земли вместо того, что в руках.
     swap(it, slotIndex, combat) {
       if (!items.has(it.id)) return;

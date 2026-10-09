@@ -188,6 +188,31 @@
   .skin.cant .price { background: rgba(255,120,120,.16); color: #ffb0b0; }
   #shophint { margin: 14px 0 0; min-height: 18px; font-size: 13px; font-weight: 700; color: var(--mute); }
 
+  /* Вкладка Abilities */
+  .lb-chip em.coin { color: #ffd21a; }
+  .coinbal { color: #ffd21a !important; }
+  .abp { width: min(640px, 100%); }
+  .abslots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .abslots div { position: relative; display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 10px 12px; border-radius: 14px;
+    background: rgba(255,216,26,.12); box-shadow: inset 0 0 0 2px rgba(255,216,26,.5); }
+  .abslots div.empty { background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 2px rgba(255,255,255,.12); }
+  .abslots span { position: absolute; top: 6px; right: 10px; font: 400 15px var(--display); color: var(--yellow); }
+  .abslots i { grid-row: 1 / 3; font-style: normal; font-size: 30px; text-align: center; }
+  .abslots b { font: 400 16px var(--display); text-transform: uppercase; }
+  .abslots small { font-size: 11.5px; color: var(--mute); }
+  .ablist { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-height: calc(100vh - 330px); overflow: auto; }
+  .abcard { display: grid; gap: 3px; padding: 10px; border-radius: 14px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); }
+  .abcard i { font-style: normal; font-size: 24px; }
+  .abcard b { font: 400 14px var(--display); text-transform: uppercase; letter-spacing: .02em; }
+  .abcard small { font-size: 11px; color: var(--mute); min-height: 28px; }
+  .abst { font-size: 11px; color: #c9d6ff; } .abst em { font-style: normal; color: #fff; font-weight: 800; }
+  .abbtn { display: flex; gap: 4px; margin-top: 4px; }
+  .abbtn button { padding: 6px 8px; border-radius: 9px; font: 800 11.5px Inter, var(--font); background: rgba(0,0,0,.3); color: #fff; }
+  .abbtn .buyb { flex: 1; background: rgba(255,210,26,.2); color: var(--yellow); }
+  .abbtn .buyb.cant { opacity: .5; }
+  .abbtn .sb.on { background: var(--yellow); color: #2a1400; }
+  #abhint { margin: 12px 0 0; font-size: 12.5px; font-weight: 700; color: var(--mute); min-height: 18px; }
+
   /* Появление по очереди */
   .rise { opacity: 0; transform: translateY(18px); animation: rise .8s cubic-bezier(.2,.9,.25,1) forwards; animation-delay: calc(var(--d, 0) * 90ms + 150ms); }
   @keyframes rise { to { opacity: 1; transform: none; } }
@@ -378,7 +403,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -418,12 +443,13 @@
         <span class="ind"></span>
         <button data-tab="play" class="on">Play</button>
         <button data-tab="locker">Locker</button>
+        <button data-tab="abilities">Abilities</button>
         <button data-tab="shop">Shop</button>
         <button data-tab="season">Season</button>
         <button data-tab="howto">How to play</button>
         <button data-tab="settings">Settings</button>
       </nav>
-      <div class="lb-chip"><span class="lvl" id="lvlring"><span id="lvl">1</span></span><span>Season 1 · <em id="lbpts">0</em> pts · <em class="rpc" id="lbrp">0</em> RP</span></div>
+      <div class="lb-chip"><span class="lvl" id="lvlring"><span id="lvl">1</span></span><span>Season 1 · <em id="lbpts">0</em> pts · <em class="coin" id="lbcoins">0</em> 🪙 · <em class="rpc" id="lbrp">0</em> RP</span></div>
     </header>
 
     <section class="tab on" id="tab-play">
@@ -477,6 +503,15 @@
         <h3>Locker</h3>
         <div class="lgrid" id="locker"></div>
         <p id="lockerhint">Pick a skin — everyone in the match sees it.</p>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-abilities">
+      <div class="glass lockerp abp">
+        <h3>Abilities <span class="rpbal coinbal">🪙 <em id="abcoins">0</em></span></h3>
+        <div class="abslots" id="abslots"></div>
+        <div class="ablist" id="ablist"></div>
+        <p id="abhint">Buy charges with 🪙 (earned in every match), put abilities on F and Q — they're loaded when the match starts. Unused charges come back.</p>
       </div>
     </section>
 

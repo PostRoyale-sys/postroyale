@@ -12,12 +12,13 @@
 //   chest — сундук открыт (индекс, время); loot — предметы на земле; take — предмет подобрали;
 //   win — последний живой в раунде (баннер у всех);
 //   bots — позиции ботов от хоста; bothit — попадание по боту (хосту);
-//   abil — способность, видимая всем (дым, граната).
+//   abil — способность, видимая всем (дым, граната);
+//   match — точка отсчёта Casual-матча (кто начал раньше — по тому и идёт раунд).
 
 import { joinRoom, selfId } from 'trystero';
 
 const APP_ID = 'postroyale-v1';     // PostRoyale: раунды и шторм — со старыми клиентами PostCraft не смешиваемся
-const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win', 'bots', 'bothit', 'abil'];
+const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win', 'bots', 'bothit', 'abil', 'match'];
 
 export function connect(worldId, on) {
   const room = joinRoom({ appId: APP_ID }, worldId);
