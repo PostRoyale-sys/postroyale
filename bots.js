@@ -14,12 +14,12 @@ import { SKINS } from './skins.js';
 
 const COUNT = 20, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
 
-// Сложность (skill 0…1) у каждого бота своя. Сейчас все очень сильные: Casual 0.85…0.95, Ranked 0.9…0.98. Без читов: только прямая видимость (не сквозь стены и дым), точность падает
+// Сложность (skill 0…1) у каждого бота своя. Сейчас все очень сильные: Casual 0.93…0.99, Ranked 0.97…1.0. Без читов: только прямая видимость (не сквозь стены и дым), точность падает
 // с расстоянием и не выше ~90%, после обнаружения цели — задержка реакции.
-const SKILL = { casual: [0.85, 0.95], ranked: [0.9, 0.98] };   // все боты очень сильные
+const SKILL = { casual: [0.93, 0.99], ranked: [0.97, 1.0] };   // все боты очень сильные
 const sightOf = (k) => 35 + 25 * k;                       // 42…53 м в Casual, 54…59 в Ranked
 const reactOf = (k) => 1.25 - k;                          // задержка первого выстрела, с
-const chanceOf = (k, d) => Math.min(0.9, Math.max(0.08 + 0.25 * k, 0.35 + 0.55 * k - d * (1.1 - k) / 90));
+const chanceOf = (k, d) => Math.min(0.95, Math.max(0.08 + 0.25 * k, 0.35 + 0.55 * k - d * (1.1 - k) / 90));
 
 // Ники ботов — случайные из крипто-дегенского сленга (свои приколы — сюда).
 const NICK_A = ['Ape', 'Rug', 'Moon', 'Gas', 'Pump', 'Dump', 'Wagmi', 'Ngmi', 'Fomo', 'Rekt', 'Shill', 'Bag', 'Diamond', 'Paper', 'Degen', 'Whale', 'Shrimp', 'Lambo', 'Hodl', 'Copium', 'Alpha', 'Exit', 'Floor', 'Mint', 'Airdrop'];
@@ -36,7 +36,7 @@ function degenNick(taken) {
 const MELEE = { dmg: 20, rate: 0.7, reach: 2.4 };     // кирка, пока нет оружия
 // «Небольшой ВХ»: живого игрока бот чувствует в AWARE м даже сквозь стены — идёт к нему и обходит,
 // но стрелять может только при прямой видимости. Постройки на пути к цели или поперёк дороги — ломает.
-const AWARE = 30, BREAK_REACH = 9, PICK_BUILD = 50;
+const AWARE = 45, BREAK_REACH = 12, PICK_BUILD = 50;
 
 export function createBots(ctx) {
   const bots = new Map();             // id → состояние (только у хоста)
@@ -124,7 +124,7 @@ export function createBots(ctx) {
       if (!k.startsWith('bot:') || o.target?.rr !== round) continue;
       const d = o.target;
       bots.set(+k.slice(4), { id: +k.slice(4), name: d.n, skin: d.k || 'default', pos: new THREE.Vector3(d.x, d.y, d.z), vy: 0, onGround: false, gliding: false,
-        skill: ctx.isRanked?.() ? 0.94 : 0.9,
+        skill: ctx.isRanked?.() ? 0.98 : 0.96,
         hp: 100, alive: d.a !== false, gun: d.g && d.g !== 'pickaxe' ? d.g : null, rarity: d.q || 0, yaw: d.r || 0, riding: false, chest: null, nextMelee: 0, way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + 2, target: null });
     }
   }
