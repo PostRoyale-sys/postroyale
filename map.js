@@ -273,7 +273,7 @@ export class GameMap {
       for (let z = hz; z < hz + d; z++) { wall('z', hx, z); wall('z', hx + w, z); }
       if (stairs[l]) add({ t: 'r', ix: stairs[l].ix, iy, iz: stairs[l].iz, o: stairs[l].dir });
       // сундук на этаже
-      if (rand() < 0.6) {
+      if (rand() < 0.9) {
         const cx = hx + Math.floor(rand() * w), cz = hz + Math.floor(rand() * d);
         const on = (st) => st && st.ix === cx && st.iz === cz;
         if (!on(stairs[l]) && !on(stairs[l - 1])) {          // не на лестнице и не над проёмом в полу
@@ -313,7 +313,7 @@ export class GameMap {
       this.decor.push({ kind: 'bush', x, y: this.height(x, z) - 0.15, z, s: 0.7 + rand() * 0.7, rot: rand() * Math.PI * 2 });
     }
     // Сундуки и на природе: под деревьями и у камней.
-    for (let t = 0, n = 0; t < 400 && n < 12; t++) {
+    for (let t = 0, n = 0; t < 1200 && n < 36; t++) {
       const x = 10 + rand() * (MAP - 20), z = 10 + rand() * (MAP - 20);
       if (!ok(x, z, 3, 0.5, 6)) continue;
       this.chestSpots.push({ x, y: this.height(x, z), z, rot: rand() * Math.PI * 2 });

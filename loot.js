@@ -7,8 +7,8 @@ import * as THREE from 'three';
 import { MAP, rng, seedOf } from './map.js';
 import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 
-const CHESTS = 40;                     // не больше стольких сундуков за раунд
-const CHEST_CHANCE = 0.8;              // доля мест, где в раунде есть сундук
+const CHESTS = 90;                     // не больше стольких сундуков за раунд
+const CHEST_CHANCE = 0.95;             // доля мест, где в раунде есть сундук
 const OPEN_RANGE = 4;
 const PICK_RANGE = 1.5;
 
