@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; width: 1500px; height: 500px; overflow: hidden; background: #07060c; }
+  .wrap { position: relative; width: 1500px; height: 500px; overflow: hidden;
+    background: radial-gradient(900px 520px at 78% 50%, #221840 0%, #120d24 45%, #07060c 100%); }
+  svg.bg { position: absolute; inset: 0; }
+  .brand { position: absolute; left: 470px; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; }
+  .row { display: flex; align-items: center; gap: 26px; }
+  .row img { width: 104px; height: 104px; border-radius: 26px; box-shadow: 0 0 0 1px rgba(233,196,106,.25), 0 20px 60px rgba(0,0,0,.6); }
+  h1 { margin: 0; font: 800 68px/1 Unbounded, sans-serif; letter-spacing: .05em;
+    background: linear-gradient(180deg, #fff6d8 0%, #f0cf7c 38%, #b8892f 62%, #f4d98c 82%, #9b7026 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 2px 0 rgba(0,0,0,.6)) drop-shadow(0 18px 40px rgba(233,196,106,.18)); }
+  .tag { margin: 18px 0 0 4px; font: 500 25px Inter, sans-serif; color: #cfc8e6; letter-spacing: .01em; }
+  .tag b { color: #fff; font-weight: 600; }
+  .meta { display: flex; align-items: center; gap: 18px; margin: 28px 0 0 4px; }
+  .line { width: 60px; height: 1px; background: linear-gradient(90deg, transparent, #e9c46a); }
+  .soon { font: 600 15px Unbounded, sans-serif; letter-spacing: .32em; color: #e9c46a; }
+  .pill { padding: 7px 16px; border-radius: 999px; border: 1px solid rgba(233,196,106,.55); font: 600 15px Unbounded, sans-serif; letter-spacing: .12em; color: #f3dc9a;
+    background: rgba(233,196,106,.06); }
+</style></head><body>
+<div class="wrap">
+  <svg class="bg" width="1500" height="500" viewBox="0 0 1500 500">
+    <defs>
+      <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#e9c46a" stop-opacity="0"/><stop offset=".35" stop-color="#e9c46a" stop-opacity=".35"/><stop offset=".6" stop-color="#e9c46a" stop-opacity=".7"/><stop offset="1" stop-color="#fff1c2" stop-opacity=".9"/>
+      </linearGradient>
+      <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .06 0"/></filter>
+      <radialGradient id="dot"><stop offset="0" stop-color="#fff1c2"/><stop offset="1" stop-color="#fff1c2" stop-opacity="0"/></radialGradient>
+    </defs>
+    <!-- кольца шторма: сходятся вправо -->
+    <g fill="none" stroke="url(#arc)">
+      <circle cx="1530" cy="250" r="520" stroke-width="1.2" stroke-opacity=".5"/>
+      <circle cx="1530" cy="250" r="430" stroke-width="1.4" stroke-opacity=".65"/>
+      <circle cx="1530" cy="250" r="345" stroke-width="1.8" stroke-opacity=".8"/>
+      <circle cx="1530" cy="250" r="265" stroke-width="2.2" stroke-opacity=".9"/>
+      <circle cx="1530" cy="250" r="190" stroke-width="2.8" stroke-dasharray="4 10" stroke-opacity="1"/>
+    </g>
+    <!-- искры -->
+    <g>
+      <circle cx="1180" cy="92" r="3" fill="url(#dot)"/><circle cx="1320" cy="410" r="2.4" fill="url(#dot)"/><circle cx="560" cy="120" r="2" fill="url(#dot)" opacity=".7"/>
+      <circle cx="1400" cy="160" r="1.8" fill="url(#dot)"/><circle cx="980" cy="440" r="1.6" fill="url(#dot)" opacity=".7"/><circle cx="1110" cy="300" r="1.4" fill="url(#dot)" opacity=".6"/>
+    </g>
+    <rect width="1500" height="500" filter="url(#grain)"/>
+    <!-- тонкая рамка-вуаль снизу -->
+    <rect y="499" width="1500" height="1" fill="#e9c46a" opacity=".25"/>
+  </svg>
+  <div class="brand">
+    <div class="row"><img src="x-logo-premium-400.png"><h1>POSTROYALE</h1></div>
+    <div class="tag">The battle royale that lives <b>inside a post</b>.</div>
+    <div class="meta"><span class="line"></span><span class="soon">SEASON 1 · COMING SOON</span><span class="pill">$PR</span></div>
+  </div>
+</div>
+</body></html>

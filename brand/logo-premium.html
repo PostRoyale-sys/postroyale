@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 800px; height: 800px; overflow: hidden; background: #08070d; }
+  svg { display: block; }
+</style></head><body>
+<svg width="800" height="800" viewBox="0 0 400 400">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#231a44"/><stop offset=".55" stop-color="#110d22"/><stop offset="1" stop-color="#07060c"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4cc"/><stop offset=".28" stop-color="#ecc870"/><stop offset=".55" stop-color="#b98a30"/>
+      <stop offset=".78" stop-color="#f6dc92"/><stop offset="1" stop-color="#8c6420"/>
+    </linearGradient>
+    <linearGradient id="goldv" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff2c2"/><stop offset=".45" stop-color="#e2b95c"/><stop offset="1" stop-color="#9a6d22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#e9c46a" stop-opacity=".22"/><stop offset="1" stop-color="#e9c46a" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .05 0"/></filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="1.2"/></filter>
+  </defs>
+  <rect width="400" height="400" fill="url(#bg)"/>
+  <rect width="400" height="400" filter="url(#grain)"/>
+  <circle cx="200" cy="205" r="150" fill="url(#glow)"/>
+
+  <!-- кольцо шторма с разрывом сверху: зона смыкается -->
+  <path d="M 158.9 63.8 A 146 146 0 1 0 241.1 63.8" fill="none" stroke="url(#gold)" stroke-width="5" stroke-linecap="round"/>
+  <path d="M 170 82 A 126 126 0 1 0 230 82" fill="none" stroke="url(#gold)" stroke-width="1.2" stroke-opacity=".45" stroke-linecap="round"/>
+  <!-- деления на кольце -->
+  <g stroke="url(#gold)" stroke-width="1.4" stroke-opacity=".55">
+    <line x1="200" y1="351" x2="200" y2="341"/><line x1="54" y1="205" x2="64" y2="205"/><line x1="346" y1="205" x2="336" y2="205"/>
+  </g>
+
+  <!-- корона: три зубца, центральный — бриллиант -->
+  <g transform="translate(0 6)">
+    <path d="M 122 262 L 132 168 L 168 214 L 200 150 L 232 214 L 268 168 L 278 262 Z" fill="none" stroke="url(#goldv)" stroke-width="7" stroke-linejoin="round"/>
+    <rect x="116" y="270" width="168" height="14" rx="3" fill="url(#gold)"/>
+    <rect x="116" y="270" width="168" height="3" rx="1.5" fill="#fff6d6" opacity=".7"/>
+    <circle cx="132" cy="160" r="7" fill="url(#gold)"/>
+    <circle cx="268" cy="160" r="7" fill="url(#gold)"/>
+    <!-- бриллиант над центральным зубцом -->
+    <g transform="translate(200 118)">
+      <path d="M 0 -20 L 16 0 L 0 22 L -16 0 Z" fill="url(#gold)"/>
+      <path d="M 0 -20 L 6 0 L 0 22 L -6 0 Z" fill="#fff4cc" opacity=".55"/>
+      <path d="M -16 0 L 16 0" stroke="#7a5418" stroke-width="1" opacity=".6"/>
+    </g>
+    <!-- камни на обруче -->
+    <circle cx="200" cy="277" r="4" fill="#08070d"/><circle cx="160" cy="277" r="3" fill="#08070d"/><circle cx="240" cy="277" r="3" fill="#08070d"/>
+  </g>
+</svg>
+</body></html>
