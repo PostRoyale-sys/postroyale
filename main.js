@@ -995,7 +995,25 @@ function pointsToast(text) {
   ptsTimer = setTimeout(() => { $('pts').textContent = ''; }, 2500);
 }
 
+// Кошелёк в верхней панели лобби: подключить (Phantom, подпись без транзакций) / адрес и статус держателя.
+function renderWallet() {
+  const w = season.wallet, t = season.tierInfo(season.tier);
+  const b = $('walbtn');
+  b.classList.toggle('on', !!w);
+  b.innerHTML = w ? `◎ ${w.pubkey.slice(0, 4)}…${w.pubkey.slice(-4)}${t ? ` · <em>★ ${t.name}</em>` : ''}` : '🔗 Connect wallet';
+  if (!w) $('walmenu').hidden = true;
+}
+$('walbtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (season.wallet) $('walmenu').hidden = !$('walmenu').hidden;
+  else season.connect(($('nick').value.trim() || nick).slice(0, 16));
+});
+$('walref').addEventListener('click', () => { $('walmenu').hidden = true; season.refresh(); toast('Checking holder balance…'); });
+$('waloff').addEventListener('click', () => { $('walmenu').hidden = true; season.disconnect(); });
+addEventListener('click', () => { $('walmenu').hidden = true; });
+
 function renderSeason() {
+  renderWallet();
   const s = season.stats, w = season.wallet, t = season.tierInfo(season.tier);
   $('lbpts').textContent = s.points.toLocaleString('en');
   try { renderEarn(); } catch (e) { /* лобби ещё не готово */ }
