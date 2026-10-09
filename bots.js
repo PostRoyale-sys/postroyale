@@ -463,6 +463,12 @@ export function createBots(ctx) {
           else { b.pos.copy(r.at(nowS)); continue; }
         }
         move(b, dt);
+        // шторм бьёт и ботов — как игроков: урон копится и снимается целыми единицами
+        const s = ctx.royale().stormNow(), c = ctx.royale().center;
+        if (s.dps && Math.hypot(b.pos.x - c.x, b.pos.z - c.z) > s.r) {
+          b.stormAcc = (b.stormAcc || 0) + s.dps * dt;
+          if (b.stormAcc >= 1) { const d = Math.floor(b.stormAcc); b.stormAcc -= d; damage(b.id, { dmg: d, by: 'Storm', w: 'storm' }); if (!b.alive) continue; }
+        } else b.stormAcc = 0;
         if (doThink && !b.gliding) think(b);
         if (!b.gliding) shoot(b, now);
       }

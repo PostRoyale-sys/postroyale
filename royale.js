@@ -116,6 +116,9 @@ export function createRoyale(ctx) {
       return true;
     },
 
+    // Шторм прямо сейчас: текущий радиус r и урон в секунду снаружи dps (для ботов).
+    stormNow() { return storm(Date.now() - roundStart); },
+
     // Радиус, внутри которого безопасно сейчас и после текущего сжатия.
     safeRadius() {
       const s = storm(Date.now() - roundStart);
