@@ -20,7 +20,7 @@ import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel, rayBox } 
 import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
-import { createSeason, TIERS, TOKEN_MINT } from './season.js';
+import { createSeason, TIERS, TOKEN_MINT, TOKEN_SYMBOL } from './season.js';
 import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
 import { createWater } from './water.js';
 import { createBots } from './bots.js';
@@ -998,6 +998,7 @@ function pointsToast(text) {
 function renderSeason() {
   const s = season.stats, w = season.wallet, t = season.tierInfo(season.tier);
   $('lbpts').textContent = s.points.toLocaleString('en');
+  try { renderEarn(); } catch (e) { /* лобби ещё не готово */ }
   if (!playing) renderPlayerCard();
   $('season').innerHTML = `<div class="sh"><b>Level ${Math.floor(s.points / 500) + 1}</b><span>${s.points.toLocaleString('en')} pts</span></div>
     <div class="sg"><div><b>${s.kills}</b>kills</div><div><b>${s.wins}</b>wins</div><div><b>${s.chests}</b>chests</div><div><b>${s.rounds}</b>drops</div></div>`;
@@ -1258,7 +1259,7 @@ if (params.get('r')) {
 }
 if (worldId && !isRankedWorld(worldId)) {
   $('code').value = worldId;
-  $('introsub').textContent = `You were invited to match “${worldId}”. Pick a name and hit Play — you drop in with everyone who opened the link.`;
+  $('status').textContent = `Invited to match “${worldId}” — hit Play to drop in with everyone on the link`;
 }
 
 function setMode(m) {
@@ -1451,10 +1452,24 @@ function renderLocker() {
   }
 }
 
+// ---------- Левый блок лобби: заработок и токен ----------
+for (const el of document.querySelectorAll('.tk')) el.textContent = TOKEN_SYMBOL;
+function renderEarn() {
+  $('ecoins').textContent = loadout.coins.toLocaleString('en');
+  $('erp').textContent = ranked.rp.toLocaleString('en');
+  const t = season.tierInfo(season.tier), w = season.wallet;
+  $('ehold').textContent = t ? `★ ${t.name}` : w ? 'Wallet linked' : 'Link wallet';
+  $('eholdb').classList.toggle('on', !!t);
+}
+for (const b of document.querySelectorAll('.earn button')) {
+  b.addEventListener('click', () => document.querySelector(`#tabs button[data-tab="${b.dataset.go}"]`)?.click());
+}
+
 // ---------- Вкладка Abilities: склад зарядов за монеты и набор на F/Q ----------
 
 function renderLoadout() {
   $('lbcoins').textContent = loadout.coins.toLocaleString('en');
+  renderEarn();
   if (!$('ablist')) return;
   $('abcoins').textContent = loadout.coins.toLocaleString('en');
   $('abslots').innerHTML = ['F', 'Q'].map((k, i) => {
@@ -1505,6 +1520,7 @@ function renderRanked() {
     $('rk-world').textContent = rankedWorld().slice(7);
   }
   $('lbrp').textContent = ranked.rp.toLocaleString('en');
+  renderEarn();
   if ($('shoprp')) $('shoprp').textContent = ranked.rp.toLocaleString('en');
 }
 

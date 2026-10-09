@@ -9,6 +9,7 @@
 
 const SEASON = 'S1';
 export const TOKEN_MINT = '';                 // адрес токена проекта — вписать, когда появится; пусто = польза выключена
+export const TOKEN_SYMBOL = '$PR';           // тикер токена в интерфейсе лобби — поменять на настоящий
 export const TIERS = [                        // минимальный баланс токена для уровня
   { name: 'Holder', min: 1, color: '#c0c7d1' },
   { name: 'Silver', min: 100_000, color: '#dfe6ee' },
