@@ -371,6 +371,14 @@ export function createCombat(ctx) {
     cancelReload() { if (reloadUntil) { reloadUntil = 0; changed(); } },
 
     // Подобрать предмет. Возвращает true, если взяли (иначе он остаётся лежать).
+    // Возьмёт ли игрок предмет (без побочных эффектов) — для «магнита» лута.
+    canGive(item) {
+      if (item.k === 'ammo') return true;
+      if (item.k === 'armor') return shield < MAX_SHIELD;
+      if (item.k === 'med') return hp < 100;
+      if (item.k === 'weapon') return slots.some((s) => !s);
+      return false;
+    },
     give(item, slotHint) {
       if (item.k === 'ammo') { ammo[item.w] += item.a; sound('pickup'); changed(); return true; }
       if (item.k === 'armor') {

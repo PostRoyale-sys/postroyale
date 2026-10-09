@@ -279,7 +279,7 @@ function startRide(late) {
   gliding = false;
   vel.set(0, 0, 0);
   heli.visible = true;
-  camera.rotation.set(-0.08, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
+  camera.rotation.set(-0.35, Math.atan2(-dir.x, -dir.z) - Math.PI / 2, 0, 'YXZ');   // лицом из правой двери, взгляд чуть вниз
 }
 
 // Сколько метров пролетел вертолёт от начала маршрута.
@@ -1787,7 +1787,7 @@ renderer.setAnimationLoop((now) => {
     updatePoi();
 
     // Подбор лута и подсказки.
-    swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
+    swapCandidate = royale.alive && !riding ? loot.pickupNear(feet, combat, dt) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
     const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }

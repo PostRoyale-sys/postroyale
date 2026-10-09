@@ -10,7 +10,8 @@ import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 const CHESTS = 90;                     // не больше стольких сундуков за раунд
 const CHEST_CHANCE = 0.95;             // доля мест, где в раунде есть сундук
 const OPEN_RANGE = 4;
-const PICK_RANGE = 1.5;
+const PICK_RANGE = 2.4;
+const MAGNET = 6, MAGNET_SPEED = 14;     // то, что игрок может взять, в радиусе MAGNET само летит к нему
 
 // Таблица выпадения.
 const RARITY_WEIGHTS = [40, 28, 18, 10, 4];       // обычное → легендарное
@@ -219,11 +220,19 @@ export function createLoot(ctx) {
     drop,
 
     // Предметы рядом с игроком: расходники берутся сами, оружие — если есть свободный слот (иначе подсказка G).
-    pickupNear(feet, combat) {
+    pickupNear(feet, combat, dt = 0) {
       let swap = null;
       for (const it of items.values()) {
-        if (it.from === undefined && performance.now() - it.born < 3000) continue;   // своё выброшенное — не подбираем 3 с
-        const dx = it.pos.x - feet.x, dz = it.pos.z - feet.z, dy = it.pos.y - feet.y;
+        if (it.from === undefined && performance.now() - it.born < 1500) continue;   // своё выброшенное — не подбираем 1.5 с
+        let dx = it.pos.x - feet.x, dz = it.pos.z - feet.z, dy = it.pos.y - feet.y;
+        // магнит: подтягиваем к ногам то, что можно взять
+        const d = Math.hypot(dx, dz);
+        if (dt && d < MAGNET && d > 0.3 && dy > -1.5 && dy < 2.5 && combat.canGive(pub(it))) {
+          const k = Math.min(1, (MAGNET_SPEED * dt) / d);
+          it.pos.x -= dx * k; it.pos.z -= dz * k; it.pos.y += (feet.y + 0.3 - it.pos.y) * Math.min(1, dt * 8);
+          it.group.position.x = it.pos.x; it.group.position.z = it.pos.z;
+          dx = it.pos.x - feet.x; dz = it.pos.z - feet.z; dy = it.pos.y - feet.y;
+        }
         if (dx * dx + dz * dz > PICK_RANGE * PICK_RANGE || dy < -1 || dy > 2.2) continue;
         if (combat.give(pub(it))) {
           remove(it.id);

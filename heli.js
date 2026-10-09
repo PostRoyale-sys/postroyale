@@ -165,8 +165,9 @@ export function buildParachute() {
 // Салон для вида от первого лица (как в Call of Duty): пол с жёлто-чёрной разметкой, потолок с красной
 // лампой и поручнем, открытые боковые двери, лавки, приборная панель, пилоты и пара бойцов.
 // Виден только тому, кто сидит внутри (снаружи — обычный корпус). makeChar(i) → фигурка персонажа.
-// Начало координат — как у вертолёта; SEAT_EYE — где глаза игрока (задняя лавка, лицом к носу).
-export const SEAT_EYE = new THREE.Vector3(0, -0.16, 1.55);
+// Начало координат — как у вертолёта; SEAT_EYE — где глаза игрока: сидит на краю правой открытой двери
+// (откуда прыгать), лицом наружу — весь остров как на ладони.
+export const SEAT_EYE = new THREE.Vector3(1.12, -0.2, 0.1);
 export function buildCabin(makeChar, animate, scale = 1) {
   const g = new THREE.Group();
   const metal = toon(0x3a3f4a), dark = toon(0x1e2128), seat = toon(0x5a4632), olive = toon(0x4b5240);
@@ -223,7 +224,7 @@ export function buildCabin(makeChar, animate, scale = 1) {
   };
   put(0, -0.55, -1.75, 0); put(1, 0.55, -1.75, 0);
   box(0.4, 0.06, 0.4, seat, -0.55, FY + 0.27, -1.75); box(0.4, 0.06, 0.4, seat, 0.55, FY + 0.27, -1.75);
-  put(2, -1.18, -1.15, -Math.PI / 2); put(3, 1.18, -1.15, Math.PI / 2);
+  put(2, -1.18, -1.15, -Math.PI / 2); put(3, -0.35, 1.65, 0);
   g.userData.tick = (t) => {
     for (let i = 0; i < people.length; i++) animate(people[i], t + i * 1.3, 'sit');
     lamp.material.color.setHex(Math.sin(t * 2.5) > -0.2 ? 0xff2a2a : 0x661010);
