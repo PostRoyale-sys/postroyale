@@ -29,7 +29,7 @@ import { createAbilities, ABILITIES } from './abilities.js';
 import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
-import { buildHeli } from './heli.js';
+import { buildHeli, buildParachute } from './heli.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08;
@@ -195,6 +195,7 @@ const structures = createStructures({ scene });
 
 const vel = new THREE.Vector3();
 let onGround = false, moving = false, gliding = false, crouching = false;
+let chute = false;                             // gliding && !chute — свободное падение; chute — под куполом
 let eyeH = EYE;                                // высота глаз: плавно опускается при приседании
 const bodyH = () => (crouching ? CROUCH_H : HEIGHT);   // полёта нет: только ходьба, прыжок и планирование при высадке
 const keys = new Set();
@@ -289,6 +290,7 @@ function jumpOut(forced = false) {
   vel.set(0, 0, 0);
   knockVel.copy(flight.dir).multiplyScalar(6);
   gliding = true;
+  chute = false;
   combat.sfx('swing');
   if (forced) toast('Auto-dropped at the edge of the jump zone');
 }
@@ -354,7 +356,7 @@ function step(dt) {
   if (wantCrouch) crouching = true;
   else if (crouching && !structures.blocked(feet.x, feet.y, feet.z, HEIGHT, HALF)) crouching = false;
   eyeH += ((crouching ? CROUCH_EYE : EYE) - eyeH) * Math.min(1, dt * 12);
-  const speed = gliding ? GLIDE : crouching ? WALK * 0.45 : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
+  const speed = gliding ? (chute ? GLIDE : 11) : crouching ? WALK * 0.45 : (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped ? RUN : scoped ? WALK * 0.5 : WALK;
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd);
   fwd.y = 0;
@@ -376,7 +378,10 @@ function step(dt) {
     moveAxis('x', move.x);
     moveAxis('z', move.z);
     if (keys.has('Space') && onGround) { vel.y = JUMP; onGround = false; }
-    vel.y = Math.max(vel.y - GRAVITY * dt, gliding ? -9 : -45);
+    // свободное падение до −32 м/с; на высоте ~40 м купол раскрывается сам (или раньше — Space)
+    if (gliding && !chute && feet.y - world.height(feet.x, feet.z) < 40) openChute();
+    vel.y = Math.max(vel.y - GRAVITY * dt, !gliding ? -45 : chute ? -6 : -32);
+    if (gliding && chute && vel.y < -6) vel.y += (-6 - vel.y) * Math.min(1, dt * 3);   // купол тормозит рывком, но плавно
     let ny = feet.y + vel.y * dt;
     if (vel.y > 0) {
       const top = structures.ceiling(feet.x, feet.y, ny, feet.z, bodyH(), HALF);
@@ -385,7 +390,7 @@ function step(dt) {
     const g = structures.ground(feet.x, feet.z, Math.max(feet.y, ny), HALF);
     // На земле прилипаем к опоре, если она чуть ниже (спуск по рампе и склону без подпрыгиваний).
     if (ny <= g || (onGround && vel.y <= 0 && feet.y - g < 0.6)) {
-      ny = g; vel.y = 0; onGround = true; gliding = false;
+      ny = g; vel.y = 0; onGround = true; gliding = false; chute = false;
     }
     else onGround = false;
     feet.y = ny;
@@ -395,6 +400,40 @@ function step(dt) {
   feet.x = Math.max(-60, Math.min(MAP + 60, feet.x));
   feet.z = Math.max(-60, Math.min(MAP + 60, feet.z));
   player.position.set(feet.x, feet.y + eyeH, feet.z);
+}
+
+// ---------- Парашют и вид от третьего лица в полёте ----------
+
+function openChute() {
+  if (!gliding || chute) return;
+  chute = true;
+  combat.sfx('swing');
+}
+
+// Своя фигурка (видна только в падении/под куполом — камера в это время сзади-сверху).
+let selfFig = null, selfFigKey = '';
+const selfChute = buildParachute();
+function updateSelfFigure(t) {
+  const show = playing && gliding && !riding && royale.alive;
+  const key = `${mySkin}|${nick}`;
+  if (show && (!selfFig || selfFigKey !== key)) {
+    if (selfFig) scene.remove(selfFig);
+    selfFig = buildCharacter(mySkin, colorOf(nick));
+    selfFig.add(selfChute);
+    selfFigKey = key;
+    scene.add(selfFig);
+  }
+  if (!selfFig) return;
+  selfFig.visible = show;
+  if (!show) return;
+  const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
+  selfFig.position.copy(feet);
+  selfFig.rotation.set(chute ? 0 : -1.1, yaw, 0, 'YXZ');            // в падении — животом вниз
+  selfChute.visible = chute;
+  animateCharacter(selfFig, t, chute ? 'chute' : 'glide');
+  // камера сзади-сверху, крутится мышью
+  const look = camera.getWorldDirection(new THREE.Vector3());
+  player.position.copy(feet).add(new THREE.Vector3(0, chute ? 3.2 : 1.6, 0)).addScaledVector(look, chute ? -8 : -6);
 }
 
 // Направление ввода WASD (для рывка способностью).
@@ -675,6 +714,7 @@ function upsertOther(peerId, d) {
   if (!o || o.name !== d.n || o.tier !== tier || o.skin !== skin) {
     if (o) scene.remove(o.group);
     o = { group: avatar(d.n, tier, skin), name: d.n, tier, skin, target: d };
+    o.group.rotation.order = 'YXZ';               // наклон в падении — вдоль своего направления
     o.group.position.set(d.x, d.y, d.z);
     scene.add(o.group);
     others.set(peerId, o);
@@ -1111,7 +1151,7 @@ function poseData() {
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
   if (crouching) d.cr = 1;
-  if (gliding) d.st = 'g'; else if (!onGround) d.st = 'a';
+  if (gliding) { d.st = chute ? 'g' : 'f'; if (chute) d.pc = 1; } else if (!onGround) d.st = 'a';
   return d;
 }
 
@@ -1138,6 +1178,7 @@ addEventListener('keydown', (e) => {
   if (!playing || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (riding) { if (e.code === 'Space') jumpOut(); return; }
+  if (gliding && !chute && e.code === 'Space') openChute();
   if (e.code === 'KeyB') { openBuy(); return; }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
@@ -1714,6 +1755,7 @@ renderer.setAnimationLoop((now) => {
     if (riding) { /* камеру ставит updateHeli */ }
     else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + eyeH, feet.z);
+    updateSelfFigure(t);
 
     // Зажатая ЛКМ: автоматическое оружие стреляет, кирка машет, стройка ставит детали.
     const en = ENTRIES[slot], w = currentWeapon();
@@ -1734,7 +1776,7 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive ? loot.pickupNear(feet, combat) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? 'Gliding — steer with WASD' : '';
+    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());
@@ -1762,7 +1804,11 @@ renderer.setAnimationLoop((now) => {
       // поза по движению: планирует / в воздухе / бежит / стоит
       const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
       o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
-      const st = o.target.st === 'g' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : 'idle';
+      const st = o.target.st === 'g' ? 'chute' : o.target.st === 'f' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : 'idle';
+      // купол над тем, кто под парашютом; в свободном падении — животом вниз
+      if (o.target.pc && !o.chute) { o.chute = buildParachute(); o.group.add(o.chute); }
+      if (o.chute) o.chute.visible = !!o.target.pc;
+      o.group.rotation.x += ((o.target.st === 'f' ? -1.1 : 0) - o.group.rotation.x) * 0.2;
       animateCharacter(o.group, t, st, Math.min(1, o.spd / RUN), !!o.target.g && o.target.g !== 'pickaxe');
     }
     sendPose(now);
@@ -1784,7 +1830,7 @@ renderer.setAnimationLoop((now) => {
   }
   if (settings.bloom) composer.render(); else renderer.render(scene, camera);
   countFps(now);
-  if (playing && !riding && (controls.isLocked || debugView)) {
+  if (playing && !riding && !gliding && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });

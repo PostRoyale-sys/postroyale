@@ -128,41 +128,92 @@ export function createBots(ctx) {
 
   // ---------- Движение ----------
 
-  function move(b, dt) {
+  // Дистанция боя под оружие: с дробовиком — вплотную, со снайперкой — издалека.
+  const RANGE = { shotgun: 7, smg: 12, pistol: 15, ar: 20, sniper: 34, bazooka: 24 };
+  const DIRS = [0, 0.55, -0.55, 1.1, -1.1, 1.7, -1.7, 2.4, -2.4];
+
+  // Свободно ли идти в направлении (ux, uz): нет стены/объекта и не вода.
+  function clearAhead(b, ux, uz, look) {
     const st = ctx.structures(), w = ctx.world();
+    const x = b.pos.x + ux * look, z = b.pos.z + uz * look;
+    if (w.height(x, z) < 0.4 && w.height(b.pos.x, b.pos.z) >= 0.4) return false;   // не лезть в воду
+    return !st.blocked(x, b.pos.y, z);
+  }
+
+  function move(b, dt) {
+    const st = ctx.structures();
     const rs = ctx.royale();
-    // от шторма — к центру; иначе — по своим точкам внутри круга
+    b.vel ??= new THREE.Vector3();
+    // от шторма — к центру; иначе — лут или свои точки внутри круга
     const c = rs.center, outside = Math.hypot(b.pos.x - c.x, b.pos.z - c.z) > rs.safeRadius() * 0.95;
     const looting = !outside && !b.gun && !b.gliding && lootStep(b);
     if (!looting && (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2)) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
     let dx = b.way.x - b.pos.x, dz = b.way.z - b.pos.z;
-    if (b.target) {
-      const tx = b.target.x - b.pos.x, tz = b.target.z - b.pos.z, td = Math.hypot(tx, tz);
-      if (!b.gun) { dx = tx; dz = tz; }                       // с киркой — вплотную
-      else if (td > 18) { dx = tx; dz = tz; } else { dx = -tz; dz = tx; }   // с оружием — держим дистанцию и кружим
+    let speed = SPEED * (0.9 + 0.25 * b.skill);
+    if (outside || (!b.target && Math.hypot(dx, dz) > 25)) speed *= 1.45;          // далеко или от шторма — бегом
+
+    if (b.target && !b.gliding) {
+      const tx = b.target.x - b.pos.x, tz = b.target.z - b.pos.z, td = Math.hypot(tx, tz) || 1;
+      if (!b.gun) { dx = tx; dz = tz; speed *= 1.3; }                                // с киркой — вплотную, бегом
+      else {
+        // держим дистанцию под оружие и стрейфимся влево-вправо со случайной сменой
+        const want = RANGE[b.gun] || 18;
+        b.strafeT = (b.strafeT || 0) - dt;
+        if (b.strafeT <= 0) { b.strafe = Math.random() < 0.5 ? -1 : 1; b.strafeT = 0.35 + Math.random() * (1.3 - b.skill * 0.6); }
+        const ux = tx / td, uz = tz / td, px = -uz * b.strafe, pz = ux * b.strafe;
+        const k = td > want + 4 ? 1 : td < want - 4 ? -0.8 : 0.15;                   // ближе / отойти / почти на месте
+        dx = ux * k + px * 0.9; dz = uz * k + pz * 0.9;
+        speed *= 1.05;
+      }
     }
-    const len = Math.hypot(dx, dz) || 1;
-    const sp = (b.gliding ? 8 : SPEED * (0.9 + 0.25 * b.skill)) * dt;
-    // сильные боты в бою подпрыгивают, сбивая прицел
-    if (b.target && b.gun && b.onGround && b.skill > 0.65 && Math.random() < dt * 0.6 * b.skill) { b.vy = JUMP; b.onGround = false; }
-    const nx = b.pos.x + (dx / len) * sp, nz = b.pos.z + (dz / len) * sp;
-    if (!st.blocked(nx, b.pos.y, b.pos.z)) b.pos.x = nx;
-    else if (b.onGround) { b.vy = JUMP; b.onGround = false; }
-    if (!st.blocked(b.pos.x, b.pos.y, nz)) b.pos.z = nz;
-    else if (b.onGround) { b.vy = JUMP; b.onGround = false; }
-    if (!b.target) b.yaw = Math.atan2(-dx, -dz);
-    // гравитация и опора
-    b.vy = Math.max(b.vy - GRAVITY * dt, b.gliding ? -9 : -45);
+    let len = Math.hypot(dx, dz) || 1;
+    let ux = dx / len, uz = dz / len;
+
+    if (b.gliding) {
+      // свободное падение → парашют: рулим к точке, к земле не быстрее купола
+      speed = b.chute ? 9 : 13;
+    } else {
+      // обход препятствий: ищем ближайшее свободное направление веером
+      let ok = false;
+      for (const a of DIRS) {
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const rx = ux * ca - uz * sa, rz = ux * sa + uz * ca;
+        if (clearAhead(b, rx, rz, 1.4)) { ux = rx; uz = rz; ok = true; break; }
+      }
+      if (!ok && b.onGround) { b.vy = JUMP; b.onGround = false; }
+      // сильные боты в бою подпрыгивают, сбивая прицел
+      if (b.target && b.gun && b.onGround && Math.random() < dt * 0.7 * b.skill) { b.vy = JUMP; b.onGround = false; }
+    }
+
+    // плавный разгон и поворот (а не рывками)
+    const acc = Math.min(1, dt * (b.gliding ? 2 : 9));
+    b.vel.x += (ux * speed - b.vel.x) * acc;
+    b.vel.z += (uz * speed - b.vel.z) * acc;
+    const nx = b.pos.x + b.vel.x * dt, nz = b.pos.z + b.vel.z * dt;
+    if (!st.blocked(nx, b.pos.y, b.pos.z)) b.pos.x = nx; else b.vel.x *= -0.2;
+    if (!st.blocked(b.pos.x, b.pos.y, nz)) b.pos.z = nz; else b.vel.z *= -0.2;
+    if (!b.target && Math.hypot(b.vel.x, b.vel.z) > 0.5) {
+      const want = Math.atan2(-b.vel.x, -b.vel.z);
+      let d = want - b.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+      b.yaw += d * Math.min(1, dt * 8);                                               // плавный поворот корпуса
+    }
+
+    // гравитация, падение, парашют, опора
+    const g0 = ctx.world().height(b.pos.x, b.pos.z);
+    if (b.gliding && !b.chute && b.pos.y - g0 < 40 + b.skill * 10) b.chute = true;    // раскрыть купол
+    const vmin = !b.gliding ? -45 : b.chute ? -6 : -30;
+    b.vy = Math.max(b.vy - GRAVITY * dt, vmin);
+    if (b.gliding && b.chute && b.vy < -6) b.vy += (-6 - b.vy) * Math.min(1, dt * 3);
     let ny = b.pos.y + b.vy * dt;
     const g = st.ground(b.pos.x, b.pos.z, Math.max(b.pos.y, ny));
-    if (ny <= g || (b.onGround && b.vy <= 0 && b.pos.y - g < 0.6)) { ny = g; b.vy = 0; b.onGround = true; b.gliding = false; } else b.onGround = false;
+    if (ny <= g || (b.onGround && b.vy <= 0 && b.pos.y - g < 0.6)) { ny = g; b.vy = 0; b.onGround = true; b.gliding = false; b.chute = false; } else b.onGround = false;
     b.pos.y = ny;
     if (b.pos.y < 0) b.way = null;                     // в воде — искать сушу
     // застрял — новая точка
     b.stuckT += dt;
-    if (b.stuckT > 3) { if (b.pos.distanceTo(b.lastPos) < 1) b.way = zonePoint(); b.lastPos.copy(b.pos); b.stuckT = 0; }
-    void w;
+    if (b.stuckT > 2.5) { if (b.pos.distanceTo(b.lastPos) < 1.2) { b.way = zonePoint(); b.vel.set(0, 0, 0); } b.lastPos.copy(b.pos); b.stuckT = 0; }
   }
+
 
   // ---------- Бой ----------
 
@@ -271,7 +322,7 @@ export function createBots(ctx) {
   function poseOf(b) {
     const d = { x: +b.pos.x.toFixed(2), y: +b.pos.y.toFixed(2), z: +b.pos.z.toFixed(2), r: +b.yaw.toFixed(2), n: b.name, a: b.alive, rr: round, k: b.skin, g: b.gun || 'pickaxe', q: b.rarity };
     if (b.riding) d.rd = 1;
-    if (b.gliding) d.st = 'g'; else if (!b.onGround) d.st = 'a';
+    if (b.gliding) { d.st = b.chute ? 'g' : 'f'; if (b.chute) d.pc = 1; } else if (!b.onGround) d.st = 'a';
     return d;
   }
   function publish() {
@@ -317,7 +368,7 @@ export function createBots(ctx) {
         if (!b.alive) continue;
         if (b.riding) {
           const r = ctx.route();
-          if (nowS >= b.jumpAt) { b.riding = false; b.gliding = true; b.vy = 0; b.pos.copy(r.at(b.jumpAt)); b.pos.y -= 2.5; }
+          if (nowS >= b.jumpAt) { b.riding = false; b.gliding = true; b.chute = false; b.vy = 0; b.pos.copy(r.at(b.jumpAt)); b.pos.y -= 2.5; }
           else { b.pos.copy(r.at(nowS)); continue; }
         }
         move(b, dt);

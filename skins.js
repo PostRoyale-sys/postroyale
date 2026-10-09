@@ -132,6 +132,9 @@ export function animateCharacter(g, t, state, speed = 1, armed = false) {
     lx = w; rx = -w; ax1 = -w * 0.8; ax2 = w * 0.8;
   } else if (state === 'air') {
     lx = -0.5; rx = 0.35; ax1 = -0.6; ax2 = -0.4; az1 = -0.5; az2 = 0.5;
+  } else if (state === 'chute') {
+    // под куполом: руки вверх держат стропы, ноги чуть вперёд
+    lx = -0.35; rx = -0.25; ax1 = 0; ax2 = 0; az1 = -2.7 + Math.sin(t * 2) * 0.05; az2 = 2.7 - Math.sin(t * 2) * 0.05;
   } else if (state === 'glide') {
     lx = 0.35; rx = 0.25; az1 = -1.35 + Math.sin(t * 3) * 0.08; az2 = 1.35 - Math.sin(t * 3) * 0.08; ax1 = ax2 = 0;
   } else {
