@@ -29,7 +29,7 @@ import { createAbilities, ABILITIES } from './abilities.js';
 import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
-import { buildHeli, buildParachute } from './heli.js';
+import { buildHeli, buildParachute, buildCabin, SEAT_EYE } from './heli.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08;
@@ -228,7 +228,13 @@ function spawn(drop = true) {
 // Space или клик — прыжок; в конце маршрута выбрасывает сам. Камера — вокруг вертолёта, крутится мышью.
 
 const HELI_Y = 85, HELI_SPEED = 15;
+const HELI_SCALE = 1.7;                     // крупнее — чтобы в салоне помещались люди в натуральную величину
 const heli = outlineGroup(buildHeli(), 0.06);
+heli.scale.setScalar(HELI_SCALE);
+// Салон для вида от первого лица: пилоты и бойцы — случайные скины.
+const CABIN_SKINS = SKINS.map((s) => s.id);
+const cabin = buildCabin((i) => buildCharacter(CABIN_SKINS[(i * 5 + 3) % CABIN_SKINS.length], ['#e6463f', '#2f8cff', '#ffc928', '#2fbf71'][i % 4]), animateCharacter, HELI_SCALE);
+heli.add(cabin);
 heli.visible = false;
 scene.add(heli);
 let flight = null;            // { a, b, dir, t0, dur } — маршрут вертолёта (виден, пока летит)
@@ -273,7 +279,7 @@ function startRide(late) {
   gliding = false;
   vel.set(0, 0, 0);
   heli.visible = true;
-  camera.rotation.set(-0.25, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
+  camera.rotation.set(-0.08, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
 }
 
 // Сколько метров пролетел вертолёт от начала маршрута.
@@ -286,7 +292,7 @@ function jumpOut(forced = false) {
   if (!forced && !inJumpZone()) { toast(`Jump zone in ${Math.ceil((flight.w0 - flown()) / HELI_SPEED)}s`); return; }
   riding = false;
   const p = heliPos(new THREE.Vector3());
-  feet.set(p.x, p.y - 2.5, p.z);
+  feet.set(p.x, p.y - 1.9 * HELI_SCALE, p.z);
   vel.set(0, 0, 0);
   knockVel.copy(flight.dir).multiplyScalar(6);
   gliding = true;
@@ -310,14 +316,21 @@ function updateHeli(t) {
   heli.position.y += Math.sin(t * 1.3) * 0.4;
   heli.rotation.set(0.06, Math.atan2(-flight.dir.x, -flight.dir.z), Math.sin(t * 0.9) * 0.04);
   heli.userData.tick(t);
+  // салон виден только своему пассажиру; полоса корпуса изнутри мешает обзору — прячем
+  cabin.visible = riding;
+  for (const m of heli.userData.shell) m.visible = !riding;
+  if (riding) cabin.userData.tick(t);
   const d = flown();
   if (riding) {
     if (d >= flight.w1) jumpOut(true);
     else {
       feet.copy(V_HELI);
-      // камера на орбите вокруг вертолёта: направление — от мыши
-      camera.getWorldDirection(V_LOOK);
-      player.position.copy(V_HELI).addScaledVector(V_LOOK, -20).add(new THREE.Vector3(0, 5, 0));
+      // вид от первого лица из салона (как в Call of Duty): сидим на задней лавке, мышью — осмотреться;
+      // лёгкая тряска от винта
+      heli.updateMatrixWorld(true);
+      player.position.copy(heli.localToWorld(SEAT_EYE.clone()));
+      player.position.x += Math.sin(t * 31) * 0.012 + Math.sin(t * 7.3) * 0.02;
+      player.position.y += Math.sin(t * 27) * 0.015 + Math.sin(t * 3.1) * 0.03;
     }
   }
   if (!riding && d >= flight.len) { flight = null; heli.visible = false; }

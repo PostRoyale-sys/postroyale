@@ -424,7 +424,7 @@ export function createBots(ctx) {
         if (!b.alive) continue;
         if (b.riding) {
           const r = ctx.route();
-          if (nowS >= b.jumpAt) { b.riding = false; b.gliding = true; b.chute = false; b.vy = 0; b.pos.copy(r.at(b.jumpAt)); b.pos.y -= 2.5; }
+          if (nowS >= b.jumpAt) { b.riding = false; b.gliding = true; b.chute = false; b.vy = 0; b.pos.copy(r.at(b.jumpAt)); b.pos.y -= 3.3; }
           else { b.pos.copy(r.at(nowS)); continue; }
         }
         move(b, dt);

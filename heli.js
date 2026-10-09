@@ -83,7 +83,7 @@ export function buildHeli() {
     const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4.2, 8), white);
     skid.rotation.x = Math.PI / 2;
     skid.position.set(sx * 1.1, -1.6, 0);
-    const s1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.9, 6), white); s1.position.set(sx * 1.0, -1.2, -0.9); s1.rotation.z = sx * 0.3;
+    const s1 = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.55, 6), white); s1.position.set(sx * 1.05, -1.35, -0.9);   // стойки — ниже пола салона s1.rotation.z = sx * 0.3;
     const s2 = s1.clone(); s2.position.z = 0.9;
     g.add(skid, s1, s2);
   }
@@ -109,6 +109,7 @@ export function buildHeli() {
   banner.rotation.y = Math.PI / 2;
   g.add(rope, banner);
 
+  g.userData.shell = [body, glass, stripe];      // корпус — прячется, когда смотришь изнутри
   g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
   const base = bannerGeo.attributes.position.array.slice();
   g.userData.tick = (t) => {
@@ -158,5 +159,75 @@ export function buildParachute() {
   const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x23262d }));
   g.add(canopy, coin, lines);
   g.userData.canopy = canopy;
+  return g;
+}
+
+// Салон для вида от первого лица (как в Call of Duty): пол с жёлто-чёрной разметкой, потолок с красной
+// лампой и поручнем, открытые боковые двери, лавки, приборная панель, пилоты и пара бойцов.
+// Виден только тому, кто сидит внутри (снаружи — обычный корпус). makeChar(i) → фигурка персонажа.
+// Начало координат — как у вертолёта; SEAT_EYE — где глаза игрока (задняя лавка, лицом к носу).
+export const SEAT_EYE = new THREE.Vector3(0, -0.16, 1.55);
+export function buildCabin(makeChar, animate, scale = 1) {
+  const g = new THREE.Group();
+  const metal = toon(0x3a3f4a), dark = toon(0x1e2128), seat = toon(0x5a4632), olive = toon(0x4b5240);
+  const box = (w, h, d, m, x, y, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); g.add(b); return b; };
+  const FY = -0.95, CY = 0.95, W = 1.42;
+  // пол и потолок
+  box(W * 2, 0.06, 4.3, metal, 0, FY - 0.03, -0.15);
+  box(W * 2, 0.05, 4.0, dark, 0, CY + 0.03, 0);
+  // жёлто-чёрная разметка у дверных проёмов
+  const stripeTex = (() => {
+    const c = document.createElement('canvas'); c.width = 128; c.height = 16;
+    const x = c.getContext('2d'); x.fillStyle = '#ffc928'; x.fillRect(0, 0, 128, 16); x.fillStyle = '#16181d';
+    for (let i = -16; i < 128; i += 16) { x.beginPath(); x.moveTo(i, 16); x.lineTo(i + 8, 16); x.lineTo(i + 16, 0); x.lineTo(i + 8, 0); x.fill(); }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
+  for (const sx of [-1, 1]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.16), new THREE.MeshBasicMaterial({ map: stripeTex }));
+    m.rotation.set(-Math.PI / 2, 0, Math.PI / 2);
+    m.position.set(sx * (W - 0.1), FY + 0.005, 0);
+    g.add(m);
+  }
+  // стены: позади двери и впереди двери; над проёмом — балка
+  for (const sx of [-1, 1]) {
+    box(0.06, CY - FY, 1.05, olive, sx * W, 0, 1.42);
+    box(0.06, CY - FY, 0.75, olive, sx * W, 0, -1.28);
+    box(0.08, 0.16, 1.8, dark, sx * W, CY - 0.08, 0);
+    // стойки дверного проёма
+    for (const z of [-0.9, 0.9]) box(0.1, CY - FY, 0.08, dark, sx * (W - 0.02), 0, z);
+  }
+  box(W * 2, CY - FY, 0.06, olive, 0, 0, 1.95);                // задняя стенка
+  // задняя лавка (наша) и боковые лавки впереди
+  box(1.3, 0.06, 0.4, seat, 0, FY + 0.27, 1.65); box(1.3, 0.5, 0.05, seat, 0, FY + 0.6, 1.9);
+  for (const sx of [-1, 1]) box(0.35, 0.06, 0.5, seat, sx * 1.18, FY + 0.27, -1.15);
+  // поручень и красная лампа
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 3.2, 6), toon(0x9aa0aa));
+  rail.rotation.x = Math.PI / 2; rail.position.set(0, CY - 0.12, 0); g.add(rail);
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 0.12), new THREE.MeshBasicMaterial({ color: 0xff2a2a }));
+  lamp.position.set(0, CY - 0.02, 0.9); g.add(lamp);
+  // приборная панель с экранами
+  box(2.2, 0.32, 0.3, dark, 0, -0.25, -2.25);
+  const screen = new THREE.MeshBasicMaterial({ color: 0x5dff9a });
+  for (const x of [-0.7, -0.25, 0.25, 0.7]) { const sc = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.17), screen); sc.position.set(x, -0.16, -2.09); sc.rotation.x = -0.35; g.add(sc); }
+  // рамка лобового стекла
+  for (const x of [-0.75, 0, 0.75]) box(0.05, 0.9, 0.05, dark, x, 0.4, -2.35 + Math.abs(x) * 0.35);
+  // пилоты (спиной к нам) и два бойца на боковых лавках лицом друг к другу
+  const people = [];
+  const seatTop = FY + 0.3;
+  const put = (i, x, z, yaw) => {
+    const c = makeChar(i);
+    c.scale.setScalar(1 / scale);                // вертолёт масштабирован — люди остаются в натуральную величину
+    c.position.set(x, seatTop - 0.62 / scale, z);
+    c.rotation.y = yaw;
+    g.add(c); people.push(c);
+  };
+  put(0, -0.55, -1.75, 0); put(1, 0.55, -1.75, 0);
+  box(0.4, 0.06, 0.4, seat, -0.55, FY + 0.27, -1.75); box(0.4, 0.06, 0.4, seat, 0.55, FY + 0.27, -1.75);
+  put(2, -1.18, -1.15, -Math.PI / 2); put(3, 1.18, -1.15, Math.PI / 2);
+  g.userData.tick = (t) => {
+    for (let i = 0; i < people.length; i++) animate(people[i], t + i * 1.3, 'sit');
+    lamp.material.color.setHex(Math.sin(t * 2.5) > -0.2 ? 0xff2a2a : 0x661010);
+  };
+  g.visible = false;
   return g;
 }
