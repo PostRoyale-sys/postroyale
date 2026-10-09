@@ -526,11 +526,23 @@ function swingPickaxe(now) {
   }
 }
 // Урон постройке: локально + всем. harvest — удар киркой: материалы себе.
+// Машины: от выстрелов и взрывов получают ×3 урона и, разбитые, взрываются (как ракета, чуть сильнее) —
+// урон наносит тот, кто взорвал; у остальных — только эффект (edit.cb). Киркой — обычная добыча металла.
+const isCarKey = (k) => k.startsWith('o:') && structures.objects[+k.slice(2)]?.type === 'car';
+function carBoom(e, own) {
+  const p = new THREE.Vector3(e.x, (e.y ?? world.height(e.x, e.z)) + 0.9, e.z);
+  combat.explodeAt(p, own, 1.25);
+  shadowDirty = true;
+}
 function damageStructure(k, dmg, harvest) {
+  const car = !harvest && isCarKey(k);
+  if (car) dmg *= 3;
   const res = structures.damage(k, dmg);
   if (!res) return;
   if (res.destroyed) shadowDirty = true;
-  net?.edit({ k, x: dmg, rr: royale.round });
+  const boom = car && res.destroyed;
+  net?.edit({ k, x: dmg, rr: royale.round, ...(boom ? { cb: 1 } : {}) });
+  if (boom) carBoom(res.e, true);
   if (harvest) {
     const { mat, n } = structures.harvestOf(res.e, res.destroyed);
     const before = mats[mat];
@@ -1203,7 +1215,7 @@ function onStructEdit(d) {
   if (d.rr !== undefined && d.rr !== royale.round) return;
   shadowDirty = true;
   if (d.a) structures.add({ k: d.k, t: d.t, ix: d.ix, iy: d.iy, iz: d.iz, o: d.o, m: d.m });
-  else if (d.x) structures.damage(d.k, d.x);
+  else if (d.x) { const res = structures.damage(d.k, d.x); if (d.cb && res?.destroyed) carBoom(res.e, false); }
 }
 
 let startNet = function () {
@@ -2225,7 +2237,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: () => jumpOut(),

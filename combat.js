@@ -419,7 +419,7 @@ export function createCombat(ctx) {
     },
 
     takeDamage,
-    explodeAt(p, own) { explode(p, own); },
+    explodeAt(p, own, mult = 1) { explode(p, own, mult); },
 
     onShot(peerId, d) {
       if (d.w === 'bazooka' || d.w === 'rocket') {
