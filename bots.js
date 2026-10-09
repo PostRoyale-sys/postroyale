@@ -5,14 +5,22 @@
 //
 // Поведение (как у людей): общий вертолёт раунда и прыжок над зоной прыжка → приземлились без оружия — к ближайшему
 // сундуку, открыть и взять оружие (пока без оружия — кирка вблизи) → бродят по точкам внутри безопасного круга, уходят от шторма,
-// перепрыгивают препятствия → замечают живого игрока или другого бота в SIGHT м без стен между ними и стреляют
+// перепрыгивают препятствия → замечают живого игрока или другого бота (дальность и меткость — от skill) без стен между ними и стреляют
 // (точность падает с расстоянием) → погибая, роняют оружие и патроны.
 
 import * as THREE from 'three';
 import { WEAPONS } from './combat.js';
 import { SKINS } from './skins.js';
 
-const COUNT = 5, SIGHT = 50, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
+const COUNT = 20, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
+
+// Сложность (skill 0…1) у каждого бота своя. Casual — разброс 0.3…0.7 (кто-то слабее, кто-то сильнее);
+// Ranked — 0.75…0.95. Без читов: только прямая видимость (не сквозь стены и дым), точность падает
+// с расстоянием и не выше ~90%, после обнаружения цели — задержка реакции.
+const SKILL = { casual: [0.3, 0.7], ranked: [0.75, 0.95] };
+const sightOf = (k) => 35 + 25 * k;                       // 42…53 м в Casual, 54…59 в Ranked
+const reactOf = (k) => 1.25 - k;                          // задержка первого выстрела, с
+const chanceOf = (k, d) => Math.min(0.9, Math.max(0.08 + 0.25 * k, 0.35 + 0.55 * k - d * (1.1 - k) / 90));
 
 // Ники ботов — случайные из крипто-дегенского сленга (свои приколы — сюда).
 const NICK_A = ['Ape', 'Rug', 'Moon', 'Gas', 'Pump', 'Dump', 'Wagmi', 'Ngmi', 'Fomo', 'Rekt', 'Shill', 'Bag', 'Diamond', 'Paper', 'Degen', 'Whale', 'Shrimp', 'Lambo', 'Hodl', 'Copium', 'Alpha', 'Exit', 'Floor', 'Mint', 'Airdrop'];
@@ -55,7 +63,9 @@ export function createBots(ctx) {
     const r = ctx.route();
     for (let i = 0; i < COUNT; i++) {
       const jumpD = r.w0 + rnd(0.1, 0.9) * (r.w1 - r.w0);
+      const [lo, hi] = ctx.isRanked?.() ? SKILL.ranked : SKILL.casual;
       bots.set(i, {
+        skill: rnd(lo, hi),
         id: i, name: degenNick(taken), skin: skins[Math.floor(Math.random() * skins.length)].id,
         pos: r.at(0), vy: 0, onGround: false, gliding: false, riding: true, jumpAt: r.t0 + jumpD / r.speed,
         hp: 100, alive: true, gun: null, rarity: 0, yaw: 0, chest: null, nextMelee: 0,
@@ -80,6 +90,18 @@ export function createBots(ctx) {
   // Лут: дошёл до сундука — открыть и взять выпавшее оружие (или любое оружие, лежащее рядом).
   function lootStep(b) {
     const loot = ctx.loot();
+    // оружие на земле рядом (выпало из убитых) — забрать, если ближе сундука
+    let near = null, nd = 45;
+    for (const it of loot.items.values()) {
+      if (it.k !== 'weapon') continue;
+      const d = Math.hypot(it.pos.x - b.pos.x, it.pos.z - b.pos.z);
+      if (d < nd) { nd = d; near = it; }
+    }
+    if (near && (!b.chest || nd < b.chest.pos.distanceTo(b.pos))) {
+      if (nd < 2) { const got = loot.takeItem(near.id); if (got) { b.gun = got.w; b.rarity = got.r || 0; b.chest = null; b.way = null; return false; } }
+      b.way = { x: near.pos.x, z: near.pos.z };
+      return true;
+    }
     if (!b.chest || (loot.isOpen(b.chest) && b.chest.pos.distanceTo(b.pos) > 6)) b.chest = pickChest(b);
     if (!b.chest) return false;
     if (Math.hypot(b.chest.pos.x - b.pos.x, b.chest.pos.z - b.pos.z) > 2.2) { b.way = { x: b.chest.pos.x, z: b.chest.pos.z }; return true; }
@@ -100,6 +122,7 @@ export function createBots(ctx) {
       if (!k.startsWith('bot:') || o.target?.rr !== round) continue;
       const d = o.target;
       bots.set(+k.slice(4), { id: +k.slice(4), name: d.n, skin: d.k || 'default', pos: new THREE.Vector3(d.x, d.y, d.z), vy: 0, onGround: false, gliding: false,
+        skill: ctx.isRanked?.() ? 0.85 : 0.5,
         hp: 100, alive: d.a !== false, gun: d.g && d.g !== 'pickaxe' ? d.g : null, rarity: d.q || 0, yaw: d.r || 0, riding: false, chest: null, nextMelee: 0, way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + 2, target: null });
     }
   }
@@ -120,7 +143,9 @@ export function createBots(ctx) {
       else if (td > 18) { dx = tx; dz = tz; } else { dx = -tz; dz = tx; }   // с оружием — держим дистанцию и кружим
     }
     const len = Math.hypot(dx, dz) || 1;
-    const sp = (b.gliding ? 8 : SPEED) * dt;
+    const sp = (b.gliding ? 8 : SPEED * (0.9 + 0.25 * b.skill)) * dt;
+    // сильные боты в бою подпрыгивают, сбивая прицел
+    if (b.target && b.gun && b.onGround && b.skill > 0.65 && Math.random() < dt * 0.6 * b.skill) { b.vy = JUMP; b.onGround = false; }
     const nx = b.pos.x + (dx / len) * sp, nz = b.pos.z + (dz / len) * sp;
     if (!st.blocked(nx, b.pos.y, b.pos.z)) b.pos.x = nx;
     else if (b.onGround) { b.vy = JUMP; b.onGround = false; }
@@ -155,16 +180,23 @@ export function createBots(ctx) {
   }
 
   // Цели бота: живые игроки и другие живые боты (кроме себя) — ближайшая видимая.
+  // Боты меж собой — как люди, которые сначала лутаются: без оружия друг друга не трогают,
+  // с оружием стреляют по ботам только на ближней дистанции (по игрокам — на всю дальность).
   function targetsFor(b) {
     const list = humans();
-    for (const o of bots.values()) if (o !== b && o.alive && !o.gliding && !o.riding) list.push({ id: key(o.id), name: o.name, pos: o.pos, bot: o });
+    if (!b.gun) return list;
+    for (const o of bots.values()) {
+      if (o === b || !o.alive || o.gliding || o.riding) continue;
+      if (o.pos.distanceTo(b.pos) > sightOf(b.skill) * 0.55) continue;
+      list.push({ id: key(o.id), name: o.name, pos: o.pos, bot: o });
+    }
     return list;
   }
 
   function think(b) {
     const st = ctx.structures();
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
-    let best = null, bd = b.gun ? SIGHT : 9;               // без оружия ввязываются только вблизи
+    let best = null, bd = b.gun ? sightOf(b.skill) : 9;    // без оружия ввязываются только вблизи
     for (const h of targetsFor(b)) {
       const to = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(eye);
       const d = to.length();
@@ -174,6 +206,8 @@ export function createBots(ctx) {
       if (ctx.blocksSight?.(eye, h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)))) continue;   // дым
       bd = d; best = h;
     }
+    // новая цель — сначала реакция, потом выстрел
+    if (best && best.id !== b.victim?.id) b.nextShot = Math.max(b.nextShot, clock + reactOf(b.skill) + Math.random() * 0.3);
     b.target = best ? best.pos.clone() : null;
     b.victim = best;
   }
@@ -196,13 +230,13 @@ export function createBots(ctx) {
     }
     if (now < b.nextShot) return;
     const spec = WEAPONS[b.gun];
-    b.nextShot = now + Math.max(0.3, spec.rate * 2.4) + Math.random() * 0.45;
+    b.nextShot = now + Math.max(0.25, spec.rate * 2.4 * (1.5 - b.skill)) + Math.random() * 0.45 * (1.2 - b.skill);
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
     const aim = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
     const d = eye.distanceTo(aim);
     b.yaw = Math.atan2(-(aim.x - eye.x), -(aim.z - eye.z));
     // меткие: вблизи почти не мажут, издалека — примерно каждый третий; друг по другу — ещё злее
-    const chance = Math.min(0.95, Math.max(0.3, 0.85 - d / 110) + (h.bot ? 0.1 : 0));
+    const chance = Math.min(0.92, chanceOf(b.skill, d) + (h.bot ? 0.05 : 0));
     const hit = Math.random() < chance;
     const end = hit ? aim : aim.clone().add(new THREE.Vector3(rnd(-2, 2), rnd(-1, 1.5), rnd(-2, 2)));
     // базука у бота — мгновенный выстрел с трассером (без ракеты), урон как у взрыва

@@ -781,6 +781,7 @@ const ctx = {
   onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
   blocksSight: (a, b) => abilities.blocksSight(a, b),
   route: () => sharedRoute(),
+  isRanked: () => isRankedWorld(worldId),
   crouched: () => crouching,
   riding: () => riding,
   onRoundEnd,
@@ -1755,6 +1756,9 @@ renderer.setAnimationLoop((now) => {
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y, o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
       o.group.scale.y += ((o.target.cr ? 0.72 : 1) - o.group.scale.y) * 0.3;       // присел — ниже
+      // дальше 40 м — без контура и теней (20 ботов: вдвое меньше отрисовок)
+      const near = o.group.position.distanceToSquared(feet) < 1600;
+      if (o.near !== near) { o.near = near; o.group.traverse((x) => { if (x.userData.outline) x.visible = near; else if (x.isMesh) x.castShadow = near; }); }
       // поза по движению: планирует / в воздухе / бежит / стоит
       const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
       o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
