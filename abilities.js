@@ -6,7 +6,10 @@
 //   Diamond Shield   — мгновенно +50 щита;
 //   Rug Pull Smoke   — облако дыма в точке прицела (до 30 м) на 12 с; видно всем (net abil), боты сквозь него не видят;
 //   Laser Recon      — 5 с подсвечивает врагов в 40 м сквозь стены (метки над головой);
-//   Liquidation Nade — граната с отскоком, взрыв через 1.5 с как у ракеты (урон, постройки ломает); видна всем.
+//   Liquidation Nade — граната с отскоком, взрыв через 1.5 с как у ракеты (урон, постройки ломает); видна всем;
+//   FPV Drone        — дрон-камикадзе: камера переходит в дрон, летит туда, куда смотришь (W — быстрее, S — тише),
+//                      ЛКМ — подрыв, сам взрывается при касании стены/земли/врага или через DRONE_LIFE с;
+//                      тело игрока в это время стоит на месте и уязвимо. Дрон и взрыв видят все (net abil).
 
 import * as THREE from 'three';
 
@@ -17,9 +20,11 @@ export const ABILITIES = {
   smoke: { name: 'Rug Pull Smoke', icon: '🟣', price: 250, max: 2, desc: 'Smoke cloud where you aim, 12 s' },
   recon: { name: 'Laser Recon', icon: '🛰', price: 200, max: 1, desc: 'Reveal enemies within 40 m, 5 s' },
   nade: { name: 'Liquidation Nade', icon: '💥', price: 350, max: 1, desc: 'Bouncing grenade, rocket-sized blast' },
+  drone: { name: 'FPV Drone', icon: '🛸', price: 450, max: 1, desc: 'Fly a kamikaze FPV drone, LMB to blow up' },
 };
 export const CREDITS = { start: 400, kill: 300, botkill: 150, chest: 75, survive: 50 };
 const SMOKE_R = 5.5, SMOKE_LIFE = 12, RECON_R = 40, RECON_LIFE = 5, NADE_FUSE = 1.5;
+const DRONE_LIFE = 10, DRONE_SPEED = 20;
 
 export function createAbilities(ctx) {
   const { scene, camera } = ctx;
@@ -29,6 +34,8 @@ export function createAbilities(ctx) {
   const nades = [];                    // { pos, vel, born, own, mesh }
   let reconUntil = 0;
   const marks = new Map();             // key others → sprite
+  let drone = null;                    // свой дрон: { pos, vel, born, mesh, sent }
+  const foreign = new Map();           // чужие дроны: peerId → { mesh, seen }
 
   // ---------- Кредиты и покупка ----------
 
@@ -80,6 +87,15 @@ export function createAbilities(ctx) {
         p.y = Math.max(p.y, ctx.world().height(p.x, p.z)) + 1.5;
         addSmoke(p, Date.now());
         ctx.net()?.abil({ k: 'smoke', p: p.toArray().map((v) => +v.toFixed(2)), t: Date.now() });
+        break;
+      }
+      case 'drone': {
+        if (drone) return false;
+        const p = eye().addScaledVector(look(), 1.2);
+        drone = { pos: p, vel: look().multiplyScalar(DRONE_SPEED * 0.5), born: performance.now() / 1000, mesh: droneMesh(), sent: 0 };
+        drone.mesh.visible = false;                    // своего не видно — смотрим из него
+        scene.add(drone.mesh);
+        ctx.combat().sfx('swing');
         break;
       }
       case 'recon': reconUntil = performance.now() / 1000 + RECON_LIFE; ctx.combat().sfx('pickup'); break;
@@ -138,6 +154,56 @@ export function createAbilities(ctx) {
     nades.push({ pos: o.clone(), vel: v.clone(), born: performance.now() / 1000, own, mesh });
   }
 
+  // ---------- FPV-дрон ----------
+
+  function droneMesh() {
+    const g = new THREE.Group();
+    const dark = new THREE.MeshToonMaterial({ color: 0x23262d }), gold = new THREE.MeshToonMaterial({ color: 0xffc928 });
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.34), dark));
+    for (const [x, z] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.34), dark);
+      arm.position.set(x * 0.15, 0, z * 0.15); arm.rotation.y = Math.atan2(x, z); g.add(arm);
+      const rot = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.01, 12), new THREE.MeshBasicMaterial({ color: 0x9aa0aa, transparent: true, opacity: 0.45 }));
+      rot.position.set(x * 0.26, 0.07, z * 0.26); g.add(rot);
+    }
+    const cam = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.06), gold);   // камера FPV спереди
+    cam.position.set(0, 0.07, -0.12); g.add(cam);
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2a2a }));
+    led.position.set(0, 0, -0.18); g.add(led);
+    g.userData.led = led;
+    return g;
+  }
+
+  function detonate() {
+    if (!drone) return;
+    const p = drone.pos.clone();
+    scene.remove(drone.mesh);
+    drone = null;
+    ctx.combat().explodeAt(p, true);
+    ctx.net()?.abil({ k: 'boom', p: p.toArray().map((v) => +v.toFixed(2)) });
+  }
+
+  function updateDrone(dt, t) {
+    if (!drone) return;
+    if (!ctx.canFly()) { scene.remove(drone.mesh); drone = null; return; }   // погиб/раунд кончился — связь потеряна
+    const want = look().multiplyScalar(DRONE_SPEED * (ctx.key('KeyW') ? 1.5 : ctx.key('KeyS') ? 0.5 : 1));
+    drone.vel.lerp(want, Math.min(1, dt * 3));
+    const st = ctx.structures(), w = ctx.world();
+    const steps = Math.max(1, Math.ceil((drone.vel.length() * dt) / 0.4));
+    for (let i = 0; i < steps; i++) {
+      drone.pos.addScaledVector(drone.vel, dt / steps);
+      let hit = st.solidAt(drone.pos) || drone.pos.y < Math.max(w.height(drone.pos.x, drone.pos.z), 0) + 0.3;
+      for (const [, o] of ctx.others) if (!hit && o.group.visible && o.group.position.clone().add(new THREE.Vector3(0, 1, 0)).distanceTo(drone.pos) < 1.4) hit = true;
+      if (hit || t - drone.born > DRONE_LIFE) { detonate(); return; }
+    }
+    drone.mesh.position.copy(drone.pos);
+    drone.mesh.lookAt(drone.pos.clone().add(drone.vel));
+    if ((drone.sent -= dt) <= 0) {
+      drone.sent = 0.1;
+      ctx.net()?.abil({ k: 'drone', p: drone.pos.toArray().map((v) => +v.toFixed(2)), v: drone.vel.toArray().map((v) => +v.toFixed(1)) });
+    }
+  }
+
   // ---------- Recon: метки над врагами ----------
 
   function markSprite() {
@@ -162,15 +228,35 @@ export function createAbilities(ctx) {
       for (const s of smokes) scene.remove(s.mesh);
       smokes.length = 0;
       reconUntil = 0;
+      if (drone) { scene.remove(drone.mesh); drone = null; }
       ctx.onChange?.();
     },
-    earn, buy, use, blocksSight,
+    earn, buy, use, blocksSight, detonate,
+    // Свой дрон в полёте (камера — в нём): { pos, left } или null.
+    get drone() { return drone ? { pos: drone.pos, left: Math.max(0, DRONE_LIFE - (performance.now() / 1000 - drone.born)), life: DRONE_LIFE } : null; },
     onNet(peerId, d) {
       if (d.k === 'smoke') addSmoke(new THREE.Vector3(...d.p), d.t || Date.now());
       if (d.k === 'nade') addNade(new THREE.Vector3(...d.o), new THREE.Vector3(...d.v), false);
+      if (d.k === 'drone' && Array.isArray(d.p)) {
+        let f = foreign.get(peerId);
+        if (!f) { f = { mesh: droneMesh() }; scene.add(f.mesh); foreign.set(peerId, f); }
+        f.seen = performance.now() / 1000;
+        f.mesh.position.set(...d.p);
+        if (Array.isArray(d.v)) f.mesh.lookAt(f.mesh.position.clone().add(new THREE.Vector3(...d.v)));
+      }
+      if (d.k === 'boom' && Array.isArray(d.p)) {
+        const f = foreign.get(peerId);
+        if (f) { scene.remove(f.mesh); foreign.delete(peerId); }
+        ctx.combat().explodeAt(new THREE.Vector3(...d.p), false);
+      }
     },
     update(dt) {
       const now = Date.now(), t = performance.now() / 1000;
+      updateDrone(dt, t);
+      for (const [k, f] of foreign) {
+        f.mesh.userData.led.visible = Math.sin(t * 12) > 0;
+        if (t - f.seen > 1) { scene.remove(f.mesh); foreign.delete(k); }
+      }
       // дым: раздувается, держится, тает
       for (let i = smokes.length - 1; i >= 0; i--) {
         const s = smokes[i], age = (now - s.born) / 1000;

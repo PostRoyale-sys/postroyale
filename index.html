@@ -403,6 +403,21 @@
   #ads[data-dot="acog"] { background: radial-gradient(circle at center, transparent 0 27vh, #000 27.5vh); }
   #ads[data-dot="acog"] i { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #ff7a1a; filter: drop-shadow(0 0 4px #ff7a1a); margin-top: 7px; }
   #ads[data-dot="acog"] i::after { content: ""; position: absolute; left: -1px; top: 14px; width: 2px; height: 22vh; background: rgba(0,0,0,.8); }
+  /* FPV-дрон */
+  #fpv { position: fixed; inset: 0; z-index: 30; pointer-events: none; font: 700 14px ui-monospace, Menlo, monospace; color: #e8ffe8; text-shadow: 0 1px 2px #000;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.12) 0 1px, transparent 1px 3px), radial-gradient(circle at center, transparent 45%, rgba(0,20,0,.55)); }
+  #fpv[hidden] { display: none; }
+  #fpv .rec { position: absolute; left: 24px; top: 70px; color: #ff3b3b; animation: blink 1s steps(2) infinite; }
+  #fpv .fpvd { position: absolute; right: 24px; top: 104px; }
+  #fpv .bat { position: absolute; left: 50%; bottom: 120px; width: 260px; height: 8px; margin-left: -130px; border: 1px solid #e8ffe8; border-radius: 3px; }
+  #fpv .bat i { display: block; height: 100%; background: #6dffa8; }
+  #fpv.low .bat i { background: #ff3b3b; }
+  #fpv.low { animation: fpvnoise .15s steps(2) infinite; }
+  #fpv .fpvt { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center; font-size: 12px; opacity: .9; }
+  #fpv .cross { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px; border: 2px solid rgba(232,255,232,.85); border-radius: 50%; }
+  #fpv .cross::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; background: #ff3b3b; border-radius: 50%; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes fpvnoise { 50% { filter: contrast(1.4) brightness(1.2); transform: translateX(1px); } }
   /* Кейсы и инвентарь скинов на оружие */
   .csp { width: min(640px, 100%); }
   .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.25); margin-bottom: 12px; }
@@ -714,6 +729,7 @@
     <div id="csres" hidden></div>
   </div>
 </div>
+<div id="fpv" hidden><span class="rec">● REC · FPV</span><span class="fpvd">DIST <b id="fpvdist">0 m</b></span><div class="bat"><i id="fpvbat"></i></div><span class="fpvt"><b id="fpvt">10.0</b> s · LMB — detonate · W boost · S brake</span><i class="cross"></i></div>
 <div id="scope" hidden></div>
 <div id="ads" hidden><i></i></div>
 <div id="hitmark"></div>

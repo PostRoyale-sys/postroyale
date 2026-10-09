@@ -63,17 +63,51 @@ export function createBots(ctx) {
     const skins = SKINS.filter((s) => !s.holder && !s.shop);
     const taken = new Set([ctx.me().nick]);
     const r = ctx.route();
+    const drops = dropPlan(r);
     for (let i = 0; i < COUNT; i++) {
-      const jumpD = r.w0 + rnd(0.1, 0.9) * (r.w1 - r.w0);
+      const { jumpD, drop } = drops[i];
       const [lo, hi] = ctx.isRanked?.() ? SKILL.ranked : SKILL.casual;
       bots.set(i, {
         skill: rnd(lo, hi),
         id: i, name: degenNick(taken), skin: skins[Math.floor(Math.random() * skins.length)].id,
-        pos: r.at(0), vy: 0, onGround: false, gliding: false, riding: true, jumpAt: r.t0 + jumpD / r.speed,
+        pos: r.at(0), vy: 0, onGround: false, gliding: false, riding: true, jumpAt: r.t0 + jumpD / r.speed, drop,
         hp: 100, alive: true, gun: null, rarity: 0, yaw: 0, chest: null, nextMelee: 0,
         way: null, stuckT: 0, lastPos: new THREE.Vector3(), nextShot: clock + rnd(2, 4), target: null,
       });
     }
+  }
+
+  // План высадки: каждый бот выбирает свою точку — город (не больше 4 ботов на город) или случайное место
+  // на суше в зоне, которое можно долететь от маршрута вертолёта (≤ GLIDE_REACH м вбок). Прыгает, когда
+  // вертолёт ближе всего к этой точке (чуть раньше — в полёте ещё несёт вперёд), и рулит к ней в падении.
+  const GLIDE_REACH = 80;
+  function dropPlan(r) {
+    const w = ctx.world(), rs = ctx.royale();
+    const along = (p) => (p.x - r.a.x) * r.dir.x + (p.z - r.a.z) * r.dir.z;
+    const side = (p) => Math.abs((p.x - r.a.x) * r.dir.z - (p.z - r.a.z) * r.dir.x);
+    const inRange = (p) => { const s = along(p); return s >= r.w0 && s <= r.w1 && side(p) <= GLIDE_REACH; };
+    const inZone = (p) => Math.hypot(p.x - rs.center.x, p.z - rs.center.z) < rs.safeRadius() * 0.9;
+    const pois = (w.pois || []).filter((p) => inRange(p) && inZone(p));
+    const used = new Map();
+    const out = [];
+    for (let i = 0; i < COUNT; i++) {
+      let drop = null;
+      const free = pois.filter((p) => (used.get(p.name) || 0) < 4);
+      if (free.length && Math.random() < 0.6) {
+        const p = free[Math.floor(Math.random() * free.length)];
+        used.set(p.name, (used.get(p.name) || 0) + 1);
+        drop = { x: p.x + rnd(-14, 14), z: p.z + rnd(-14, 14) };
+      }
+      for (let t = 0; !drop && t < 80; t++) {
+        const s = rnd(r.w0, r.w1), off = rnd(-GLIDE_REACH, GLIDE_REACH);
+        const p = { x: r.a.x + r.dir.x * s + r.dir.z * off, z: r.a.z + r.dir.z * s - r.dir.x * off };
+        if (w.height(p.x, p.z) > 2.5 && inZone(p)) drop = p;
+      }
+      drop ||= zonePoint(0.7);
+      const jumpD = Math.min(r.w1, Math.max(r.w0, along(drop) - rnd(10, 30)));
+      out.push({ jumpD, drop });
+    }
+    return out;
   }
 
   // Ближайший неоткрытый сундук, за которым не идёт другой бот.
@@ -150,7 +184,8 @@ export function createBots(ctx) {
     // от шторма — к центру; иначе — лут или свои точки внутри круга
     const c = rs.center, outside = Math.hypot(b.pos.x - c.x, b.pos.z - c.z) > rs.safeRadius() * 0.95;
     const looting = !outside && !b.gun && !b.gliding && lootStep(b);
-    if (!looting && (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2)) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
+    if (b.gliding && b.drop) b.way = b.drop;                      // в падении — к своей точке высадки
+    else if (!looting && (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2)) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
     let dx = b.way.x - b.pos.x, dz = b.way.z - b.pos.z;
     let speed = SPEED * (0.9 + 0.25 * b.skill);
     if (outside || (!b.target && Math.hypot(dx, dz) > 25)) speed *= 1.45;          // далеко или от шторма — бегом
@@ -228,7 +263,7 @@ export function createBots(ctx) {
     if (b.gliding && b.chute && b.vy < -6) b.vy += (-6 - b.vy) * Math.min(1, dt * 3);
     let ny = b.pos.y + b.vy * dt;
     const g = st.ground(b.pos.x, b.pos.z, Math.max(b.pos.y, ny));
-    if (ny <= g || (b.onGround && b.vy <= 0 && b.pos.y - g < 0.6)) { ny = g; b.vy = 0; b.onGround = true; b.gliding = false; b.chute = false; } else b.onGround = false;
+    if (ny <= g || (b.onGround && b.vy <= 0 && b.pos.y - g < 0.6)) { ny = g; b.vy = 0; b.onGround = true; if (b.gliding) b.drop = null; b.gliding = false; b.chute = false; } else b.onGround = false;
     b.pos.y = ny;
     if (b.pos.y < 0) b.way = null;                     // в воде — искать сушу
     // застрял — новая точка

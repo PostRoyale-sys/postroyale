@@ -8,7 +8,7 @@ import { ABILITIES } from './abilities.js';
 
 const KEY = 'pr:loadout';
 export const COIN = { kill: 25, botkill: 10, chest: 3, survive: 5, top3: 20, top2: 35, win: 100 };
-export const CHARGE_PRICE = { dash: 60, jump: 40, shield: 80, smoke: 70, recon: 60, nade: 100 };
+export const CHARGE_PRICE = { dash: 60, jump: 40, shield: 80, smoke: 70, recon: 60, nade: 100, drone: 120 };
 
 export function createLoadout(ctx) {
   let st = { coins: 150, stock: {}, picks: ['dash', null] };   // немного монет и рывок в наборе — для старта

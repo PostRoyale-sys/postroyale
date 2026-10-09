@@ -432,7 +432,8 @@ function openChute() {
 let selfFig = null, selfFigKey = '';
 const selfChute = buildParachute();
 function updateSelfFigure(t) {
-  const show = playing && gliding && !riding && royale.alive;
+  const fpv = !!abilities.drone;
+  const show = playing && (gliding || fpv) && !riding && royale.alive;
   const key = `${mySkin}|${nick}`;
   if (show && (!selfFig || selfFigKey !== key)) {
     if (selfFig) scene.remove(selfFig);
@@ -446,6 +447,11 @@ function updateSelfFigure(t) {
   if (!show) return;
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   selfFig.position.copy(feet);
+  if (fpv) {
+    selfFig.position.copy(feet); selfFig.rotation.set(0, selfFig.rotation.y, 0, 'YXZ'); selfChute.visible = false;
+    animateCharacter(selfFig, t, 'idle', 0, true);                   // стоит с пультом в руках
+    return;
+  }
   selfFig.rotation.set(chute ? 0 : -1.1, yaw, 0, 'YXZ');            // в падении — животом вниз
   selfChute.visible = chute;
   animateCharacter(selfFig, t, chute ? 'chute' : 'glide');
@@ -591,6 +597,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !playing) return;
   if (!royale.alive) { spectatorNotice(); return; }
   if (riding) { if (e.button === 0) jumpOut(); return; }
+  if (abilities.drone) { if (e.button === 0) abilities.detonate(); return; }
   const w = currentWeapon();
   if (e.button === 2 && w && canAim(w.type)) { scopeHeld = true; return; }
   if (e.button === 2 && buildType) { exitBuild(); return; }
@@ -897,6 +904,8 @@ const abilities = createAbilities({
   moveDir,
   dash: (d) => { knockVel.copy(d).multiplyScalar(36); vel.y = Math.max(vel.y, 3); onGround = false; combat.sfx('swing'); },
   launch: (vy) => { vel.y = vy; onGround = false; combat.sfx('bazooka'); },
+  canFly: () => playing && royale.alive && !royale.ended,
+  key: (code) => keys.has(code),
 });
 
 // HUD способностей: два слота (F, Q) и кредиты.
@@ -1896,6 +1905,13 @@ renderer.setAnimationLoop((now) => {
   if (playing) {
     updateHeli(t);
     if (riding) { /* камеру ставит updateHeli */ }
+    else if (abilities.drone) {
+      // FPV: камера в дроне; тело без управления (клавиши — дрону), но гравитация действует
+      const held = new Set(keys); keys.clear();
+      if (controls.isLocked) step(dt);
+      for (const k of held) keys.add(k);
+      player.position.copy(abilities.drone.pos);
+    }
     else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + eyeH, feet.z);
     updateSelfFigure(t);
@@ -1919,7 +1935,7 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive && !riding ? loot.pickupNear(feet, combat, dt) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
+    const prompt = royale.ended ? $('prompt').textContent : abilities.drone ? '' : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());
@@ -1933,6 +1949,15 @@ renderer.setAnimationLoop((now) => {
     if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 14); camera.updateProjectionMatrix(); }
     $('scope').hidden = !isScoped() || !!opt;
     $('ads').hidden = !opt;
+    // FPV-оверлей дрона: REC, заряд батареи, помехи к концу
+    const dr = abilities.drone;
+    $('fpv').hidden = !dr;
+    if (dr) {
+      $('fpvbat').style.width = `${(dr.left / dr.life) * 100}%`;
+      $('fpvt').textContent = dr.left.toFixed(1);
+      $('fpv').classList.toggle('low', dr.left < 3);
+      $('fpvdist').textContent = `${Math.round(dr.pos.distanceTo(feet))} m`;
+    }
     if (opt) $('ads').dataset.dot = opt.dot;
 
     if (shakeAmt > 0.001) {
@@ -1976,7 +2001,7 @@ renderer.setAnimationLoop((now) => {
   }
   if (settings.bloom) composer.render(); else renderer.render(scene, camera);
   countFps(now);
-  if (playing && !riding && !gliding && (controls.isLocked || debugView)) {
+  if (playing && !riding && !gliding && !abilities.drone && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
@@ -2024,7 +2049,7 @@ function updateCrosshair(w, en) {
   const spread = w ? combat.spreadOf(en.weapon) : 0;
   const gap = Math.round(Math.min(90, 5 + spread * px));
   c.style.setProperty('--gap', `${gap}px`);
-  c.dataset.mode = !w ? 'dot' : isScoped() ? 'off' : w.type === 'shotgun' ? 'ring' : w.type === 'bazooka' ? 'bazooka' : 'lines';
+  c.dataset.mode = abilities.drone ? 'off' : !w ? 'dot' : isScoped() ? 'off' : w.type === 'shotgun' ? 'ring' : w.type === 'bazooka' ? 'bazooka' : 'lines';
 }
 
 // Для отладки и тестов.
