@@ -32,8 +32,10 @@
   #lobby { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; color: var(--ink); font-family: Inter, var(--font); user-select: none; }
   #lobby .layer { position: absolute; inset: 0; pointer-events: none; }
   /* цветокор поверх 3D: тёплый низ, глубокий верх, виньетка, зерно, лучи */
-  #lobby .grade { background: linear-gradient(180deg, rgba(40,20,110,.55) 0%, rgba(40,20,110,0) 26%, rgba(255,120,90,0) 55%, rgba(60,18,90,.72) 100%); }
-  #lobby .vignette { background: radial-gradient(ellipse 85% 75% at 58% 48%, transparent 55%, rgba(12,6,40,.75) 100%); }
+  /* --gtop / --gbot / --gvig — цвета под скин (main.js applyColors) */
+  #lobby { --gtop: 40,20,110; --gbot: 60,18,90; --gvig: 12,6,40; }
+  #lobby .grade { background: linear-gradient(180deg, rgba(var(--gtop),.55) 0%, rgba(var(--gtop),0) 26%, rgba(var(--gbot),0) 55%, rgba(var(--gbot),.72) 100%); }
+  #lobby .vignette { background: radial-gradient(ellipse 85% 75% at 58% 48%, transparent 55%, rgba(var(--gvig),.75) 100%); }
   #lobby .rays { background: conic-gradient(from 200deg at 78% -10%, transparent 0deg, rgba(255,220,170,.16) 8deg, transparent 16deg, rgba(255,220,170,.10) 26deg, transparent 34deg, rgba(255,220,170,.14) 44deg, transparent 52deg);
     mix-blend-mode: screen; animation: rays 14s ease-in-out infinite alternate; transform-origin: 78% -10%; }
   @keyframes rays { from { transform: rotate(-4deg); opacity: .7; } to { transform: rotate(5deg); opacity: 1; } }

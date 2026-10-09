@@ -27,6 +27,26 @@ export const SKINS = [
 ];
 export const skinById = (id) => SKINS.find((s) => s.id === id) || SKINS[0];
 
+// Атмосфера лобби под скин: верх/низ неба, солнце, рассеянный свет, контровой (rim) и заполняющий (fill) цвет.
+export const SKIN_MOODS = {
+  default: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sky: 0xcdbbff, rim: 0xff9a5a, fill: 0x8b6bff },
+  pepe: { top: 0x1f5a3a, bottom: 0xc8f08a, sun: 0xeaffb0, sky: 0xd0ffc0, rim: 0x9aff6a, fill: 0x2fbf71 },
+  shrimp: { top: 0xd04a7a, bottom: 0xffd6c8, sun: 0xffc0b0, sky: 0xffd0e0, rim: 0xff8fa3, fill: 0xff6fb0 },
+  ape: { top: 0x6a3a1e, bottom: 0xffc06a, sun: 0xffb060, sky: 0xffe0b0, rim: 0xff7a3c, fill: 0x8a5a2a },
+  laser: { top: 0x0a0a14, bottom: 0x6a1424, sun: 0xff5050, sky: 0x8a6a8a, rim: 0xff2a2a, fill: 0x6a1aff },
+  bull: { top: 0x0f4a2a, bottom: 0x7af0a8, sun: 0xc8ffd8, sky: 0xc0ffd8, rim: 0x2fbf71, fill: 0x7affb0 },
+  bear: { top: 0x4a0f14, bottom: 0xff8a7a, sun: 0xffb0a0, sky: 0xffc0b8, rim: 0xff4a4a, fill: 0x8a3a2a },
+  whale: { top: 0x0a2a6a, bottom: 0x6ad0ff, sun: 0xc0eaff, sky: 0xb0e0ff, rim: 0x3fa9ff, fill: 0x1a4aff },
+  moon: { top: 0x05051a, bottom: 0x2a2a6a, sun: 0xe8e8ff, sky: 0x9a9ad0, rim: 0xc0c8ff, fill: 0x6a5aff },
+  rug: { top: 0x2a0a5a, bottom: 0xd06aff, sun: 0xf2c14e, sky: 0xe0b0ff, rim: 0xffc04a, fill: 0x8a2fd6 },
+  diamond: { top: 0x1a6aa0, bottom: 0xd8f8ff, sun: 0xffffff, sky: 0xe0f8ff, rim: 0x7fe0ff, fill: 0x3f8cff },
+  gold: { top: 0x7a4a00, bottom: 0xffe08a, sun: 0xffd060, sky: 0xfff0c0, rim: 0xffc928, fill: 0xff8a2a },
+  champ: { top: 0x10205a, bottom: 0xffd68a, sun: 0xffe0a0, sky: 0xd8d8ff, rim: 0xffc928, fill: 0x2f6fd6 },
+  knight: { top: 0x3a4250, bottom: 0xc8d0dc, sun: 0xe8eef4, sky: 0xd8e0ea, rim: 0xd23b3b, fill: 0x8a94a6 },
+  neon: { top: 0x1a0a40, bottom: 0xff4fd8, sun: 0xff9af0, sky: 0xf0a0ff, rim: 0x5dff9a, fill: 0xff4fd8 },
+  candle: { top: 0x06140c, bottom: 0x2fbf71, sun: 0xffd08a, sky: 0x90d0a0, rim: 0xffb23a, fill: 0x2fbf71 },
+};
+
 // Открыт ли скин: по уровню сезона, уровню держателя (tier ≥ 0 — держит токен) или покупке в магазине (owns).
 export function unlocked(skin, level, tier, owns = () => false) {
   if (skin.shop) return owns(skin.id);

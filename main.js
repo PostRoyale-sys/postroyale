@@ -21,7 +21,7 @@ import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
 import { createSeason, TIERS, TOKEN_MINT, TOKEN_SYMBOL } from './season.js';
-import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter } from './skins.js';
+import { SKINS, skinById, unlocked, lockLabel, buildCharacter, animateCharacter, SKIN_MOODS } from './skins.js';
 import { createWater } from './water.js';
 import { createBots } from './bots.js';
 import { createLobbyScene } from './lobby.js';
@@ -1438,8 +1438,48 @@ const MOODS = {
 const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
 const fillLight = new THREE.PointLight(0x8b6bff, 18, 12, 1.6);     // фиолетовая подсветка спереди-слева
 scene.add(rimLight, fillLight);
+// В лобби атмосфера — под выбранный скин (SKIN_MOODS): небо, солнце, туман, подсветка героя;
+// при смене скина цвета плавно перетекают (moodTarget → moodNow в lobbyFrame).
+const MOOD_COLORS = ['top', 'bottom', 'sun', 'sky', 'rim', 'fill'];
+let moodTarget = null;
+const moodNow = {};
+function skinMood() {
+  let id = 'default';
+  try { id = mySkin; } catch (e) { /* скин ещё не загружен */ }
+  const p = SKIN_MOODS[id] || SKIN_MOODS.default;
+  return { ...MOODS.lobby, ...p };
+}
+function applyColors(c) {
+  sky.material.uniforms.top.value.copy(c.top);
+  sky.material.uniforms.bottom.value.copy(c.bottom);
+  scene.fog.color.copy(c.bottom);
+  scene.background.copy(c.bottom);
+  sun.color.copy(c.sun);
+  hemi.color.copy(c.sky);
+  hemi.groundColor.copy(c.bottom).multiplyScalar(0.45);
+  rimLight.color.copy(c.rim);
+  fillLight.color.copy(c.fill);
+  // градиент и виньетка интерфейса лобби — в тон небу
+  const rgb = (col, k) => [col.r, col.g, col.b].map((v) => Math.round(Math.min(1, v * k) * 255)).join(',');
+  const lb = document.getElementById('lobby').style;
+  lb.setProperty('--gtop', rgb(c.top, 0.8));
+  lb.setProperty('--gbot', rgb(V_COL2.copy(c.top).lerp(c.fill, 0.35), 0.75));
+  lb.setProperty('--gvig', rgb(c.top, 0.3));
+}
+const V_COL2 = new THREE.Color();
+function stepMood(dt) {
+  if (!moodTarget) return;
+  const k = Math.min(1, dt * 2.5);
+  for (const key of MOOD_COLORS) moodNow[key].lerp(V_COL.set(moodTarget[key]), k);
+  applyColors(moodNow);
+}
+const V_COL = new THREE.Color();
 function setMood(name) {
-  const m = MOODS[name];
+  if (name === 'lobby') {
+    moodTarget = skinMood();
+    if (!moodNow.top) for (const key of MOOD_COLORS) moodNow[key] = new THREE.Color(moodTarget[key]);
+  } else moodTarget = null;
+  const m = name === 'lobby' ? moodTarget : MOODS[name];
   sky.material.uniforms.top.value.set(m.top);
   sky.material.uniforms.bottom.value.set(m.bottom);
   scene.fog.color.set(m.bottom);
@@ -1449,6 +1489,7 @@ function setMood(name) {
   hemi.color.set(m.sky); hemi.groundColor.set(m.ground); hemi.intensity = m.hemiI;
   SUN_DIR.set(...m.dir).normalize();
   rimLight.visible = fillLight.visible = name === 'lobby';
+  if (name === 'lobby') applyColors(moodNow);
 }
 
 const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
@@ -1466,6 +1507,7 @@ function lobbyFrame(dt, t) {
   lobbyScene.cameraPose(camera, t, heroShift, mouse.sx, mouse.sy);
   camera.updateMatrixWorld();
   lobbyScene.tick(t);
+  stepMood(dt);
   if (hero) {
     lobbyScene.heroPos(hero.position);
     const v = camera.position.clone().sub(hero.position);
@@ -1544,6 +1586,7 @@ function renderLocker() {
     c.addEventListener('click', () => {
       if (!open) { $('lockerhint').textContent = s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
       mySkin = s.id;
+      if (moodTarget) moodTarget = skinMood();      // фон лобби — под новый скин
       try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
       $('lockerhint').textContent = `Equipped: ${s.name}`;
       renderLocker();
