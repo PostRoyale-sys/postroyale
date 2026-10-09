@@ -27,6 +27,7 @@ import { createBots } from './bots.js';
 import { createLobbyScene } from './lobby.js';
 import { createAbilities, ABILITIES } from './abilities.js';
 import { createLoadout, CHARGE_PRICE, COIN } from './loadout.js';
+import { createGunsmith, GUN_MODS, GUN_ORDER, modInfo } from './gunsmith.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
 import { buildHeli, buildParachute, buildCabin, SEAT_EYE } from './heli.js';
@@ -417,6 +418,13 @@ function step(dt) {
 
 // ---------- Парашют и вид от третьего лица в полёте ----------
 
+// Падаешь с большой высоты (с горы, с постройки, после Moon Jump) — можно раскрыть парашют снова.
+const REDEPLOY_H = 9;
+function canRedeploy() {
+  return playing && royale.alive && !riding && !gliding && !onGround && vel.y < -3
+    && feet.y - structures.ground(feet.x, feet.z, feet.y) > REDEPLOY_H;
+}
+
 function openChute() {
   if (!gliding || chute) return;
   chute = true;
@@ -471,7 +479,10 @@ const PIECE_NAMES = { w: 'Wall', f: 'Floor', r: 'Ramp' };
 const currentWeapon = () => { const e = ENTRIES[slot]; return !buildType && e.weapon !== undefined ? combat.slots[e.weapon] : null; };
 const holding = () => (buildType ? null : ENTRIES[slot].pick ? PICKAXE : currentWeapon());
 let scopeHeld = false;
-const isScoped = () => scopeHeld && !!currentWeapon() && !!WEAPONS[currentWeapon().type].scope;
+// Прицеливание (ПКМ): снайперка — оптика с затемнением; оружие с обвесом-прицелом из Gunsmith — ADS с зумом.
+const canAim = (type) => !!WEAPONS[type].scope || !!gunsmith.stats(type).optic;
+const isScoped = () => scopeHeld && !!currentWeapon() && canAim(currentWeapon().type);
+const opticOf = () => { const w = currentWeapon(); return w && !WEAPONS[w.type].scope ? gunsmith.stats(w.type).optic : null; };
 let mouseDown = false;
 const eye = () => camera.getWorldPosition(new THREE.Vector3());
 const look = () => camera.getWorldDirection(new THREE.Vector3());
@@ -584,7 +595,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (!royale.alive) { spectatorNotice(); return; }
   if (riding) { if (e.button === 0) jumpOut(); return; }
   const w = currentWeapon();
-  if (e.button === 2 && w && WEAPONS[w.type].scope) { scopeHeld = true; return; }
+  if (e.button === 2 && w && canAim(w.type)) { scopeHeld = true; return; }
   if (e.button === 2 && buildType) { exitBuild(); return; }
   if (e.button !== 0) return;
   mouseDown = true;
@@ -822,6 +833,7 @@ const ctx = {
   nick: () => nick,
   toast, killfeed,
   scoped: () => isScoped(),
+  mods: (type) => gunsmith.stats(type),
   moving: () => moving,
   canPlay: () => royale.alive && !royale.ended,
   inMatch: () => playing,
@@ -872,7 +884,8 @@ function award(kind) {
 }
 const vm = createViewmodel(renderer, camera);
 const bots = createBots(ctx);
-const loadout = createLoadout({ onChange: () => renderLoadout() });
+const loadout = createLoadout({ onChange: () => { renderLoadout(); renderGunsmith(); } });
+const gunsmith = createGunsmith({ spend: (n) => loadout.spend(n), onChange: () => renderGunsmith() });
 const abilities = createAbilities({
   scene, camera, others,
   world: () => world, structures: () => structures, combat: () => combat, net: () => net, feet: () => feet,
@@ -1192,6 +1205,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (riding) { if (e.code === 'Space') jumpOut(); return; }
   if (gliding && !chute && e.code === 'Space') openChute();
+  else if (e.code === 'Space' && canRedeploy()) { gliding = true; chute = false; openChute(); }
   if (e.code === 'KeyB') { openBuy(); return; }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
@@ -1367,11 +1381,12 @@ for (const b of document.querySelectorAll('#tabs button')) {
   b.addEventListener('click', () => {
     for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('on', x === b);
     for (const sec of document.querySelectorAll('#lobby .tab')) sec.classList.toggle('on', sec.id === `tab-${b.dataset.tab}`);
-    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop', 'abilities'].includes(b.dataset.tab));
-    $('lobby').classList.toggle('lockered', ['locker', 'shop', 'abilities'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('paneled', !['play', 'locker', 'shop', 'abilities', 'gunsmith'].includes(b.dataset.tab));
+    $('lobby').classList.toggle('lockered', ['locker', 'shop', 'abilities', 'gunsmith'].includes(b.dataset.tab));
     if (b.dataset.tab === 'locker') renderLocker();
     if (b.dataset.tab === 'shop') renderShop();
     if (b.dataset.tab === 'abilities') renderLoadout();
+    if (b.dataset.tab === 'gunsmith') renderGunsmith();
     moveTabInd();
   });
 }
@@ -1564,6 +1579,31 @@ function renderLoadout() {
   }
 }
 
+// Вкладка Gunsmith: по оружию — карточки обвесов; купил — навсегда стоит на этом оружии.
+const GUN_ICON = { ar: '🔫', smg: '💨', shotgun: '💥', pistol: '🔹', sniper: '🎯' };
+function renderGunsmith() {
+  if (!$('gslist')) return;
+  $('gscoins').textContent = loadout.coins.toLocaleString('en');
+  $('gslist').innerHTML = '';
+  for (const gun of GUN_ORDER) {
+    const row = document.createElement('div');
+    row.className = 'gsrow';
+    row.innerHTML = `<div class="gsgun"><i>${GUN_ICON[gun]}</i><b>${WEAPONS[gun].name}</b></div>`;
+    for (const id of Object.keys(GUN_MODS[gun])) {
+      const mi = modInfo(gun, id), own = gunsmith.has(gun, id);
+      const c = document.createElement('button');
+      c.className = `gsmod${own ? ' own' : loadout.coins < mi.price ? ' cant' : ''}`;
+      c.innerHTML = `<i>${mi.icon}</i><b>${mi.name}</b><small>${mi.desc}</small><em>${own ? '✓ Equipped' : `🪙${mi.price}`}</em>`;
+      c.addEventListener('click', () => {
+        if (own) return;
+        $('gshint').textContent = gunsmith.buy(gun, id) ? `✓ ${mi.name} is now on your ${WEAPONS[gun].name}` : `Need ${mi.price - loadout.coins} more 🪙 — earn coins in any match`;
+      });
+      row.appendChild(c);
+    }
+    $('gslist').appendChild(row);
+  }
+}
+
 // ---------- Режимы: Casual / Ranked, допуск через пост в X, магазин за RP ----------
 
 function setGameMode(m) {
@@ -1659,7 +1699,7 @@ function updateRoundInfo() {
     $('tring').style.strokeDashoffset = '0';
     $('roundinfo').innerHTML = mode === 'join'
       ? `<b class="live">● Friend's match</b>Drop in with everyone on the link`
-      : `<b class="live">● Fresh match</b>Starts the moment you hit Play · 8 min`;
+      : `<b class="live">● Fresh match</b>Starts the moment you hit Play · ${ROUND_MS / 60e3} min`;
     return;
   }
   const into = Date.now() % ROUND_MS, left = ROUND_MS - into;
@@ -1789,7 +1829,7 @@ renderer.setAnimationLoop((now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive && !riding ? loot.pickupNear(feet, combat, dt) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : '';
+    const prompt = royale.ended ? $('prompt').textContent : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());
@@ -1798,9 +1838,12 @@ renderer.setAnimationLoop((now) => {
     if ($('reload').textContent !== rtext) $('reload').textContent = rtext;
 
     // Прицел снайперки.
-    const fov = isScoped() ? SCOPE_FOV : FOV;
+    const opt = isScoped() ? opticOf() : null;
+    const fov = isScoped() ? (opt ? opt.fov : SCOPE_FOV) : FOV;
     if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 14); camera.updateProjectionMatrix(); }
-    $('scope').hidden = !isScoped();
+    $('scope').hidden = !isScoped() || !!opt;
+    $('ads').hidden = !opt;
+    if (opt) $('ads').dataset.dot = opt.dot;
 
     if (shakeAmt > 0.001) {
       player.position.add(new THREE.Vector3((Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt));

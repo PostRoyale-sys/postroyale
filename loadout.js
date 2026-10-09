@@ -27,6 +27,13 @@ export function createLoadout(ctx) {
       save();
       ctx.onChange?.();
     },
+    spend(n) {
+      if (st.coins < n) return false;
+      st.coins -= n;
+      save();
+      ctx.onChange?.();
+      return true;
+    },
     buy(id) {
       const p = CHARGE_PRICE[id];
       if (!p || st.coins < p) return false;

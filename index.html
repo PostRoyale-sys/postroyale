@@ -394,6 +394,26 @@
   #ammo b { margin-left: auto; font-variant-numeric: tabular-nums; }
   #prompt { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(11,13,18,.78); font-weight: 800; font-size: 14px; }
   #reload { position: fixed; left: 50%; top: 53%; transform: translateX(-50%); font-weight: 800; font-size: 13px; color: #ffad1f; text-shadow: 0 1px 3px #000; }
+  /* ADS через обвес-прицел: лёгкая виньетка и марка по центру */
+  #ads { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 0 34vh, rgba(0,0,0,.55) 46vh); }
+  #ads i { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #ads[data-dot="red"] i { width: 7px; height: 7px; border-radius: 50%; background: #ff2a2a; box-shadow: 0 0 8px #ff2a2a; }
+  #ads[data-dot="holo"] i { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #ff3b3b; box-shadow: 0 0 6px #ff3b3b; }
+  #ads[data-dot="holo"] i::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: #ff3b3b; }
+  #ads[data-dot="acog"] { background: radial-gradient(circle at center, transparent 0 27vh, #000 27.5vh); }
+  #ads[data-dot="acog"] i { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #ff7a1a; filter: drop-shadow(0 0 4px #ff7a1a); margin-top: 7px; }
+  #ads[data-dot="acog"] i::after { content: ""; position: absolute; left: -1px; top: 14px; width: 2px; height: 22vh; background: rgba(0,0,0,.8); }
+  /* Gunsmith */
+  .gslist { display: flex; flex-direction: column; gap: 10px; max-height: 64vh; overflow: auto; padding-right: 4px; }
+  .gsrow { display: grid; grid-template-columns: 120px repeat(4, 1fr); gap: 8px; align-items: stretch; }
+  .gsgun { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,.06); }
+  .gsgun i { font-style: normal; font-size: 22px; } .gsgun b { font-size: 13px; }
+  .gsmod { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); transition: transform .12s, background .12s; }
+  .gsmod:hover { transform: translateY(-2px); background: rgba(255,255,255,.14); }
+  .gsmod i { font-style: normal; font-size: 18px; } .gsmod b { font-size: 13px; } .gsmod small { font-size: 11px; opacity: .75; line-height: 1.25; }
+  .gsmod em { margin-top: auto; padding-top: 4px; font-style: normal; font-weight: 800; color: #ffd84a; font-size: 12px; }
+  .gsmod.own { background: rgba(47,191,113,.2); border-color: rgba(47,191,113,.6); cursor: default; } .gsmod.own em { color: #6dffa8; }
+  .gsmod.cant em { color: #ff8f8f; }
   #scope { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at center, transparent 0 32vh, #000 32.4vh); }
   #scope::before, #scope::after { content: ""; position: absolute; background: rgba(0,0,0,.85); }
   #scope::before { left: 50%; top: 18vh; bottom: 18vh; width: 2px; }
@@ -431,7 +451,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -472,6 +492,7 @@
         <button data-tab="play" class="on">Play</button>
         <button data-tab="locker">Locker</button>
         <button data-tab="abilities">Abilities</button>
+        <button data-tab="gunsmith">Gunsmith</button>
         <button data-tab="shop">Shop</button>
         <button data-tab="season">Season</button>
         <button data-tab="howto">How to play</button>
@@ -552,6 +573,14 @@
       </div>
     </section>
 
+    <section class="tab" id="tab-gunsmith">
+      <div class="glass lockerp abp">
+        <h3>Gunsmith <span class="rpbal coinbal">🪙 <em id="gscoins">0</em></span></h3>
+        <div class="gslist" id="gslist"></div>
+        <p id="gshint">Buy once — the attachment is on that gun every time you pick one up. Optics: hold RMB to aim.</p>
+      </div>
+    </section>
+
     <section class="tab" id="tab-shop">
       <div class="glass lockerp">
         <h3>Shop <span class="rpbal"><em id="shoprp">0</em> RP</span></h3>
@@ -627,6 +656,7 @@
 <div id="prompt" hidden></div>
 <div id="reload"></div>
 <div id="scope" hidden></div>
+<div id="ads" hidden><i></i></div>
 <div id="hitmark"></div>
 <div id="flash"></div>
 <div id="hotbar" hidden></div>

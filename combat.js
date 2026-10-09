@@ -58,6 +58,17 @@ export function createCombat(ctx) {
   const slots = [null, null, null];           // { type, rarity, mag }
   const ammo = Object.fromEntries(Object.keys(AMMO).map((k) => [k, 0]));
   let nextShot = 0, reloadUntil = 0, reloadSlot = -1;
+  // обвесы из Gunsmith (только для своего оружия)
+  const mods = (type) => ctx.mods?.(type) || { mag: 1, reload: 1, spread: 1, optic: null };
+  const magOf = (type) => WEAPONS[type].mag * mods(type).mag;
+  // разброс с учётом рукоятки и прицеливания через оптику
+  const spreadFor = (type) => {
+    const spec = WEAPONS[type], md = mods(type);
+    if (spec.scope && ctx.scoped()) return 0;
+    let s = (spec.spread || 0) * md.spread * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
+    if (md.optic && ctx.scoped()) s *= md.optic.ads;
+    return s;
+  };
   const fx = [];
   const rockets = [];
 
@@ -180,8 +191,7 @@ export function createCombat(ctx) {
     const mult = RARITY[w.rarity].mult;
     const o = camera.getWorldPosition(new THREE.Vector3());
     const base = camera.getWorldDirection(new THREE.Vector3());
-    const scoped = spec.scope && ctx.scoped();
-    const spread = scoped ? 0 : spec.spread * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
+    const spread = spreadFor(w.type);
     const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
@@ -311,9 +321,9 @@ export function createCombat(ctx) {
     const w = slots[i];
     if (!w) return false;
     const spec = WEAPONS[w.type];
-    if (w.mag >= spec.mag || ammo[spec.ammo] <= 0 || reloadUntil) return false;
+    if (w.mag >= magOf(w.type) || ammo[spec.ammo] <= 0 || reloadUntil) return false;
     reloadSlot = i;
-    reloadUntil = performance.now() / 1000 + spec.reload;
+    reloadUntil = performance.now() / 1000 + spec.reload * mods(w.type).reload;
     changed();
     return true;
   }
@@ -323,7 +333,7 @@ export function createCombat(ctx) {
     reloadUntil = 0;
     if (!w) return;
     const spec = WEAPONS[w.type];
-    const take = Math.min(spec.mag - w.mag, ammo[spec.ammo]);
+    const take = Math.min(magOf(w.type) - w.mag, ammo[spec.ammo]);
     w.mag += take;
     ammo[spec.ammo] -= take;
     changed();
@@ -340,8 +350,7 @@ export function createCombat(ctx) {
     spreadOf(i) {
       const w = slots[i];
       if (!w) return 0;
-      const spec = WEAPONS[w.type];
-      return (spec.spread || 0) * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
+      return spreadFor(w.type);
     },
     get reloading() { return reloadUntil ? { slot: reloadSlot, left: reloadUntil - performance.now() / 1000 } : null; },
 
@@ -394,7 +403,8 @@ export function createCombat(ctx) {
       if (item.k === 'weapon') {
         const free = slotHint ?? slots.findIndex((s) => !s);
         if (free < 0) return false;
-        slots[free] = { type: item.w, rarity: item.r, mag: item.a ?? WEAPONS[item.w].mag };
+        // полный магазин с земли — сразу полный и с твоим «двойным»
+        slots[free] = { type: item.w, rarity: item.r, mag: item.a == null || item.a >= WEAPONS[item.w].mag ? magOf(item.w) : item.a };
         sound('pickup'); changed(); return true;
       }
       return false;
