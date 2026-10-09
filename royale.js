@@ -21,6 +21,12 @@ const LATE_CUTOFF = 45e3;
 // весь остров от центра этого раунда (считается в cover()), поэтому в начале раунда безопасна вся суша.
 // Сужение начинается уже через 10 с, круг сжимается до FINAL_R к 3:16 и держится до конца раунда.
 const COVER = -1;
+// Дуэль 1v1 (режим тикер против тикера): ожидание соперника — круг 45 м без урона; бой — 15 с на
+// подготовку и стройку, затем круг сжимается до 10 м к 70 с и держится, урон растёт.
+const DUEL_WAIT = [[0, 1800, 45, 45, 0]];
+const DUEL_FIGHT = [[0, 15, 45, 45, 0], [15, 70, 45, 10, 3], [70, 180, 10, 10, 10]];
+const DUEL = { wait: { table: DUEL_WAIT, ms: 1800e3 }, fight: { table: DUEL_FIGHT, ms: 180e3 } };
+
 const PHASE_TABLE = [
   [0, 10, COVER, COVER, 0],
   [10, 50, COVER, 100, 1],
@@ -50,7 +56,8 @@ export function createRoyale(ctx) {
   // Точка отсчёта матча: 0 — общие часы (Ranked: у всех один раунд); в Casual — момент старта матча,
   // чтобы всё начиналось с нуля; зашедшие по ссылке подхватывают более раннюю точку (adoptEpoch).
   let epoch = 0;
-  const roundOf = (now) => Math.floor((now - epoch) / ROUND_MS);
+  let roundMs = ROUND_MS, dropMs = DROP_MS, duel = null;     // duel: null | 'wait' | 'fight'
+  const roundOf = (now) => Math.floor((now - epoch) / roundMs);
 
   // Центр зоны раунда — из id мира и номера раунда: на суше и не у самого края.
   function pickCenter(r) {
@@ -72,6 +79,7 @@ export function createRoyale(ctx) {
       if (w.surfaceY(x, z) > WATER_Y) far = Math.max(far, Math.hypot(x - center.x, z - center.z));
     }
     R0 = far + 15;
+    if (duel) { PHASES = DUEL[duel].table; return; }
     PHASES = PHASE_TABLE.map((p) => p.map((v, i) => (v === COVER && (i === 2 || i === 3) ? R0 : v)));
   }
 
@@ -97,15 +105,24 @@ export function createRoyale(ctx) {
     get won() { return won; },
     aliveCount: () => aliveOthers() + (alive ? 1 : 0),
 
+    // Режим дуэли: null — обычный раунд; 'wait' — ждём соперника; 'fight' — бой 1v1. Вызывать перед init().
+    setDuel(kind) {
+      duel = kind || null;
+      roundMs = duel ? DUEL[duel].ms : ROUND_MS;
+      dropMs = duel ? 0 : DROP_MS;
+    },
+    get duel() { return duel; },
+    get roundMs() { return roundMs; },
+
     // Первый вход в мир: играем сразу, если до конца раунда больше LATE_CUTOFF; иначе ждём следующего.
     get epoch() { return epoch; },
     init(now = Date.now(), ep = epoch) {
       epoch = ep;
       ended = false; won = false; maxAliveSeen = 0; place = 0;
       round = roundOf(now);
-      roundStart = epoch + round * ROUND_MS;
+      roundStart = epoch + round * roundMs;
       setCenter(round);
-      alive = now - roundStart < ROUND_MS - LATE_CUTOFF;
+      alive = duel ? true : now - roundStart < roundMs - LATE_CUTOFF;
       ctx.onRoundStart(round, alive);
     },
 
@@ -173,7 +190,7 @@ export function createRoyale(ctx) {
       }
       if (r !== round) {
         round = r;
-        roundStart = epoch + r * ROUND_MS;
+        roundStart = epoch + r * roundMs;
         setCenter(r);
         alive = true;                     // новая высадка — все в игре
         won = false;
@@ -190,7 +207,7 @@ export function createRoyale(ctx) {
 
       const feet = ctx.feet();
       const outside = Math.hypot(feet.x - center.x, feet.z - center.z) > s.r;
-      ctx.stormHud({ t, storm: s, alive: this.aliveCount(), outside: outside && alive, round, spectating: !alive, drop: t < DROP_MS });
+      ctx.stormHud({ t, storm: s, alive: this.aliveCount(), outside: outside && alive, round, spectating: !alive, drop: t < dropMs, duel });
 
       if (!alive) return;
       // Урон шторма копим и снимаем целыми единицами.
@@ -201,7 +218,7 @@ export function createRoyale(ctx) {
       if (!alive) return;               // мог умереть от шторма
 
       // Очки за выживание — каждые 60 с после высадки.
-      if (t > DROP_MS) {
+      if (t > dropMs) {
         surviveAcc += dt;
         if (surviveAcc >= 60) { surviveAcc -= 60; ctx.points('survive'); }
       }
@@ -209,7 +226,7 @@ export function createRoyale(ctx) {
       // Победа: в раунде было ≥2 живых, остался один я.
       const n = this.aliveCount();
       maxAliveSeen = Math.max(maxAliveSeen, n);
-      if (!won && t > DROP_MS && maxAliveSeen >= 2 && n === 1) {
+      if (!won && duel !== 'wait' && t > dropMs && maxAliveSeen >= 2 && n === 1) {
         won = true;
         ended = true;
         ctx.net()?.win({ n: ctx.nick(), r: round });

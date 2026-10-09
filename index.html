@@ -202,7 +202,19 @@
 
   /* Режим и рейтинг */
   .seg.mode { margin-bottom: 2px; }
+  .seg.mode { grid-template-columns: 1fr 1fr 1fr; }
+  .seg.mode::before { width: calc(33.333% - 2.67px); }
   .seg.mode.ranked::before { transform: translateX(100%); background: linear-gradient(180deg, #fff27a, #ffb51a); }
+  .seg.mode.duel::before { transform: translateX(200%); background: linear-gradient(180deg, #ff8a7a, #ff3b5a); }
+  .seg.mode.duel #md-duel { color: #fff; }
+  #duelbox { display: grid; gap: 8px; }
+  #duelbox[hidden] { display: none; }
+  #duelbox p { margin: 0; }
+  #duelbox b { color: #fff; }
+  .duelrow { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+  .duelrow input { min-width: 0; padding: 11px 12px; border-radius: 12px; background: rgba(0,0,0,.3); font: 800 17px Inter, var(--font); letter-spacing: .04em; text-align: center; text-transform: uppercase; color: #fff; }
+  .duelrow input:focus { box-shadow: inset 0 0 0 2px #ff5a6a; outline: none; }
+  .duelrow .vs { font: 400 22px var(--display); font-style: italic; color: #ff5a6a; text-shadow: 0 2px 10px rgba(255,59,90,.5); }
   #rankbox { display: grid; gap: 10px; }
   #rankbox p { margin: 0; }
   #rankbox b { color: #fff; }
@@ -422,9 +434,9 @@
   @keyframes fpvnoise { 50% { filter: contrast(1.4) brightness(1.2); transform: translateX(1px); } }
   /* Кейсы и инвентарь скинов на оружие */
   .csp { width: min(640px, 100%); }
-  .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.25); margin-bottom: 12px; }
-  .seg button { padding: 7px 14px; border-radius: 9px; background: none; color: #cfc8e6; font-weight: 700; font-size: 13px; }
-  .seg button.on { background: #fff; color: #1b1450; }
+  .cseg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(0,0,0,.25); margin-bottom: 12px; }
+  .cseg button { padding: 7px 14px; border-radius: 9px; background: none; color: #cfc8e6; font-weight: 700; font-size: 13px; }
+  .cseg button.on { background: #fff; color: #1b1450; }
   .cslist { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .case { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px 12px; border-radius: 16px; background: linear-gradient(180deg, color-mix(in srgb, var(--cc) 30%, transparent), rgba(255,255,255,.04)); border: 1px solid color-mix(in srgb, var(--cc) 60%, transparent); }
   .cbox { width: 96px; height: 80px; display: grid; place-items: center; border-radius: 14px; background: color-mix(in srgb, var(--cc) 40%, #1a1430); box-shadow: 0 10px 30px color-mix(in srgb, var(--cc) 40%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--cc) 80%, #fff); animation: cbob 2.4s ease-in-out infinite; }
@@ -581,7 +593,7 @@
           </div>
         </div>
         <div class="glass mcard rise" style="--d:6">
-          <div class="seg mode" id="modeseg"><button id="md-casual" class="on">Casual</button><button id="md-ranked">Ranked 🏆</button></div>
+          <div class="seg mode" id="modeseg"><button id="md-casual" class="on">Casual</button><button id="md-ranked">Ranked 🏆</button><button id="md-duel">1v1 🥊</button></div>
           <div id="rankbox" hidden>
             <div id="rk-locked">
               <p class="sub">Ranked earns <b>RP</b> for the Shop. To unlock it for 7 days, post about PostRoyale on X with <b>#PostRoyale</b>.</p>
@@ -593,6 +605,11 @@
               <p class="rk-badge">✓ Ranked unlocked by <b id="rk-handle"></b> · <span id="rk-left"></span></p>
               <p class="sub">Everyone in Ranked drops onto today's island <b id="rk-world"></b>. RP — kill 10 · bot 3 · chest 1 · min survived 2 · top 3 15 · top 2 25 · win 60. RP has no cash value.</p>
             </div>
+          </div>
+          <div id="duelbox" hidden>
+            <p class="sub">Ticker vs ticker. Enter the two coins, hit Play and send the link — your opponent fights for the other one.</p>
+            <div class="duelrow"><input id="du-a" placeholder="$PEPE" maxlength="11" autocomplete="off" spellcheck="false"><span class="vs">VS</span><input id="du-b" placeholder="$DOGE" maxlength="11" autocomplete="off" spellcheck="false"></div>
+            <p class="sub" id="du-side"></p>
           </div>
           <div class="seg" id="seg"><button id="m-new" class="on">New match</button><button id="m-join">Join with code</button></div>
           <input id="code" maxlength="64" placeholder="Paste a code or link" autocomplete="off" spellcheck="false" hidden>
@@ -640,7 +657,7 @@
     <section class="tab" id="tab-cases">
       <div class="glass lockerp csp">
         <h3>Cases <span class="rpbal coinbal">🪙 <em id="cscoins">0</em> &nbsp;·&nbsp; <em id="csrp">0</em> RP</span></h3>
-        <div class="seg" id="csseg"><button data-v="cases" class="on">Open cases</button><button data-v="inv">Inventory</button></div>
+        <div class="cseg" id="csseg"><button data-v="cases" class="on">Open cases</button><button data-v="inv">Inventory</button></div>
         <div id="cslist" class="cslist"></div>
         <div id="csinv" hidden>
           <div class="invgun" id="invgun"></div>

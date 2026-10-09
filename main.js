@@ -49,6 +49,18 @@ document.querySelectorAll('.name').forEach((n) => { n.textContent = NAME; });
 const params = new URLSearchParams(location.search);
 let worldId = params.get('w');
 const randId = () => Math.random().toString(36).slice(2, 10);
+
+// ---------- Турнир 1v1: тикер против тикера ----------
+// Мир дуэли: duel-<тикерA>-<тикерB>-<код>. Сторона — параметр s: a — кто создал (бьётся за первый тикер),
+// b — кто открыл ссылку-вызов. Пока соперника нет — ждёшь в круге без урона; как только он зашёл, хост
+// шлёт «duel» { go } — у обоих отсчёт 3-2-1 и бой с готовым набором (оружие, щит, материалы), без ботов.
+const isDuelWorld = (id) => /^duel-[a-z0-9]{1,10}-[a-z0-9]{1,10}-[a-z0-9]{3,8}$/.test(id || '');
+const duelTickers = (id) => { const [, a, b] = id.split('-'); return { a: `$${a.toUpperCase()}`, b: `$${b.toUpperCase()}` }; };
+const cleanTicker = (v) => v.trim().replace(/^\$+/, '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+const linkDuel = isDuelWorld(params.get('w')) ? params.get('w') : null;     // пришли по ссылке-вызову
+let duelSide = 'a', duelGoAt = 0;
+const myTicker = () => duelTickers(worldId)[duelSide];
+const oppTicker = () => duelTickers(worldId)[duelSide === 'a' ? 'b' : 'a'];
 const COLORS = ['#1d9bf0', '#16c784', '#f4212e', '#ffad1f', '#a970ff', '#ff6bd6', '#00d4d4', '#ff7a1a'];
 const colorOf = (s) => COLORS[[...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length];
 const ANIMALS = ['Frog', 'Cat', 'Ape', 'Bull', 'Bear', 'Whale', 'Pepe', 'Doge', 'Shrimp', 'Degen'];
@@ -848,6 +860,7 @@ const ctx = {
   me: () => ({ alive: royale.alive, riding, nick, feet }),
   upsert: (k, d) => upsertOther(k, d),
   removeBots, isHost, hostId,
+  isDuel: () => isDuelWorld(worldId),
   onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
   blocksSight: (a, b) => abilities.blocksSight(a, b),
   route: () => sharedRoute(),
@@ -996,7 +1009,8 @@ function onRoundStart(r, alive) {
   buildType = null;
   goldenKeyRound = -1;
   renderHotbar();
-  if (alive) {
+  if (alive && royale.duel) duelSpawn();
+  else if (alive) {
     startRide(Date.now() - royale.roundStart > 20e3);
     season.roundStarted();
     const late = Date.now() - royale.roundStart > 20e3;
@@ -1006,6 +1020,53 @@ function onRoundStart(r, alive) {
     const left = Math.ceil((ROUND_MS - (Date.now() - royale.roundStart)) / 1000);
     banner('Match in progress', `You're spectating — next drop in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} · fly around as a ghost (Space up, C down)`, 5000);
   }
+}
+
+// Дуэль: стоишь на своей стороне круга лицом к сопернику (22 м от центра); в бою — готовый набор.
+function duelSpawn() {
+  const c = royale.center, sx = duelSide === 'a' ? -1 : 1;
+  const x = c.x + sx * 22, z = c.z;
+  riding = false; flight = null; heli.visible = false; gliding = false; chute = false;
+  feet.set(x, structures.ground(x, z, 999) + 0.05, z);
+  vel.set(0, 0, 0);
+  camera.rotation.set(0, sx < 0 ? -Math.PI / 2 : Math.PI / 2, 0, 'YXZ');
+  if (royale.duel === 'fight') {
+    for (const it of [{ k: 'weapon', w: 'ar', r: 2 }, { k: 'weapon', w: 'shotgun', r: 2 }, { k: 'ammo', w: 'medium', a: 150 }, { k: 'ammo', w: 'shells', a: 25 }, { k: 'armor', a: 50 }]) combat.give(it);
+    mats.wood = 300; mats.brick = 200; mats.metal = 100;
+    renderMats(); renderHotbar();
+    banner('FIGHT!', `${myTicker()} vs ${oppTicker()} · last one standing wins`, 2500);
+  } else {
+    banner(`🥊 ${myTicker()} vs ${oppTicker()}`, 'Waiting for your opponent — the duel starts the moment they join your link', 9000);
+  }
+}
+
+// Хост, увидев соперника, объявляет старт боя; у обоих — отсчёт и бой с одной точки отсчёта.
+function duelTick() {
+  if (!playing || royale.duel !== 'wait' || duelGoAt || !net) return;
+  const opp = [...others.keys()].some((k) => !k.startsWith('bot:'));
+  if (opp && isHost()) {
+    const at = Date.now() + 4000;
+    net.duel({ go: at });
+    duelCountdown(at);
+  }
+}
+setInterval(duelTick, 500);          // по таймеру, а не в кадре: старт не зависит от того, свёрнута ли вкладка у хоста
+function duelCountdown(at) {
+  if (duelGoAt) return;
+  duelGoAt = at;
+  let shown = -1;
+  const step = () => {
+    if (!playing) return;
+    const left = Math.ceil((at - Date.now()) / 1000);
+    if (left > 0) {
+      if (left !== shown) { shown = left; banner(String(left), `${myTicker()} vs ${oppTicker()} · get ready`, 950); combat.sfx('pickup'); }
+      setTimeout(step, 100);
+      return;
+    }
+    royale.setDuel('fight');
+    royale.init(Date.now(), at);
+  };
+  step();
 }
 
 function onEliminated(place, by) {
@@ -1022,6 +1083,12 @@ function onEliminated(place, by) {
 
 function onWinner(name, me) {
   if (me) award('win');
+  if (royale.duel) {
+    const w = me ? myTicker() : oppTicker(), l = me ? oppTicker() : myTicker();
+    banner(`🏆 ${w} WINS`, `${w} beat ${l} 1v1`, 6000);
+    say('🥊', ` ${w} beat ${l}`);
+    return;
+  }
   banner(me ? '🏆 VICTORY ROYALE' : `🏆 ${name} wins`, me ? 'Last one standing!' : 'Last one standing', 6000);
   say('🏆', ` ${name} won the round`);
 }
@@ -1045,6 +1112,10 @@ function onRoundEnd({ me, winners, early }) {
     $('prompt').textContent = `Back to the lobby in ${left}…`;
     if (left-- <= 0) {
       const q = new URLSearchParams({ w: worldId, r: me ? 'win' : 'end', ws: winners.slice(0, 4).join(',') });
+      if (royale.duel) {
+        q.set('s', duelSide);
+        q.set('dr', winners.length !== 1 ? 'draw' : me ? `${myTicker()}>${oppTicker()}` : `${oppTicker()}>${myTicker()}`);
+      }
       location.href = `${location.pathname}?${q}`;
       return;
     }
@@ -1055,8 +1126,9 @@ function onRoundEnd({ me, winners, early }) {
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, '0')}`;
 let lastStorm = '';
-function stormHud({ t, storm, alive, outside, spectating, drop }) {
+function stormHud({ t, storm, alive, outside, spectating, drop, duel }) {
   const left = storm.left;
+  if (duel === 'wait') { const txt = `🥊 ${myTicker()} vs ${oppTicker()} · waiting for opponent…`; if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; } return; }
   const what = storm.idx === 0 ? 'Storm in' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
   const txt = `${spectating ? '👁 Spectating · ' : ''}👥 ${alive} alive · 🌪 ${what} ${mmss(left)}`;
   if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; }
@@ -1139,7 +1211,7 @@ let startNet = function () {
     net = connect(worldId, {
       join(peerId) {
         peers.add(peerId);
-        if (!isRankedWorld(worldId)) net.match({ e: royale.epoch }, peerId);
+        if (!isRankedWorld(worldId) && !isDuelWorld(worldId)) net.match({ e: royale.epoch }, peerId);
         net.sync({ s: structures.syncList(), rr: royale.round }, peerId);
         net.pose(poseData(), peerId);
         loot.syncTo(peerId);
@@ -1167,7 +1239,8 @@ let startNet = function () {
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
       abil(peerId, d) { abilities.onNet(peerId, d); },
       // друг начал этот матч раньше — переходим на его отсчёт (раунд заново)
-      match(peerId, d) { if (!isRankedWorld(worldId) && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
+      match(peerId, d) { if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
+      duel(peerId, d) { if (d && d.go > 0 && royale.duel === 'wait') duelCountdown(Math.min(d.go, Date.now() + 6000)); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
@@ -1182,7 +1255,7 @@ let startNet = function () {
 
 function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
-  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick, a: royale.alive, rr: royale.round };
+  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: royale.duel ? `${myTicker()} ${nick}`.slice(0, 28) : nick, a: royale.alive, rr: royale.round };
   const w = holding();
   if (w) { d.g = w.type; d.q = w.rarity; const mk = gunsmith.key(w.type); if (mk) d.wm = mk; const fin = wskins.finishOf(w.type); if (fin) d.ws = fin; }
   if (season.tier >= 0) d.h = season.tier;
@@ -1295,7 +1368,9 @@ function start() {
   localStorage.setItem('pc:nick', nick);
   worldId = lobbyId();
   rankedMatch = isRankedWorld(worldId) && ranked.hasAccess();
-  history.replaceState(null, '', `?w=${worldId}`);
+  duelSide = isDuelWorld(worldId) && worldId === linkDuel && params.get('s') === 'b' ? 'b' : 'a';
+  duelGoAt = 0;
+  history.replaceState(null, '', `?w=${worldId}${isDuelWorld(worldId) ? `&s=${duelSide}` : ''}`);
   $('status').textContent = 'Generating the island…';
   $('go').disabled = true;
   setTimeout(() => {
@@ -1308,9 +1383,10 @@ function start() {
     spawn(false);
     // Casual — матч с нуля: раунд начинается сейчас (друзья по ссылке подстроятся под самый ранний старт);
     // Ranked — общие часы (у всех рейтинговых игроков один раунд на острове дня).
-    royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500);
+    if (isDuelWorld(worldId)) { royale.setDuel('wait'); royale.init(Date.now(), Date.now() - 500); }
+    else { royale.setDuel(null); royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500); }
     pick(0);
-    $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : `🌍 ${worldId}`;
+    $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats', 'abil', 'credits']) $(id).hidden = false;
     renderAbilities();
@@ -1347,16 +1423,29 @@ $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); }
 const lobbyNewId = randId();
 let mode = worldId ? 'join' : 'new';
 const cleanCode = (v) => v.trim().toLowerCase().replace(/^.*[?&]w=/, '').replace(/[^a-z0-9_-]/g, '').slice(0, 24);
-let gameMode = isRankedWorld(worldId) ? 'ranked' : 'casual';
-const lobbyId = () => (gameMode === 'ranked' ? rankedWorld() : mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
+let gameMode = isRankedWorld(worldId) ? 'ranked' : isDuelWorld(worldId) ? 'duel' : 'casual';
+// Дуэль: тикеры из полей; те же, что в ссылке-вызове, — тот же мир, иначе новый вызов.
+function duelId() {
+  const a = cleanTicker($('du-a').value) || 'pepe', b = cleanTicker($('du-b').value) || 'doge';
+  if (linkDuel) { const t = duelTickers(linkDuel); if (t.a === `$${a.toUpperCase()}` && t.b === `$${b.toUpperCase()}`) return linkDuel; }
+  return `duel-${a}-${b}-${lobbyNewId.slice(0, 6).replace(/[^a-z0-9]/g, 'x')}`;
+}
+const lobbyId = () => (gameMode === 'ranked' ? rankedWorld() : gameMode === 'duel' ? duelId() : mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
 // Итог прошлого раунда (возврат из матча): ?r=win|end&ws=имена.
-if (params.get('r')) {
+if (params.get('dr')) {
+  const dr = params.get('dr'), [w, l] = dr.split('>');
+  $('status').innerHTML = dr === 'draw' ? '🥊 Duel ended in a draw — both survived the storm' : `🥊 <b>${(w || '').replace(/[^$A-Z0-9]/g, '')}</b> beat <b>${(l || '').replace(/[^$A-Z0-9]/g, '')}</b> 1v1 — hit Play for a rematch`;
+  $('status').classList.add('result');
+  history.replaceState(null, '', `?w=${params.get('w')}&s=${params.get('s') === 'b' ? 'b' : 'a'}`);
+} else if (params.get('r')) {
   const ws = (params.get('ws') || '').split(',').filter(Boolean);
   $('status').textContent = params.get('r') === 'win' ? '🏆 Victory Royale — you won the last round!' : ws.length ? `Last round: 🏆 ${ws.join(', ')}` : 'Last round: no survivors';
   $('status').classList.add('result');
   history.replaceState(null, '', `?w=${params.get('w')}`);
 }
-if (worldId && !isRankedWorld(worldId)) {
+if (isDuelWorld(worldId)) {
+  if (!params.get('dr')) $('status').textContent = params.get('s') === 'b' ? `🥊 You've been challenged: ${duelTickers(worldId).b} vs ${duelTickers(worldId).a} — hit Play` : `🥊 Your duel ${duelTickers(worldId).a} vs ${duelTickers(worldId).b} — hit Play`;
+} else if (worldId && !isRankedWorld(worldId)) {
   $('code').value = worldId;
   $('status').textContent = `Invited to match “${worldId}” — hit Play to drop in with everyone on the link`;
 }
@@ -1752,19 +1841,41 @@ function setGameMode(m) {
   gameMode = m;
   setTimeout(updateRoundInfo, 0);
   $('modeseg').classList.toggle('ranked', m === 'ranked');
+  $('modeseg').classList.toggle('duel', m === 'duel');
   $('md-casual').classList.toggle('on', m === 'casual');
   $('md-ranked').classList.toggle('on', m === 'ranked');
+  $('md-duel').classList.toggle('on', m === 'duel');
   renderRanked();
   previewSoon();
 }
 $('md-casual').addEventListener('click', () => setGameMode('casual'));
 $('md-ranked').addEventListener('click', () => setGameMode('ranked'));
+$('md-duel').addEventListener('click', () => setGameMode('duel'));
+// Поля тикеров: из ссылки-вызова — её тикеры; ввод — только буквы/цифры, со знаком $.
+if (linkDuel) { const t = duelTickers(linkDuel); $('du-a').value = t.a; $('du-b').value = t.b; }
+for (const id of ['du-a', 'du-b']) {
+  $(id).addEventListener('input', () => { renderDuelSide(); previewSoon(); updateRoundInfo(); });
+  $(id).addEventListener('blur', () => { const v = cleanTicker($(id).value); $(id).value = v ? `$${v.toUpperCase()}` : ''; });
+  $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+}
+function renderDuelSide() {
+  const id = duelId(), t = duelTickers(id);
+  const side = id === linkDuel && params.get('s') === 'b' ? 'b' : 'a';
+  $('du-side').innerHTML = id === linkDuel && side === 'b'
+    ? `You were challenged — you fight for <b>${t.b}</b> against <b>${t.a}</b>`
+    : `You fight for <b>${t.a}</b>. Send the link — your opponent fights for <b>${t.b}</b>`;
+}
+renderDuelSide();
 
 function renderRanked() {
   const rk = gameMode === 'ranked';
+  const du = gameMode === 'duel';
   $('rankbox').hidden = !rk;
-  $('seg').hidden = rk;
-  $('code').hidden = rk || mode !== 'join';
+  $('duelbox').hidden = !du;
+  $('seg').hidden = rk || du;
+  $('code').hidden = rk || du || mode !== 'join';
+  $('pois').hidden = du;
+  document.querySelector('.launch .hot').hidden = du;           // «горячая точка» высадки — не для дуэли
   $('copyinv').parentElement.hidden = rk;
   const a = ranked.access;
   $('rk-locked').hidden = !!a;
@@ -1825,18 +1936,34 @@ function renderShop() {
 }
 
 // Приглашения: ссылка на матч, который сейчас выбран в лобби.
-const inviteLink = () => `${location.origin}${location.pathname}?w=${lobbyId()}`;
+const inviteLink = () => {
+  const id = lobbyId();
+  if (!isDuelWorld(id)) return `${location.origin}${location.pathname}?w=${id}`;
+  const mine = id === linkDuel && params.get('s') === 'b' ? 'b' : 'a';
+  return `${location.origin}${location.pathname}?w=${id}&s=${mine === 'a' ? 'b' : 'a'}`;   // соперник — за другой тикер
+};
 $('copyinv').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(inviteLink()); $('status').textContent = '✓ Invite link copied — send it to friends'; } catch (e) { $('status').textContent = inviteLink(); }
 });
 $('shareinv').addEventListener('click', () => {
-  const text = `Drop into my ${NAME} match 🪂⛏🌪 — loot, build, outrun the storm. Last one standing wins. Open and play, no install`;
+  const id = lobbyId();
+  const t = isDuelWorld(id) ? duelTickers(id) : null;
+  const mine = t && id === linkDuel && params.get('s') === 'b' ? t.b : t?.a, theirs = t && (mine === t.a ? t.b : t.a);
+  const text = t
+    ? `🥊 ${mine} vs ${theirs} — 1v1 in ${NAME}. I'm fighting for ${mine}. You take ${theirs}. Loser's bag goes to zero 😤`
+    : `Drop into my ${NAME} match 🪂⛏🌪 — loot, build, outrun the storm. Last one standing wins. Open and play, no install`;
   open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(inviteLink())}`, '_blank', 'noopener');
 });
 
 // Состояние раунда в лобби: можно ли высадиться прямо сейчас.
 function updateRoundInfo() {
   if (playing) return;
+  if (gameMode === 'duel') {
+    $('tring').style.strokeDashoffset = '0';
+    const t = duelTickers(duelId());
+    $('roundinfo').innerHTML = `<b class="live">● 1v1 Duel</b>${t.a} vs ${t.b} · starts when your opponent joins`;
+    return;
+  }
   if (gameMode === 'casual') {
     $('tring').style.strokeDashoffset = '0';
     $('roundinfo').innerHTML = mode === 'join'

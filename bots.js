@@ -429,6 +429,7 @@ export function createBots(ctx) {
     roundStart(r) {
       round = r;
       ctx.removeBots();
+      if (ctx.isDuel?.()) { bots.clear(); return; }     // в дуэли 1v1 ботов нет
       if (ctx.isHost()) spawnAll();
     },
     // Попадание по боту: хост применяет, остальные шлют хосту.
