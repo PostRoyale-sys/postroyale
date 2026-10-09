@@ -377,6 +377,12 @@
   .bfoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: #c9d6ff; }
   .bfoot b { color: #fff; }
   #prompt.wait { top: 76%; padding: 10px 22px; font: 400 22px var(--display); letter-spacing: .04em; background: rgba(11,13,18,.72); color: #e7e9ea; }
+  #minimap { position: fixed; right: 14px; top: 96px; z-index: 30; width: 176px; height: 176px; border-radius: 50%; box-shadow: 0 8px 30px rgba(0,0,0,.45); pointer-events: none; }
+  #minimap[hidden], #bigmap[hidden] { display: none; }
+  #bigmap { position: fixed; inset: 0; z-index: 55; display: grid; place-items: center; align-content: center; gap: 10px; background: rgba(8,6,20,.62); backdrop-filter: blur(3px); pointer-events: none; }
+  #bigmap canvas { border-radius: 18px; box-shadow: 0 20px 70px rgba(0,0,0,.6), 0 0 0 3px rgba(255,255,255,.85); }
+  #bigmap p { margin: 0; font: 700 13px Inter, sans-serif; color: #e8e4ff; text-shadow: 0 1px 3px #000; }
+  body.shot #minimap { display: none !important; }
   #fps { position: fixed; right: 14px; top: 66px; z-index: 40; padding: 4px 9px; border-radius: 8px; background: rgba(11,13,18,.6); font: 700 11.5px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
   #fps.good { color: #7dffb0; } #fps.ok { color: #ffd81a; } #fps.bad { color: #ff6b6b; }
   body.shot #fps { display: none !important; }
@@ -518,7 +524,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -535,6 +541,8 @@
 <body>
 <div id="game"></div>
 <div id="fps" hidden></div>
+<canvas id="minimap" hidden></canvas>
+<div id="bigmap" hidden><canvas></canvas><p>M — close map · 🟣 storm · ⚪ next safe zone · 🟡 you</p></div>
 <div id="cross" hidden><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b class="dot"></b><span class="ring"></span></div>
 
 <!-- Заставка, пока строится остров -->
@@ -714,7 +722,7 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · stay in the circle 🌪 · Esc menu</div>
+<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · P prone · M map · Esc menu</div>
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>

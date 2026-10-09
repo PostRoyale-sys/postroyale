@@ -65,7 +65,7 @@ export function createCombat(ctx) {
   const spreadFor = (type) => {
     const spec = WEAPONS[type], md = mods(type);
     if (spec.scope && ctx.scoped()) return 0;
-    let s = (spec.spread || 0) * md.spread * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1);
+    let s = (spec.spread || 0) * md.spread * (ctx.moving() ? 1.6 : 1) * (ctx.crouched?.() ? 0.6 : 1) * (ctx.prone?.() ? 0.65 : 1);
     if (md.optic && ctx.scoped()) s *= md.optic.ads;
     return s;
   };
@@ -174,8 +174,9 @@ export function createCombat(ctx) {
     for (const [peerId, o] of ctx.others) {
       if (o.target?.a === false) continue;               // наблюдатель — не цель
       const p = o.group.position;
-      const top = o.target?.cr ? 1.35 : 1.95;              // присевший — ниже
-      list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - 0.4, p.y, p.z - 0.4), max: new THREE.Vector3(p.x + 0.4, p.y + top, p.z + 0.4) });
+      const pr = !!o.target?.pr, top = pr ? 0.75 : o.target?.cr ? 1.35 : 1.95;   // присевший — ниже, лежачий — плашмя
+      const w = pr ? 1.0 : 0.4;
+      list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - w, p.y - (pr ? 0.32 : 0), p.z - w), max: new THREE.Vector3(p.x + w, p.y + top - (pr ? 0.32 : 0), p.z + w) });
     }
     return list;
   }

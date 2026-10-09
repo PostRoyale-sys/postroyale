@@ -278,10 +278,10 @@ export function createBots(ctx) {
   function humans() {
     const list = [];
     const me = ctx.me();
-    if (me.alive && !me.riding) list.push({ id: null, name: me.nick, pos: me.feet });
+    if (me.alive && !me.riding) list.push({ id: null, name: me.nick, pos: me.feet, prone: !!me.prone });
     for (const [k, o] of ctx.others) {
       if (k.startsWith('bot:') || o.target?.a === false || o.target?.rd || o.target?.rr !== round) continue;
-      list.push({ id: k, name: o.name, pos: o.group.position });
+      list.push({ id: k, name: o.name, pos: o.group.position, prone: !!o.target?.pr });
     }
     return list;
   }
@@ -305,12 +305,12 @@ export function createBots(ctx) {
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
     let best = null, bd = b.gun ? sightOf(b.skill) : 9;    // без оружия ввязываются только вблизи
     for (const h of targetsFor(b)) {
-      const to = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(eye);
+      const to = h.pos.clone().add(new THREE.Vector3(0, h.prone ? 0.3 : 1.1, 0)).sub(eye);
       const d = to.length();
       if (d > bd) continue;
       const hit = st.raycast(eye, to.clone().normalize(), d);
       if (hit && hit.t < d - 0.5) continue;           // стена/дерево/холм на пути
-      if (ctx.blocksSight?.(eye, h.pos.clone().add(new THREE.Vector3(0, 1.1, 0)))) continue;   // дым
+      if (ctx.blocksSight?.(eye, h.pos.clone().add(new THREE.Vector3(0, h.prone ? 0.3 : 1.1, 0)))) continue;   // дым
       bd = d; best = h;
     }
     // новая цель — сначала реакция, потом выстрел
@@ -373,7 +373,7 @@ export function createBots(ctx) {
     const spec = WEAPONS[b.gun];
     b.nextShot = now + Math.max(0.25, spec.rate * 2.4 * (1.5 - b.skill)) + Math.random() * 0.45 * (1.2 - b.skill);
     const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
-    const aim = h.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
+    const aim = h.pos.clone().add(new THREE.Vector3(0, h.prone ? 0.3 : 1.1, 0));
     const d = eye.distanceTo(aim);
     b.yaw = Math.atan2(-(aim.x - eye.x), -(aim.z - eye.z));
     // меткие: вблизи почти не мажут, издалека — примерно каждый третий; друг по другу — ещё злее
