@@ -34,6 +34,9 @@ function degenNick(taken) {
   return `Degen${Math.floor(Math.random() * 9000) + 1000}`;
 }
 const MELEE = { dmg: 20, rate: 0.7, reach: 2.4 };     // кирка, пока нет оружия
+// «Небольшой ВХ»: живого игрока бот чувствует в AWARE м даже сквозь стены — идёт к нему и обходит,
+// но стрелять может только при прямой видимости. Постройки на пути к цели или поперёк дороги — ломает.
+const AWARE = 30, BREAK_REACH = 9, PICK_BUILD = 50;
 
 export function createBots(ctx) {
   const bots = new Map();             // id → состояние (только у хоста)
@@ -173,14 +176,31 @@ export function createBots(ctx) {
       // свободное падение → парашют: рулим к точке, к земле не быстрее купола
       speed = b.chute ? 9 : 13;
     } else {
-      // обход препятствий: ищем ближайшее свободное направление веером
-      let ok = false;
-      for (const a of DIRS) {
-        const ca = Math.cos(a), sa = Math.sin(a);
-        const rx = ux * ca - uz * sa, rz = ux * sa + uz * ca;
-        if (clearAhead(b, rx, rz, 1.4)) { ux = rx; uz = rz; ok = true; break; }
+      // постройка прямо поперёк пути (стена дома, чужая стенка) — пробить, а не тыкаться
+      if (!b.victim && !b.breakKey) {
+        const eye = b.pos.clone().add(new THREE.Vector3(0, 1.0, 0));
+        const hit = st.raycast(eye, new THREE.Vector3(ux, 0, uz), 1.8);
+        if (hit?.e?.kind === 'piece' && (b.blockedT || 0) > 0.6) { b.breakKey = hit.e.k; b.breakAt = hit.point; }
       }
-      if (!ok && b.onGround) { b.vy = JUMP; b.onGround = false; }
+      if (b.breakKey && !b.victim) {
+        // стоим у постройки и ломаем (с оружием — можно и с расстояния)
+        const p = b.breakAt, d = Math.hypot(p.x - b.pos.x, p.z - b.pos.z);
+        if (!b.gun && d > MELEE.reach) { ux = (p.x - b.pos.x) / d; uz = (p.z - b.pos.z) / d; }
+        else { ux = 0; uz = 0; }
+      } else {
+        // обход препятствий: ищем свободное направление веером — сначала на дальней дистанции (сворачиваем заранее),
+        // потом на ближней
+        let ok = false;
+        for (const look of [3.2, 1.3]) {
+          for (const a of DIRS) {
+            const ca = Math.cos(a), sa = Math.sin(a);
+            const rx = ux * ca - uz * sa, rz = ux * sa + uz * ca;
+            if (clearAhead(b, rx, rz, look) && clearAhead(b, rx, rz, look * 0.5)) { ux = rx; uz = rz; ok = true; break; }
+          }
+          if (ok) break;
+        }
+        if (!ok && b.onGround) { b.vy = JUMP; b.onGround = false; }
+      }
       // сильные боты в бою подпрыгивают, сбивая прицел
       if (b.target && b.gun && b.onGround && Math.random() < dt * 0.7 * b.skill) { b.vy = JUMP; b.onGround = false; }
     }
@@ -190,8 +210,10 @@ export function createBots(ctx) {
     b.vel.x += (ux * speed - b.vel.x) * acc;
     b.vel.z += (uz * speed - b.vel.z) * acc;
     const nx = b.pos.x + b.vel.x * dt, nz = b.pos.z + b.vel.z * dt;
-    if (!st.blocked(nx, b.pos.y, b.pos.z)) b.pos.x = nx; else b.vel.x *= -0.2;
-    if (!st.blocked(b.pos.x, b.pos.y, nz)) b.pos.z = nz; else b.vel.z *= -0.2;
+    const bx = st.blocked(nx, b.pos.y, b.pos.z), bz = st.blocked(b.pos.x, b.pos.y, nz);
+    if (!bx) b.pos.x = nx; else b.vel.x *= -0.2;
+    if (!bz) b.pos.z = nz; else b.vel.z *= -0.2;
+    b.blockedT = (bx || bz) ? (b.blockedT || 0) + dt : 0;
     if (!b.target && Math.hypot(b.vel.x, b.vel.z) > 0.5) {
       const want = Math.atan2(-b.vel.x, -b.vel.z);
       let d = want - b.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -260,11 +282,45 @@ export function createBots(ctx) {
     if (best && best.id !== b.victim?.id) b.nextShot = Math.max(b.nextShot, clock + reactOf(b.skill) + Math.random() * 0.3);
     b.target = best ? best.pos.clone() : null;
     b.victim = best;
+    b.breakKey = null;
+    if (best || b.gliding) return;
+    // никого не видно — но игрока рядом «чувствуем» сквозь стены: идём к нему; если между нами постройка — ломаем
+    let near = null, nd = AWARE;
+    for (const h of humans()) { const d = h.pos.distanceTo(b.pos); if (d < nd) { nd = d; near = h; } }
+    if (!near) return;
+    b.target = near.pos.clone();
+    const to = near.pos.clone().add(new THREE.Vector3(0, 1.1, 0)).sub(eye);
+    const hit = st.raycast(eye, to.clone().normalize(), Math.min(to.length(), BREAK_REACH));
+    if (hit?.e?.kind === 'piece') { b.breakKey = hit.e.k; b.breakAt = hit.point; }
+  }
+
+  // Ломать постройку: с оружием — стрелять по ней, без — бить киркой вплотную.
+  function breakPiece(b, now) {
+    const st = ctx.structures();
+    if (!b.breakKey || !st.has(b.breakKey)) { b.breakKey = null; return false; }
+    const p = b.breakAt, d = p.distanceTo(b.pos);
+    b.yaw = Math.atan2(-(p.x - b.pos.x), -(p.z - b.pos.z));
+    if (!b.gun) {
+      if (d > MELEE.reach + 0.8 || now < b.nextMelee) return true;
+      b.nextMelee = now + MELEE.rate;
+      ctx.combat().sfx('chop', b.pos);
+      ctx.damageStructure(b.breakKey, PICK_BUILD, false);
+      return true;
+    }
+    if (now < b.nextShot) return true;
+    const spec = WEAPONS[b.gun];
+    b.nextShot = now + Math.max(0.2, spec.rate * 1.6);
+    const eye = b.pos.clone().add(new THREE.Vector3(0, 1.5, 0));
+    const shot = { w: spec.rocket ? 'sniper' : b.gun, o: eye.toArray().map((v) => +v.toFixed(2)), e: [p.toArray().map((v) => +v.toFixed(2))] };
+    ctx.combat().onShot('bot', shot);
+    ctx.net()?.shot(shot);
+    ctx.damageStructure(b.breakKey, spec.rocket ? 250 : spec.pellets > 1 ? spec.dmg * 6 : spec.dmg, false);
+    return true;
   }
 
   function shoot(b, now) {
     const h = b.victim;
-    if (!h) return;
+    if (!h) { if (b.breakKey) breakPiece(b, now); return; }
     if (h.bot && !h.bot.alive) { b.victim = b.target = null; return; }
     if (!b.gun) {
       // кирка: бьёт, если вплотную
