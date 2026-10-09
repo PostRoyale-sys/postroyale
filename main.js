@@ -742,13 +742,13 @@ function upsertOther(peerId, d) {
   o.target = d;
   o.group.visible = d.a !== false && !d.rd;     // наблюдателей и сидящих в вертолёте не видно
   // Что в руках: тип g и редкость q из pose.
-  const gk = d.g ? `${d.g}:${d.q}` : '';
+  const gk = d.g ? `${d.g}:${d.q}:${d.wm || ''}` : '';
   if (o.gunKey !== gk) {
     if (o.gun) o.group.remove(o.gun);
     o.gun = null;
     o.gunKey = gk;
     if (d.g) {
-      o.gun = weaponModel(d.g, d.q || 0);
+      o.gun = weaponModel(d.g, d.q || 0, typeof d.wm === 'string' ? d.wm.slice(0, 4) : '');
       o.gun.position.set(0.34, 1.12, -0.25);
       if (d.g === 'bazooka') o.gun.position.set(0.32, 1.5, 0.05);
       if (d.g === 'pickaxe') o.gun.rotation.x = 1.0;
@@ -878,7 +878,7 @@ function award(kind) {
   loadout.earn(kind);
   if (rankedMatch) ranked.add(kind);
 }
-const vm = createViewmodel(renderer, camera);
+const vm = createViewmodel(renderer, camera, (t) => gunsmith.key(t));
 const bots = createBots(ctx);
 const loadout = createLoadout({ onChange: () => { renderLoadout(); renderGunsmith(); } });
 const gunsmith = createGunsmith({ spend: (n) => loadout.spend(n), onChange: () => renderGunsmith() });
@@ -1168,7 +1168,7 @@ function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: nick, a: royale.alive, rr: royale.round };
   const w = holding();
-  if (w) { d.g = w.type; d.q = w.rarity; }
+  if (w) { d.g = w.type; d.q = w.rarity; const mk = gunsmith.key(w.type); if (mk) d.wm = mk; }
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
@@ -1512,20 +1512,21 @@ setInterval(() => {
 let mySkin = 'default';
 try { mySkin = localStorage.getItem('pr:skin') || 'default'; } catch (e) { /* по умолчанию */ }
 const levelNow = () => Math.floor(season.stats.points / 500) + 1;
-if (!unlocked(skinById(mySkin), levelNow(), season.tier, ranked.owns)) mySkin = 'default';
+const ownsSkin = (id) => ranked.owns(id) || loadout.ownsSkin(id);
+if (!unlocked(skinById(mySkin), levelNow(), season.tier, ownsSkin)) mySkin = 'default';
 
 function renderLocker() {
   const lvl = levelNow();
   $('locker').innerHTML = '';
   for (const s of SKINS) {
-    const open = unlocked(s, lvl, season.tier, ranked.owns);
+    const open = unlocked(s, lvl, season.tier, ownsSkin);
     const c = document.createElement('button');
     c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${open ? '' : ' locked'}`;
     const col = `#${(s.body ?? 0x8b5cff).toString(16).padStart(6, '0')}`;
     c.style.setProperty('--sc', col);
     c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${open ? RARITY[s.rarity].name : lockLabel(s)}</small>`;
     c.addEventListener('click', () => {
-      if (!open) { $('lockerhint').textContent = s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
+      if (!open) { $('lockerhint').textContent = s.coin ? `Buy it in the Shop for 🪙${s.coin} — coins drop in every match` : s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
       mySkin = s.id;
       try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
       $('lockerhint').textContent = `Equipped: ${s.name}`;
@@ -1655,6 +1656,26 @@ $('rk-verify').addEventListener('click', async () => {
 $('rk-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('rk-verify').click(); });
 
 function renderShop() {
+  // премиум-скины за монеты
+  $('shopcoins').textContent = loadout.coins.toLocaleString('en');
+  $('shopcoin').innerHTML = '';
+  for (const s of SKINS.filter((x) => x.coin)) {
+    const own = loadout.ownsSkin(s.id);
+    const c = document.createElement('button');
+    c.className = `skin r${s.rarity}${s.id === mySkin ? ' on' : ''}${!own && loadout.coins < s.coin ? ' cant' : ''}`;
+    c.style.setProperty('--sc', `#${s.body.toString(16).padStart(6, '0')}`);
+    c.innerHTML = `<i>${s.icon}</i><b>${s.name}</b><small>${RARITY[s.rarity].name} skin</small><span class="price${own ? ' own' : ''}">${own ? (s.id === mySkin ? 'Equipped' : 'Equip') : `🪙 ${s.coin}`}</span>`;
+    c.addEventListener('click', () => {
+      if (own || loadout.buySkin(s.id, s.coin)) {
+        mySkin = s.id;
+        try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
+        $('shophint').textContent = own ? `Equipped: ${s.name}` : `✓ Bought ${s.name} — equipped`;
+        makeHero();
+      } else $('shophint').textContent = `Need ${s.coin - loadout.coins} more 🪙 — coins drop in every match`;
+      renderShop();
+    });
+    $('shopcoin').appendChild(c);
+  }
   $('shop').innerHTML = '';
   for (const it of SHOP) {
     const own = ranked.owns(it.id), equipped = it.kind === 'pad' && ranked.pad === it.id;

@@ -44,6 +44,8 @@ export function createGunsmith(ctx) {
       ctx.onChange?.();
       return true;
     },
+    // Какие обвесы видны на модели: буквы o/m/g/s (см. viewmodel.js).
+    key: (gun) => ['optic', 'mag', 'grip', 'speed'].filter((id) => has(gun, id)).map((id) => id[0]).join(''),
     // Итоговые множители для оружия этого типа.
     stats(gun) {
       const m = GUN_MODS[gun] || {};

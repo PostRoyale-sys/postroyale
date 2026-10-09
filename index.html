@@ -403,6 +403,9 @@
   #ads[data-dot="acog"] { background: radial-gradient(circle at center, transparent 0 27vh, #000 27.5vh); }
   #ads[data-dot="acog"] i { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 14px solid #ff7a1a; filter: drop-shadow(0 0 4px #ff7a1a); margin-top: 7px; }
   #ads[data-dot="acog"] i::after { content: ""; position: absolute; left: -1px; top: 14px; width: 2px; height: 22vh; background: rgba(0,0,0,.8); }
+  .shopscroll { max-height: 64vh; overflow: auto; padding-right: 4px; }
+  .shoph { margin: 4px 0 8px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; opacity: .7; }
+  .shoph:not(:first-child) { margin-top: 16px; }
   /* Gunsmith */
   .gslist { display: flex; flex-direction: column; gap: 10px; max-height: 64vh; overflow: auto; padding-right: 4px; }
   .gsrow { display: grid; grid-template-columns: 120px repeat(4, 1fr); gap: 8px; align-items: stretch; }
@@ -583,9 +586,14 @@
 
     <section class="tab" id="tab-shop">
       <div class="glass lockerp">
-        <h3>Shop <span class="rpbal"><em id="shoprp">0</em> RP</span></h3>
-        <div class="lgrid" id="shop"></div>
-        <p id="shophint">Earn RP in Ranked matches. Skins land in your Locker, pads go under your hero in the lobby.</p>
+        <h3>Shop <span class="rpbal coinbal">🪙 <em id="shopcoins">0</em> &nbsp;·&nbsp; <em id="shoprp">0</em> RP</span></h3>
+        <div class="shopscroll">
+          <h4 class="shoph">Premium skins · 🪙 coins</h4>
+          <div class="lgrid" id="shopcoin"></div>
+          <h4 class="shoph">Ranked rewards · RP</h4>
+          <div class="lgrid" id="shop"></div>
+        </div>
+        <p id="shophint">Premium skins cost 🪙 coins (earned in every match) and are yours forever. RP comes from Ranked. Skins land in your Locker, pads go under your hero.</p>
       </div>
     </section>
 
