@@ -97,6 +97,10 @@ export function createLobbyScene(scene, mapCenter) {
   heli.rotation.y = -2.4;
   g.add(heli);
 
+  // Самолётик с рекламным баннером: пролетает по небу за героем слева направо, по кругу.
+  const ad = buildAdPlane();
+  g.add(ad.group);
+
   scene.add(g);
   g.updateMatrixWorld(true);
 
@@ -118,6 +122,89 @@ export function createLobbyScene(scene, mapCenter) {
       const look = tmp.set(heroLocal.x - 0.95 - shift * 0.85, heroLocal.y + 1.45, heroLocal.z - 4).applyMatrix4(g.matrixWorld);
       cam.lookAt(look);
     },
-    tick(t) { heli.userData.tick(t * 0.35); },
+    tick(t) { heli.userData.tick(t * 0.35); ad.tick(t); },
+  };
+}
+
+// ---------- Самолётик с баннером «ваша реклама» ----------
+
+const AD_TEXT = 'YOUR AD COULD BE HERE · DM ME';
+const AD_PERIOD = 22;                 // секунд на пролёт
+const AD_X0 = -75, AD_X1 = 95, AD_Y = 21, AD_Z = -30;
+
+function adTexture() {
+  const c = document.createElement('canvas');
+  c.width = 2048; c.height = 270;
+  const g = c.getContext('2d');
+  g.fillStyle = '#fff8e6'; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = '#ffc928'; g.fillRect(0, 0, c.width, 22); g.fillRect(0, c.height - 22, c.width, 22);
+  // шрифт — по ширине баннера, с полями
+  let size = 150;
+  g.font = `900 ${size}px "Arial Black", Arial, sans-serif`;
+  const w = g.measureText(AD_TEXT).width;
+  if (w > c.width * 0.92) size = Math.floor(size * (c.width * 0.92) / w);
+  g.fillStyle = '#7a2fd6'; g.font = `900 ${size}px "Arial Black", Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(AD_TEXT, c.width / 2, c.height / 2 + 4);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+function buildAdPlane() {
+  const group = new THREE.Group();
+  // самолёт смотрит носом в +X
+  const plane = new THREE.Group();
+  const white = toon(0xf4f4f8), gold = toon(0xffc928, { emissive: 0x3a2400 }), purple = toon(0x8b5cff), dark = toon(0x23262d);
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 3.2, 6, 12), white);
+  body.rotation.z = Math.PI / 2;
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.6, 12), gold);
+  nose.rotation.z = -Math.PI / 2; nose.position.x = 2.35;
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 6.4), purple);
+  wing.position.set(0.4, -0.05, 0);
+  const tailH = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.1, 2.2), purple);
+  tailH.position.set(-1.95, 0.15, 0);
+  const tailV = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.1, 0.1), gold);
+  tailV.position.set(-1.95, 0.65, 0);
+  const cabin = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 8), new THREE.MeshToonMaterial({ color: 0x9fe3ff, emissive: 0x0a3050 }));
+  cabin.position.set(0.7, 0.45, 0); cabin.scale.set(1.4, 0.8, 0.9);
+  const prop = new THREE.Group();
+  prop.position.x = 2.7;
+  for (let i = 0; i < 2; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.7, 0.18), dark); b.rotation.x = i * Math.PI / 2; prop.add(b); }
+  const blur = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24), new THREE.MeshBasicMaterial({ color: 0x23262d, transparent: true, opacity: 0.15, depthWrite: false, side: THREE.DoubleSide }));
+  blur.rotation.y = Math.PI / 2; prop.add(blur);
+  plane.add(body, nose, wing, tailH, tailV, cabin, prop);
+  outlineGroup(plane, 0.05);
+  group.add(plane);
+
+  // трос и баннер позади самолёта
+  const BW = 24, BH = 3.2, GAP = 5;
+  const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, GAP, 4), dark);
+  rope.rotation.z = Math.PI / 2; rope.position.set(-2.2 - GAP / 2, -0.2, 0);
+  const bannerGeo = new THREE.PlaneGeometry(BW, BH, 24, 1);
+  const tex = adTexture();
+  const front = new THREE.Mesh(bannerGeo, new THREE.MeshBasicMaterial({ map: tex, color: 0xcfcfcf, side: THREE.FrontSide }));   // чуть темнее — не пересвечивается bloom
+  const back = new THREE.Mesh(bannerGeo, new THREE.MeshBasicMaterial({ color: 0xe8dcc0, side: THREE.BackSide }));
+  const banner = new THREE.Group();
+  banner.add(front, back);
+  banner.position.set(-2.2 - GAP - BW / 2, -0.4, 0);
+  group.add(rope, banner);
+  const base = bannerGeo.attributes.position.array.slice();
+
+  return {
+    group,
+    tick(t) {
+      const k = (t % AD_PERIOD) / AD_PERIOD;
+      group.position.set(AD_X0 + (AD_X1 - AD_X0) * k, AD_Y + Math.sin(t * 0.8) * 0.8, AD_Z);
+      plane.rotation.x = Math.sin(t * 1.3) * 0.08;           // лёгкое покачивание крыльями
+      prop.rotation.x = t * 40;
+      // баннер полощется: волна бежит от самолёта к хвосту баннера
+      const p = bannerGeo.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        const x = base[i * 3], u = (BW / 2 - x) / BW;          // 0 у троса … 1 на конце
+        p.setZ(i, Math.sin(t * 6 + x * 0.45) * 0.45 * u);
+      }
+      p.needsUpdate = true;
+    },
   };
 }
