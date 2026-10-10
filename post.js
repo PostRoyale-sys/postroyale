@@ -30,7 +30,7 @@ export class AOPass extends Pass {
           if (dot(n, p) > 0.0) n = -n;
           float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
           float ang = noise * 6.2832;
-          float rad = uRadius * uProj[1][1] / -p.z * 0.5;          // радиус в долях экрана
+          float rad = min(uRadius * uProj[1][1] / -p.z * 0.5, 0.04);   // радиус в долях экрана; вплотную к стене — не больше 4% экрана
           float ao = 0.0;
           for (int i = 0; i < 12; i++) {
             float fi = float(i);
@@ -42,7 +42,7 @@ export class AOPass extends Pass {
             ao += max(dot(n, v) / (dist + 0.001) - 0.45, 0.0) * (1.0 - smoothstep(uRadius * 0.6, uRadius * 2.0, dist));   // 0.45 — пологие стыки рельефа не затеняются, углы стен — да
           }
           ao = 1.0 - clamp(ao / 12.0 * uStrength, 0.0, 0.7);
-          ao = mix(1.0, ao, 1.0 - smoothstep(45.0, 80.0, -p.z));
+          ao = mix(1.0, ao, (1.0 - smoothstep(45.0, 80.0, -p.z)) * smoothstep(1.0, 2.5, -p.z));   // ближе 1–2.5 м — без AO (шум и пятна)
           gl_FragColor = vec4(ao, ao, ao, 1.0);
         }`,
     });
