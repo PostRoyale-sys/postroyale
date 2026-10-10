@@ -5,7 +5,8 @@
 // Адрес сервера: ?mm=<ws-адрес> → он; локальная разработка (127.0.0.1/localhost) → ws://127.0.0.1:8770; иначе — MM_URLS
 // по очереди (не открылся первый — пробуем следующий).
 
-const MM_URLS = ['wss://mm.postroyale.xyz', 'wss://postroyale-mm.193-233-233-118.sslip.io'];
+// sslip.io — наш VPS напрямую (работает всегда); mm.postroyale.xyz — когда в DNS будет A-запись mm → 193.233.233.118
+const MM_URLS = ['wss://postroyale-mm.193-233-233-118.sslip.io', 'wss://mm.postroyale.xyz'];
 const ACTIONS = ['pose', 'edit', 'sync', 'chat', 'shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win', 'bots', 'bothit', 'abil', 'match', 'duel'];
 
 export function mmUrls() {
