@@ -2278,6 +2278,9 @@ window.__pc = {
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),
   mainLoop,
+  // съёмка ролика: «чистый» кадр между сценами — не в вертолёте, не в полёте, без стройки и дрона
+  cut() { riding = false; flight = null; heli.visible = false; gliding = false; chute = false; prone = false; exitBuild(); vel.set(0, 0, 0); },
+  exitBuild: () => exitBuild(),
   vec: (x, y, z) => new THREE.Vector3(x, y, z),
   flightDir: () => flight?.dir || new THREE.Vector3(0, 0, -1),
   camYaw: () => new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y,
