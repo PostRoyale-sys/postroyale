@@ -1047,7 +1047,9 @@ const minimap = createMinimap({
   heliPos: () => (flight ? heliPos(new THREE.Vector3()) : null),
 });
 minimap.setWorld(world);
-const vm = createViewmodel(renderer, camera, (t) => gunsmith.key(t), (t) => wskins.finishOf(t));
+// руки от первого лица — в цветах скина (рукав — тело скина, кисти — его кожа)
+const vm = createViewmodel(renderer, camera, (t) => gunsmith.key(t), (t) => wskins.finishOf(t),
+  () => { const s = skinById(mySkin); return { sleeve: s.body ?? colorOf(nick), skin: s.skin ?? 0xffd2a8 }; });
 const bots = createBots(ctx);
 const loadout = createLoadout({ onChange: () => { renderLoadout(); renderGunsmith(); } });
 const gunsmith = createGunsmith({ spend: (n) => loadout.spend(n), onChange: () => renderGunsmith() });
@@ -2503,8 +2505,10 @@ const mainLoop = (now) => {
   countFps(now);
   if (playing && !riding && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
     const h = holding();
-    vm.set(h);
-    vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
+    const inHand = h || (ENTRIES[slot].med && !buildType && combat.meds ? { type: 'medkit', rarity: 0 } : null);   // слот 5 — аптечка в руке
+    const run = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && moving && onGround;
+    vm.set(inHand);
+    vm.render(dt, { moving: moving && onGround, running: run, reload: combat.reloading, heal: combat.healing, scoped: isScoped(), loaded: !!inHand && (inHand.mag === undefined || inHand.mag > 0) });
   }
   window.__frameHook?.(dt, t);                   // запись промо-видео: кадр готов
 };
@@ -2569,7 +2573,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),
