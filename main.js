@@ -72,7 +72,8 @@ $('nick').value = nick;
 // ---------- Сцена ----------
 
 // Мультяшный стиль: cel-затенение (MeshToonMaterial), мягкие тени от солнца, градиентное небо, облака, бирюзовое море.
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// ?rec — запись промо-видео (brand/trailer.js): кадр должен оставаться в буфере, чтобы его скопировать.
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: params.has('rec') });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2098,7 +2099,8 @@ if (!params.has('shot')) {
 // ---------- Цикл ----------
 
 let last = performance.now();
-renderer.setAnimationLoop((now) => {
+// Главный цикл кадра. Вынесен в функцию: запись промо-видео (brand/trailer.js) вызывает его сама, покадрово.
+const mainLoop = (now) => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   const t = now / 1000;
@@ -2208,7 +2210,9 @@ renderer.setAnimationLoop((now) => {
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
   }
-});
+  window.__frameHook?.(dt, t);                   // запись промо-видео: кадр готов
+};
+renderer.setAnimationLoop(mainLoop);
 
 // Режим съёмки для промо (?shot=x,z,высота,yaw,pitch): старт без экрана входа, без интерфейса и сети,
 // камера в заданной точке. Используется для шапки/аватарки в X: headless Chrome делает скриншот.
@@ -2272,7 +2276,11 @@ window.__pc = {
   combat, loot, pick, royale, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
-  get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: () => jumpOut(),
+  get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),
+  mainLoop,
+  vec: (x, y, z) => new THREE.Vector3(x, y, z),
+  flightDir: () => flight?.dir || new THREE.Vector3(0, 0, -1),
+  camYaw: () => new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y,
   set debugView(v) { debugView = v; $('cross').hidden = !v; $('pause').hidden = v; },
   tp(x, z, up = 0, y = 999) { feet.set(x, structures.ground(x, z, y) + 0.01 + up, z); gliding = false; player.position.set(feet.x, feet.y + EYE, feet.z); },
   look(yaw, pitch = 0) { camera.rotation.set(pitch, yaw, 0, 'YXZ'); },

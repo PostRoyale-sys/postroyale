@@ -123,10 +123,22 @@ export function createCombat(ctx) {
     addFx(line, 0.12, (k) => { line.material.opacity = 1 - k; });
   }
 
-  function explosionFx(p) {
+  // mult > 1 (взрыв машины) — шар крупнее и дольше, плюс клубы дыма, которые поднимаются и тают.
+  function explosionFx(p, mult = 1) {
     const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffa31a, transparent: true }));
     ball.position.copy(p);
-    addFx(ball, 0.5, (k) => { ball.scale.setScalar(0.5 + k * BLAST_R); ball.material.opacity = 1 - k; });
+    addFx(ball, 0.5 * mult, (k) => { ball.scale.setScalar(0.5 + k * BLAST_R * mult); ball.material.opacity = 1 - k; });
+    if (mult > 1) {
+      const core = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial({ color: 0xfff1a8, transparent: true }));
+      core.position.copy(p);
+      addFx(core, 0.35, (k) => { core.scale.setScalar(0.6 + k * 3.2); core.material.opacity = 1 - k; });
+      for (let i = 0; i < 5; i++) {
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshLambertMaterial({ color: 0x3a3a40, transparent: true, depthWrite: false }));
+        const off = new THREE.Vector3((Math.random() - 0.5) * 3, 0.5 + i * 0.6, (Math.random() - 0.5) * 3);
+        puff.position.copy(p).add(off);
+        addFx(puff, 1.8, (k, dt) => { puff.position.y += dt * 2.2; puff.scale.setScalar(1 + k * 2.5); puff.material.opacity = 0.75 * (1 - k); });
+      }
+    }
     for (let i = 0; i < 14; i++) {
       const cube = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 0.25), new THREE.MeshLambertMaterial({ color: i % 2 ? 0x6b5a45 : 0x8a8a90 }));
       cube.position.copy(p);
@@ -267,7 +279,7 @@ export function createCombat(ctx) {
   }
 
   function explode(p, own, mult = 1) {
-    explosionFx(p);
+    explosionFx(p, mult);
     if (!own) return;
     for (const [k, dmg] of ctx.structures().blast(p, EXPLODE_R, BUILD_DMG * mult)) ctx.damageStructure(k, dmg, false);
     for (const t of targets()) {
