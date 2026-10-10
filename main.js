@@ -16,6 +16,7 @@ import { GameMap, MAP, WATER_Y, rng, seedOf } from './map.js';
 import { toonGradient, toon, windUniform, outlineGroup } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
+import { findMatch } from './mm.js';
 import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel, rayBox } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
@@ -57,6 +58,9 @@ const randId = () => Math.random().toString(36).slice(2, 10);
 // шлёт «duel» { go } — у обоих отсчёт 3-2-1 и бой с готовым набором (оружие, щит, материалы), без ботов.
 const isDuelWorld = (id) => /^duel-[a-z0-9]{1,10}-[a-z0-9]{1,10}-[a-z0-9]{3,8}$/.test(id || '');
 const duelTickers = (id) => { const [, a, b] = id.split('-'); return { a: `$${a.toUpperCase()}`, b: `$${b.toUpperCase()}` }; };
+// Online-матч с сервера (mm.js): мир mm-<код>; mmMatch — найденный матч, mmSearch — идёт поиск.
+const isOnlineWorld = (id) => /^mm-[a-f0-9]{6}$/.test(id || '');
+let mmMatch = null, mmSearch = null;
 const cleanTicker = (v) => v.trim().replace(/^\$+/, '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
 const linkDuel = isDuelWorld(params.get('w')) ? params.get('w') : null;     // пришли по ссылке-вызову
 let duelSide = 'a', duelGoAt = 0;
@@ -876,6 +880,7 @@ const ctx = {
   me: () => ({ alive: royale.alive, riding, nick, feet, prone }),
   upsert: (k, d) => upsertOther(k, d),
   removeBots, isHost, hostId,
+  botCount: () => mmMatch?.bots,
   isDuel: () => isDuelWorld(worldId),
   onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
   blocksSight: (a, b) => abilities.blocksSight(a, b),
@@ -992,8 +997,14 @@ function sendHit(id, d) {
   if (id.startsWith('bot:')) bots.hit(id, d);
   else net?.hit(d, id);
 }
-// Хост ботов — игрок с наименьшим сетевым id (оффлайн — ты).
-function hostId() { return net ? [net.selfId, ...peers].sort()[0] : 'me'; }
+// Хост ботов — игрок с наименьшим сетевым id среди тех, у кого вкладка открыта (свёрнутая вкладка не крутит кадры —
+// боты бы замерли у всех); все свернули — просто наименьший id. Оффлайн — ты.
+function hostId() {
+  if (!net) return 'me';
+  const all = [net.selfId, ...peers];
+  const awake = all.filter((id) => (id === net.selfId ? !document.hidden : !others.get(id)?.target?.hd));
+  return (awake.length ? awake : all).sort()[0];
+}
 function isHost() { return !net || hostId() === net.selfId; }
 function removeBots() {
   for (const [k, o] of [...others]) if (k.startsWith('bot:')) { scene.remove(o.group); others.delete(k); }
@@ -1232,10 +1243,10 @@ function onStructEdit(d) {
 
 let startNet = function () {
   try {
-    net = connect(worldId, {
+    net = (mmMatch ? mmMatch.connect : (h) => connect(worldId, h))({
       join(peerId) {
         peers.add(peerId);
-        if (!isRankedWorld(worldId) && !isDuelWorld(worldId)) net.match({ e: royale.epoch }, peerId);
+        if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && !mmMatch) net.match({ e: royale.epoch }, peerId);
         net.sync({ s: structures.syncList(), rr: royale.round }, peerId);
         net.pose(poseData(), peerId);
         loot.syncTo(peerId);
@@ -1263,11 +1274,12 @@ let startNet = function () {
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
       abil(peerId, d) { abilities.onNet(peerId, d); },
       // друг начал этот матч раньше — переходим на его отсчёт (раунд заново)
-      match(peerId, d) { if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
+      match(peerId, d) { if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && !mmMatch && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
       duel(peerId, d) { if (d && d.go > 0 && royale.duel === 'wait') duelCountdown(Math.min(d.go, Date.now() + 6000)); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
+      closed() { toast('Lost connection to the match server'); },
     });
     updateCount();
   } catch (e) {
@@ -1285,6 +1297,7 @@ function poseData() {
   if (season.tier >= 0) d.h = season.tier;
   if (mySkin !== 'default') d.k = mySkin;
   if (riding) d.rd = 1;
+  if (document.hidden) d.hd = 1;          // вкладка свёрнута — не годимся в хосты ботов
   if (prone) d.pr = 1; else if (crouching) d.cr = 1;
   if (gliding) { d.st = chute ? 'g' : 'f'; if (chute) d.pc = 1; } else if (!onGround) d.st = 'a';
   return d;
@@ -1302,6 +1315,7 @@ function sendPose(now) {
 
 // Пульс раз в 1.5 с — таймер работает и в фоновой вкладке (кадровый цикл там на паузе).
 setInterval(() => { if (net && world) net.pose(poseData()); }, 1500);
+document.addEventListener('visibilitychange', () => { if (net && world) net.pose(poseData()); });
 
 // ---------- Клавиши и пауза ----------
 
@@ -1416,9 +1430,16 @@ function start() {
     // Casual — матч с нуля: раунд начинается сейчас (друзья по ссылке подстроятся под самый ранний старт);
     // Ranked — общие часы (у всех рейтинговых игроков один раунд на острове дня).
     if (isDuelWorld(worldId)) { royale.setDuel('wait'); royale.init(Date.now(), Date.now() - 500); }
+    else if (mmMatch) {
+      // Online: игроки матча известны сразу — хост ботов определён до старта раунда; ботов столько, сколько дал сервер
+      royale.setDuel(null);
+      for (const id of mmMatch.ids) if (id !== mmMatch.self) peers.add(id);
+      startNet();
+      royale.init(Date.now(), Math.min(mmMatch.epoch, Date.now()));
+    }
     else { royale.setDuel(null); royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500); }
     pick(0);
-    $('wname').textContent = rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
+    $('wname').textContent = mmMatch ? `🌐 Online · ${mmMatch.ids.length} ${mmMatch.ids.length > 1 ? 'players' : 'player'} + ${mmMatch.bots} bots` : rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats', 'abil', 'credits']) $(id).hidden = false;
     renderAbilities();
@@ -1426,12 +1447,14 @@ function start() {
     $('pause').hidden = controls.isLocked;          // мышь захвачена кликом по PLAY — сразу в игру, без паузы
     $('cross').hidden = !controls.isLocked;
     document.title = `${worldId} — ${NAME}`;
-    startNet();
+    if (!net) startNet();
   }, 20);
 }
 // PLAY: вспышка и «вылет» из лобби, затем матч.
 $('go').addEventListener('click', () => {
   if (playing || $('go').disabled) return;
+  // Online: Play — встать в очередь, ещё раз — отменить поиск; матч найден — старт (findMatch → go)
+  if (gameMode === 'casual' && mode === 'online' && !mmMatch) { if (mmSearch) stopSearch('Search cancelled'); else beginSearch(); return; }
   if (gameMode === 'ranked' && !ranked.hasAccess()) {
     $('rk-msg').className = 'sub err';
     $('rk-msg').textContent = 'Unlock Ranked first: post on X and paste the link';
@@ -1446,14 +1469,64 @@ $('go').addEventListener('click', () => {
   setTimeout(start, 480);
 });
 
-$('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
-$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
+$('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').click(); });
+$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').click(); });
+
+// ---------- Online: поиск матча ----------
+// Очередь на сервере: первую минуту ищем живых игроков (боты подмешиваются понемногу), потом лобби
+// добивается ботами всё быстрее до полного и матч стартует. Сервер недоступен — предлагаем Private.
+const setGoLabel = (t) => { $('go').lastChild.textContent = t; };
+function beginSearch() {
+  nick = ($('nick').value.trim() || nick).slice(0, 16);
+  localStorage.setItem('pc:nick', nick);
+  $('go').classList.add('searching');
+  setGoLabel('Cancel');
+  $('status').classList.remove('result');
+  $('status').textContent = '🔎 Connecting to the match server…';
+  mmSearch = findMatch(nick, {
+    status(s) {
+      const filled = s.h + s.b;
+      $('tring').style.strokeDashoffset = (125.66 * (1 - filled / s.cap)).toFixed(1);
+      $('roundinfo').innerHTML = `<b class="live">● Searching ${mmss(s.s)}</b>👥 ${s.h} ${s.h > 1 ? 'players' : 'player'} · 🤖 ${s.b} bots · ${filled}/${s.cap}`;
+      $('status').textContent = s.s < s.wait ? `🔎 Finding players — bots fill the rest in ${Math.ceil(s.wait - s.s)}s` : '🤖 Filling the lobby with bots…';
+    },
+    go(m) {
+      mmSearch = null;
+      mmMatch = m;
+      $('go').classList.remove('searching');
+      setGoLabel('Play');
+      $('status').textContent = `✓ Match found — ${m.ids.length} ${m.ids.length > 1 ? 'players' : 'player'} + ${m.bots} bots`;
+      document.title = `Match found — ${NAME}`;
+      $('go').disabled = true;
+      $('flashout').classList.add('on');
+      $('lobby').classList.add('leaving');
+      setTimeout(start, 480);
+    },
+    fail(why) {
+      mmSearch = null;
+      $('go').classList.remove('searching');
+      setGoLabel('Play');
+      if (why === 'offline') setMode('new');      // сервер недоступен — следующий Play сразу запустит матч с ботами
+      $('status').textContent = why === 'offline' ? '⚠ Online servers are unavailable right now — switched to Private: hit Play to fight bots' : '⚠ Lost connection to the match server — hit Play to search again';
+      updateRoundInfo();
+    },
+  });
+}
+function stopSearch(msg) {
+  if (!mmSearch) return;
+  mmSearch.cancel();
+  mmSearch = null;
+  $('go').classList.remove('searching');
+  setGoLabel('Play');
+  $('status').textContent = msg || '';
+  updateRoundInfo();
+}
 
 // ---------- Лобби ----------
 // Фон — живой остров матча (камера облетает), по центру — твой персонаж с киркой. Вкладки: игра, сезон, правила, настройки.
 
 const lobbyNewId = randId();
-let mode = worldId ? 'join' : 'new';
+let mode = worldId && !isOnlineWorld(worldId) ? 'join' : 'online';
 const cleanCode = (v) => v.trim().toLowerCase().replace(/^.*[?&]w=/, '').replace(/[^a-z0-9_-]/g, '').slice(0, 24);
 let gameMode = isRankedWorld(worldId) ? 'ranked' : isDuelWorld(worldId) ? 'duel' : 'casual';
 // Дуэль: тикеры из полей; те же, что в ссылке-вызове, — тот же мир, иначе новый вызов.
@@ -1462,7 +1535,7 @@ function duelId() {
   if (linkDuel) { const t = duelTickers(linkDuel); if (t.a === `$${a.toUpperCase()}` && t.b === `$${b.toUpperCase()}`) return linkDuel; }
   return `duel-${a}-${b}-${lobbyNewId.slice(0, 6).replace(/[^a-z0-9]/g, 'x')}`;
 }
-const lobbyId = () => (gameMode === 'ranked' ? rankedWorld() : gameMode === 'duel' ? duelId() : mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
+const lobbyId = () => (mmMatch ? mmMatch.w : gameMode === 'ranked' ? rankedWorld() : gameMode === 'duel' ? duelId() : mode === 'join' ? cleanCode($('code').value) || lobbyNewId : lobbyNewId);
 // Итог прошлого раунда (возврат из матча): ?r=win|end&ws=имена.
 if (params.get('dr')) {
   const dr = params.get('dr'), [w, l] = dr.split('>');
@@ -1477,21 +1550,26 @@ if (params.get('dr')) {
 }
 if (isDuelWorld(worldId)) {
   if (!params.get('dr')) $('status').textContent = params.get('s') === 'b' ? `🥊 You've been challenged: ${duelTickers(worldId).b} vs ${duelTickers(worldId).a} — hit Play` : `🥊 Your duel ${duelTickers(worldId).a} vs ${duelTickers(worldId).b} — hit Play`;
-} else if (worldId && !isRankedWorld(worldId)) {
+} else if (worldId && !isRankedWorld(worldId) && !isOnlineWorld(worldId)) {
   $('code').value = worldId;
   $('status').textContent = `Invited to match “${worldId}” — hit Play to drop in with everyone on the link`;
 }
 
 function setMode(m) {
+  if (m !== mode) stopSearch();
   mode = m;
+  $('m-online').classList.toggle('on', m === 'online');
+  $('seg').classList.toggle('priv', m === 'new');
   $('m-new').classList.toggle('on', m === 'new');
   $('m-join').classList.toggle('on', m === 'join');
   $('seg').classList.toggle('join', m === 'join');
   $('code').hidden = m !== 'join';
   if (m === 'join') $('code').focus();
+  $('copyinv').parentElement.hidden = gameMode === 'ranked' || (gameMode === 'casual' && m === 'online');
   previewSoon();
   updateRoundInfo();
 }
+$('m-online').addEventListener('click', () => setMode('online'));
 $('m-new').addEventListener('click', () => setMode('new'));
 $('m-join').addEventListener('click', () => setMode('join'));
 
@@ -1870,6 +1948,7 @@ function closeOpen() { $('csopen').hidden = true; opening = false; renderCases()
 // ---------- Режимы: Casual / Ranked, допуск через пост в X, магазин за RP ----------
 
 function setGameMode(m) {
+  if (m !== gameMode) stopSearch();
   gameMode = m;
   setTimeout(updateRoundInfo, 0);
   $('modeseg').classList.toggle('ranked', m === 'ranked');
@@ -1908,7 +1987,7 @@ function renderRanked() {
   $('code').hidden = rk || du || mode !== 'join';
   $('pois').hidden = du;
   document.querySelector('.launch .hot').hidden = du;           // «горячая точка» высадки — не для дуэли
-  $('copyinv').parentElement.hidden = rk;
+  $('copyinv').parentElement.hidden = rk || (gameMode === 'casual' && mode === 'online');
   const a = ranked.access;
   $('rk-locked').hidden = !!a;
   $('rk-ok').hidden = !a;
@@ -1989,7 +2068,7 @@ $('shareinv').addEventListener('click', () => {
 
 // Состояние раунда в лобби: можно ли высадиться прямо сейчас.
 function updateRoundInfo() {
-  if (playing) return;
+  if (playing || mmSearch) return;
   if (gameMode === 'duel') {
     $('tring').style.strokeDashoffset = '0';
     const t = duelTickers(duelId());
@@ -1998,7 +2077,9 @@ function updateRoundInfo() {
   }
   if (gameMode === 'casual') {
     $('tring').style.strokeDashoffset = '0';
-    $('roundinfo').innerHTML = mode === 'join'
+    $('roundinfo').innerHTML = mode === 'online'
+      ? `<b class="live">● Online</b>Real players + bots · ${ROUND_MS / 60e3} min · starts in ≤1 min`
+      : mode === 'join'
       ? `<b class="live">● Friend's match</b>Drop in with everyone on the link`
       : `<b class="live">● Fresh match</b>Starts the moment you hit Play · ${ROUND_MS / 60e3} min`;
     return;

@@ -64,7 +64,7 @@ export function createBots(ctx) {
     const taken = new Set([ctx.me().nick]);
     const r = ctx.route();
     const drops = dropPlan(r);
-    for (let i = 0; i < COUNT; i++) {
+    for (let i = 0; i < drops.length; i++) {
       const { jumpD, drop } = drops[i];
       const [lo, hi] = ctx.isRanked?.() ? SKILL.ranked : SKILL.casual;
       bots.set(i, {
@@ -90,7 +90,8 @@ export function createBots(ctx) {
     const pois = (w.pois || []).filter((p) => inRange(p) && inZone(p));
     const used = new Map();
     const out = [];
-    for (let i = 0; i < COUNT; i++) {
+    const n = ctx.botCount?.() ?? COUNT;          // Online — сколько выдал сервер, иначе COUNT
+    for (let i = 0; i < n; i++) {
       let drop = null;
       const free = pois.filter((p) => (used.get(p.name) || 0) < 4);
       if (free.length && Math.random() < 0.6) {
@@ -422,7 +423,7 @@ export function createBots(ctx) {
     ctx.net()?.bots({ l: list });
   }
 
-  let wasHost = false;
+  let wasHost = false, lastTick = performance.now();
   return {
     get list() { return bots; },
     // Новый раунд: у хоста — свежие боты; у остальных — убрать старых.
@@ -445,8 +446,16 @@ export function createBots(ctx) {
       for (const [id, pose] of d.l || []) if (pose.rr === round) ctx.upsert(key(id), pose);
     },
     update(dt) {
+      // кадры стояли (вкладка была свёрнута), а в матче есть другие люди — хостом в это время был другой,
+      // наши боты устарели: забываем их и подхватываем актуальных с его позиций
+      const tick = performance.now();
+      if (tick - lastTick > 2000 && [...ctx.others.keys()].some((k) => !k.startsWith('bot:'))) { bots.clear(); wasHost = false; }
+      lastTick = tick;
       const host = ctx.isHost();
-      if (host && !wasHost && round >= 0 && !bots.size) adoptFromOthers();   // хост сменился — подхватываем
+      if (host && !wasHost && round >= 0 && !bots.size) {
+        adoptFromOthers();                                                       // хост сменился — подхватываем
+        if (!bots.size && !ctx.isDuel?.() && !ctx.royale().ended) spawnAll();     // прошлый хост так и не выпустил ботов — свои
+      }
       if (!host && wasHost) bots.clear();                                       // хостом стал другой — его боты главнее
       wasHost = host;
       if (!host || round < 0 || ctx.royale().ended) return;

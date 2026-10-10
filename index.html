@@ -129,6 +129,11 @@
   .seg button.on { color: #1b1450; }
   .seg::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 10px; background: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.25); transition: transform .4s cubic-bezier(.2,.9,.25,1.15); }
   .seg.join::before { transform: translateX(100%); }
+  #seg { grid-template-columns: 1fr 1fr 1fr; }
+  #seg::before { width: calc(33.333% - 2.67px); }
+  #seg.priv::before { transform: translateX(100%); }
+  #seg.join::before { transform: translateX(200%); }
+  #go.searching { background: linear-gradient(180deg, #ff8a7a, #ff3b5a); }
   .mcard input#code { width: 100%; box-sizing: border-box; background: rgba(0,0,0,.28); font: 600 15px Inter, var(--font); letter-spacing: .06em; }
   .mcard input#code:focus { box-shadow: inset 0 0 0 2px var(--yellow); }
   .mrow { display: flex; gap: 8px; }
@@ -524,7 +529,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -619,7 +624,7 @@
             <div class="duelrow"><input id="du-a" placeholder="$PEPE" maxlength="11" autocomplete="off" spellcheck="false"><span class="vs">VS</span><input id="du-b" placeholder="$DOGE" maxlength="11" autocomplete="off" spellcheck="false"></div>
             <p class="sub" id="du-side"></p>
           </div>
-          <div class="seg" id="seg"><button id="m-new" class="on">New match</button><button id="m-join">Join with code</button></div>
+          <div class="seg" id="seg"><button id="m-online" class="on">🌐 Online</button><button id="m-new">Private</button><button id="m-join">Join code</button></div>
           <input id="code" maxlength="64" placeholder="Paste a code or link" autocomplete="off" spellcheck="false" hidden>
           <div class="mrow"><button class="ghost" id="copyinv">🔗 Copy invite</button><button class="ghost" id="shareinv">𝕏 Invite on X</button></div>
           <div class="pois" id="pois"></div>
