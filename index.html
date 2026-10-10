@@ -385,7 +385,7 @@
   body.shot #minimap { display: none !important; }
   #fps { position: fixed; right: 14px; top: 66px; z-index: 40; padding: 4px 9px; border-radius: 8px; background: rgba(11,13,18,.6); font: 700 11.5px/1.2 ui-monospace, Menlo, monospace; pointer-events: none; }
   #fps.good { color: #7dffb0; } #fps.ok { color: #ffd81a; } #fps.bad { color: #ff6b6b; }
-  body.shot #fps { display: none !important; }
+  body.shot #fps, body.shothud #fps, body.shotclean #fps { display: none !important; }
   #toast { z-index: 70; position: fixed; top: 60px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px; background: #e7e9ea; color: #0f1419; font-weight: 800; }
   #bars { position: fixed; left: 20px; bottom: 22px; width: 300px; display: flex; flex-direction: column; gap: 4px; font-weight: 800; font-size: 12px; text-shadow: 0 1px 2px #000; }
   #bars .row2 { display: flex; align-items: center; gap: 8px; }
@@ -516,8 +516,8 @@
     -webkit-text-stroke: 1.5px #1a2a8a; text-shadow: 0 4px 0 #1a2a8a; pointer-events: none; opacity: 0; white-space: nowrap; }
   #poi.on { animation: poi 3.2s ease-out; }
   @keyframes poi { 0% { opacity: 0; transform: translate(-50%, 8px); } 12%, 75% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
-  body.shot #poi { display: none !important; }
-  body.shot #splash, body.shot #flashout { display: none !important; }
+  body.shot #poi, body.shothud #poi { display: none !important; }
+  body.shot #splash, body.shot #flashout, body.shothud #splash, body.shothud #flashout, body.shot #stormtint, body.shothud #stormtint { display: none !important; }
 </style>
 <script>
   // Карта импортов строится здесь: файлы игры грузятся с меткой версии (?v=время загрузки страницы),

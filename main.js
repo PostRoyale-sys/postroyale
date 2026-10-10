@@ -2212,14 +2212,26 @@ renderer.setAnimationLoop((now) => {
 
 // Режим съёмки для промо (?shot=x,z,высота,yaw,pitch): старт без экрана входа, без интерфейса и сети,
 // камера в заданной точке. Используется для шапки/аватарки в X: headless Chrome делает скриншот.
+// ?clean — без счётчика FPS (скриншоты для README). Вкладка лобби из адреса (#locker, #cases, #gunsmith …).
+if (params.has('clean')) document.body.classList.add('shotclean');
+if (location.hash.length > 1 && !params.has('shot')) setTimeout(() => document.querySelector(`#tabs [data-tab="${location.hash.slice(1)}"]`)?.click(), 300);
+
 if (params.has('shot')) {
   const [x = 80, z = 80, up = 20, yaw = -2.3, pitch = -0.3] = params.get('shot').split(',').map(Number);
-  document.body.classList.add('shot');
+  const hud = params.has('hud');                        // &hud=1 — кадр «как в игре»: интерфейс, миникарта, автомат в руках
+  document.body.classList.add(hud ? 'shothud' : 'shot');
   startNet = () => {};
   $('nick').value = 'Demo';
   start();
   setTimeout(() => {
-    for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross', 'mats']) $(id).hidden = true;
+    for (const id of hud ? ['banner', 'pause'] : ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'banner', 'pause', 'cross', 'mats', 'abil', 'credits']) $(id).hidden = true;
+    if (hud) {
+      debugView = true; $('cross').hidden = false;
+      for (const it of [{ k: 'weapon', w: 'ar', r: 3 }, { k: 'weapon', w: 'shotgun', r: 2 }, { k: 'ammo', w: 'medium', a: 120 }, { k: 'armor', a: 50 }]) combat.give(it);
+      mats.wood = 240; mats.brick = 120; mats.metal = 60; renderMats();
+      pick(1);
+      if (params.has('map')) setTimeout(() => minimap.toggle(true), 400);   // &map=1 — с открытой большой картой
+    }
     feet.set(x, world.height(x, z) + up, z);
     player.position.set(feet.x, feet.y + EYE, feet.z);
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
