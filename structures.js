@@ -225,7 +225,10 @@ export function createStructures({ scene }) {
   }
   function removeEntry(e) {
     if (e.kind === 'piece') { hide(e); unindex(e); pieces.delete(e.k); }
-    else { e.hp = 0; unindex(e); e.mesh.setMatrixAt(e.inst, ZERO); e.mesh.instanceMatrix.needsUpdate = true; }
+    else {
+      e.hp = 0; unindex(e); e.mesh.setMatrixAt(e.inst, ZERO); e.mesh.instanceMatrix.needsUpdate = true;
+      if (e.far && imp) { imp[e.type].mesh.setMatrixAt(e.imp, ZERO); imp[e.type].mesh.instanceMatrix.needsUpdate = true; e.far = false; }
+    }
   }
   const entryOf = (k) => (k.startsWith('o:') ? objects[+k.slice(2)] : pieces.get(k));
 
@@ -248,6 +251,8 @@ export function createStructures({ scene }) {
     for (const p of map.pieces) addPiece(p, true);
     for (const o of objects) {
       o.hp = o.max;
+      if (o.far && imp) { imp[o.type].mesh.setMatrixAt(o.imp, ZERO); imp[o.type].mesh.instanceMatrix.needsUpdate = true; }
+      o.far = false;
       o.mesh.setMatrixAt(o.inst, objMatrix(o, true));
       o.mesh.instanceMatrix.needsUpdate = true;
       index(o);
@@ -259,6 +264,7 @@ export function createStructures({ scene }) {
     for (const mesh of objMeshes.values()) { scene.remove(mesh, mesh.userData.outline); mesh.dispose(); }
     objMeshes.clear();
     objects.length = 0;
+    if (imp) { for (const k of Object.keys(imp)) { scene.remove(imp[k].mesh); imp[k].mesh.dispose(); } imp = null; }
     const kinds = new Map();
     const keyOf = (o) => (o.kind === 'car' ? `car${o.color}` : o.kind);
     for (const o of [...map.objects, ...map.decor]) kinds.set(keyOf(o), (kinds.get(keyOf(o)) || 0) + 1);
@@ -461,8 +467,74 @@ export function createStructures({ scene }) {
     }
   }
 
+  // ---------- Дальние деревья (LOD) ----------
+  // Дальше LOD_D м дерево рисуется карточкой с заранее отрисованным изображением (одна плоскость вместо сотен
+  // треугольников, без контура и тени), карточка всегда повёрнута к камере вокруг вертикали. С высоты (вертолёт,
+  // парашют) карточки заметны — там все деревья полные. Пересчёт — не чаще 4 раз в секунду.
+  const LOD_D = 110, LOD_HIGH = 30;
+  let imp = null, lodT = 0;
+  function bakeImpostor(renderer, geo) {
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox, w = Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z), h = bb.max.y - bb.min.y;
+    const rt = new THREE.WebGLRenderTarget(128, 256);
+    const sc = new THREE.Scene();
+    sc.add(new THREE.Mesh(geo, vcMaterial()));
+    sc.add(new THREE.HemisphereLight(0xd8efff, 0x7a6a48, 1.25));
+    const sun = new THREE.DirectionalLight(0xfff0d8, 1.9); sun.position.set(-0.45, 1, 0.8); sc.add(sun);
+    const cam = new THREE.OrthographicCamera(-w / 2, w / 2, bb.max.y, bb.min.y, -50, 50);
+    cam.position.set(0, 0, 10); cam.lookAt(0, 0, 0);
+    const prevRT = renderer.getRenderTarget(), prevC = renderer.getClearColor(new THREE.Color()), prevA = renderer.getClearAlpha();
+    renderer.setRenderTarget(rt); renderer.setClearColor(0x2a5a30, 0); renderer.clear(); renderer.render(sc, cam);
+    renderer.setRenderTarget(prevRT); renderer.setClearColor(prevC, prevA);
+    const plane = new THREE.PlaneGeometry(w, h).translate(0, bb.min.y + h / 2, 0);
+    const mat = new THREE.MeshBasicMaterial({ map: rt.texture, alphaTest: 0.5 });
+    mat.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', `
+        vec3 cw = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        float scl = length(instanceMatrix[0].xyz);
+        vec3 toCam = cameraPosition - cw; toCam.y = 0.0;
+        vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
+        vec4 mvPosition = viewMatrix * vec4(cw + right * position.x * scl + vec3(0.0, position.y * scl, 0.0), 1.0);
+        gl_Position = projectionMatrix * mvPosition;`);
+    };
+    mat.customProgramCacheKey = () => 'impostor';
+    return { plane, mat };
+  }
+  function lod(renderer, cam) {
+    const now = performance.now();
+    if (now - lodT < 250 || !map) return;
+    lodT = now;
+    if (!imp) {
+      imp = {};
+      for (const kind of ['oak', 'pine']) {
+        const n = objects.filter((o) => o.type === kind).length;
+        if (!n) continue;
+        const { plane, mat } = bakeImpostor(renderer, kind === 'oak' ? oakGeometry() : pineGeometry());
+        const mesh = new THREE.InstancedMesh(plane, mat, n);
+        mesh.frustumCulled = false;
+        for (let i = 0; i < n; i++) mesh.setMatrixAt(i, ZERO);
+        scene.add(mesh);
+        imp[kind] = { mesh, next: 0 };
+      }
+      for (const o of objects) if (imp[o.type]) { o.imp = imp[o.type].next++; o.far = false; }
+    }
+    const high = cam.y - map.height(cam.x, cam.z) > LOD_HIGH;
+    const dirty = new Set();
+    for (const o of objects) {
+      if (o.imp === undefined) continue;
+      const far = !high && o.hp > 0 && Math.hypot(o.x - cam.x, o.z - cam.z) > LOD_D;
+      if (far === o.far) continue;
+      o.far = far;
+      if (o.hp > 0) { o.mesh.setMatrixAt(o.inst, objMatrix(o, !far)); dirty.add(o.mesh); }
+      const im = imp[o.type].mesh;
+      im.setMatrixAt(o.imp, far ? objMatrix(o, true) : ZERO);
+      dirty.add(im);
+    }
+    for (const m of dirty) m.instanceMatrix.needsUpdate = true;
+  }
+
   return {
-    load, reset,
+    load, reset, lod,
     get pieces() { return pieces; },
     get objects() { return objects; },
     has: (k) => { const e = entryOf(k); return !!e && e.hp > 0; },

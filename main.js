@@ -13,11 +13,11 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { GameMap, MAP, WATER_Y, rng, seedOf } from './map.js';
-import { toonGradient, toon, windUniform, outlineGroup } from './art.js';
+import { toonGradient, toon, windUniform, outlineGroup, rimUniform } from './art.js';
 import { createStructures, MATS, MAT_INFO, BUILD_COST, MAT_MAX, PICK_DMG } from './structures.js';
 import { connect } from './net.js';
 import { findMatch } from './mm.js';
-import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, weaponLabel, rayBox } from './combat.js';
+import { createCombat, WEAPONS, RARITY, AMMO, MAX_SHIELD, MED, weaponLabel, rayBox } from './combat.js';
 import { createLoot, itemLabel } from './loot.js';
 import { createViewmodel, weaponModel } from './viewmodel.js';
 import { createRoyale, ROUND_MS, DROP_MS } from './royale.js';
@@ -33,7 +33,9 @@ import { createMinimap } from './minimap.js';
 import { createWeaponSkins, CASES, WS_RARITY, WS_GUNS, GUN_NAME, ALL_SKINS, skinInfo, FINISHES } from './wskins.js';
 import { createRanked, SHOP, rankedWorld, isRankedWorld } from './ranked.js';
 import { createGrass } from './grass.js';
-import { buildHeli, buildParachute, buildCabin } from './heli.js';
+import { buildHeli, buildParachute, buildCabin, CHUTES, chuteById } from './heli.js';
+import { createFx } from './fx.js';
+import { AOPass, SunRaysPass } from './post.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -142,6 +144,7 @@ const clouds = new THREE.Group();
   scene.add(clouds);
 }
 
+const fx = createFx(scene, camera);
 const water = createWater(MAP * 8, MAP / 2);
 scene.add(water.mesh);
 
@@ -174,8 +177,13 @@ scene.add(player);
 // Обработка кадра: рендер в буфер, bloom в половинном разрешении, вывод в sRGB, сглаживание FXAA.
 // Замер (1920×953): без эффектов 5.8 мс; MSAA 4× в буфере — +3.6 мс и дорожает bloom, поэтому FXAA (~+0.5 мс).
 // Без bloom кадр рисуется напрямую (встроенное сглаживание браузера) — так дешевле.
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType }));
+// В буфере кадра — ещё и текстура глубины: по ней считается мягкое затенение (AOPass, post.js).
+const frameRT = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType });
+frameRT.depthTexture = new THREE.DepthTexture(innerWidth, innerHeight);
+const composer = new EffectComposer(renderer, frameRT);
 composer.addPass(new RenderPass(scene, camera));
+const aoPass = new AOPass(camera);
+composer.addPass(aoPass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.45, 0.55, 0.82);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -190,6 +198,8 @@ const grade = new ShaderPass({
       gl_FragColor = c; }`,
 });
 composer.addPass(grade);
+const rays = new SunRaysPass();
+composer.addPass(rays);
 const fxaa = new ShaderPass(FXAAShader);
 composer.addPass(fxaa);
 const fitFxaa = () => { const pr = renderer.getPixelRatio(); fxaa.material.uniforms.resolution.value.set(1 / (innerWidth * pr), 1 / (innerHeight * pr)); };
@@ -450,10 +460,55 @@ function openChute() {
 
 // Своя фигурка (видна только в падении/под куполом — камера в это время сзади-сверху).
 let selfFig = null, selfFigKey = '';
-const selfChute = buildParachute();
+let selfChute = buildParachute();
+
+// ---------- Скин парашюта (Locker, за монеты) ----------
+const CHUTE_KEY = 'pr:chutes';
+let chuteSt = { owned: ['classic'], on: 'classic' };
+try { Object.assign(chuteSt, JSON.parse(localStorage.getItem(CHUTE_KEY) || '{}')); } catch (e) { /* по умолчанию */ }
+const myChute = () => (chuteSt.owned.includes(chuteSt.on) ? chuteById(chuteSt.on).id : 'classic');
+const saveChutes = () => { try { localStorage.setItem(CHUTE_KEY, JSON.stringify(chuteSt)); } catch (e) { /* без сохранения */ } };
+
+// ---------- Эмоции (J — меню, 1–4 — выбрать) ----------
+// Пока танцуешь — камера от третьего лица спереди, мышь крутит её вокруг; любое движение, прыжок, клик — конец.
+// Другим уходит pose.em — видят тот же танец.
+const EMOTES = [
+  { id: 'dance', name: 'Dance', icon: '🕺' },
+  { id: 'floss', name: 'Floss', icon: '🙌' },
+  { id: 'wave', name: 'GM', icon: '👋' },
+  { id: 'moon', name: 'To the Moon', icon: '🚀' },
+];
+const EMOTE_IDS = EMOTES.map((e) => e.id);
+let emote = null, emotePick = false;
+function toggleEmotes(on = !emotePick) {
+  emotePick = on && playing && royale.alive && !riding;
+  $('emotes').hidden = !emotePick;
+}
+function startEmote(id) {
+  toggleEmotes(false);
+  if (!playing || !royale.alive || riding || gliding || !onGround || abilities.drone) return;
+  if (buildType) exitBuild();
+  scopeHeld = false;
+  combat.cancelReload(); combat.cancelHeal();
+  const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
+  emote = { id, yaw };
+  camera.rotation.set(-0.15, yaw + Math.PI, 0, 'YXZ');      // камера разворачивается — видно лицо
+}
+function stopEmote() {
+  if (!emote) return;
+  camera.rotation.set(0, emote.yaw, 0, 'YXZ');
+  emote = null;
+}
+
 function updateSelfFigure(t) {
   const fpv = !!abilities.drone;
-  const show = playing && (gliding || fpv) && !riding && royale.alive;
+  if (emote && (!royale.alive || !onGround || gliding || riding)) stopEmote();
+  const show = playing && (gliding || fpv || !!emote) && !riding && royale.alive;
+  if (selfChute.userData.skin !== myChute()) {
+    selfFig?.remove(selfChute);
+    selfChute = buildParachute(myChute());
+    selfFig?.add(selfChute);
+  }
   const key = `${mySkin}|${nick}`;
   if (show && (!selfFig || selfFigKey !== key)) {
     if (selfFig) scene.remove(selfFig);
@@ -467,6 +522,16 @@ function updateSelfFigure(t) {
   if (!show) return;
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
   selfFig.position.copy(feet);
+  if (emote) {
+    selfFig.rotation.set(0, emote.yaw, 0, 'YXZ'); selfChute.visible = false;
+    animateCharacter(selfFig, t, emote.id);
+    // камера на 4.2 м от головы, но не сквозь стены: упирается в первую постройку на пути
+    const back = camera.getWorldDirection(new THREE.Vector3()).negate();
+    const head = feet.clone().add(new THREE.Vector3(0, 1.4, 0));
+    const hit = structures.raycast(head, back, 4.2);
+    player.position.copy(head).addScaledVector(back, hit ? Math.max(0.6, hit.t - 0.3) : 4.2);
+    return;
+  }
   if (fpv) {
     selfFig.position.copy(feet); selfFig.rotation.set(0, selfFig.rotation.y, 0, 'YXZ'); selfChute.visible = false;
     animateCharacter(selfFig, t, 'idle', 0, true);                   // стоит с пультом в руках
@@ -489,10 +554,10 @@ function moveDir() {
   return d.lengthSq() ? d.normalize() : d;
 }
 
-// ---------- Хотбар: кирка + 3 слота оружия; режим стройки ----------
-// 1 — кирка, 2–4 — оружие, колесо — по кругу. Z стена, X пол, C рампа, V — материал, ЛКМ — поставить (можно зажать).
+// ---------- Хотбар: кирка + 3 слота оружия + аптечки; режим стройки ----------
+// 1 — кирка, 2–4 — оружие, 5 — аптечки (ЛКМ — лечиться), колесо — по кругу. Z стена, X пол, C рампа, V — материал, ЛКМ — поставить (можно зажать).
 
-const ENTRIES = [{ pick: true }, { weapon: 0 }, { weapon: 1 }, { weapon: 2 }];
+const ENTRIES = [{ pick: true }, { weapon: 0 }, { weapon: 1 }, { weapon: 2 }, { med: true }];
 const PICKAXE = { type: 'pickaxe', rarity: 0 };
 let slot = 0;
 let buildType = null, buildMat = 0;
@@ -524,7 +589,7 @@ function swingPickaxe(now) {
     if (p.target?.a === false) continue;
     const c = p.group.position;
     const t = rayBox(o, d, new THREE.Vector3(c.x - 0.45, c.y, c.z - 0.45), new THREE.Vector3(c.x + 0.45, c.y + 1.9, c.z + 0.45));
-    if (t < PICK_REACH) { sendHit(peerId, { dmg: 20, by: nick, w: 'pickaxe' }); hitmarker(); combat.sfx('chop'); return; }
+    if (t < PICK_REACH) { sendHit(peerId, { dmg: 20, by: nick, w: 'pickaxe' }); hitmarker(); dmgNumber(o.clone().addScaledVector(d, t), 20, p.target); combat.sfx('chop'); return; }
   }
   const hit = structures.raycast(o, d, PICK_REACH);
   if (hit?.e) {
@@ -547,7 +612,7 @@ function damageStructure(k, dmg, harvest) {
   if (car) dmg *= 3;
   const res = structures.damage(k, dmg);
   if (!res) return;
-  if (res.destroyed) shadowDirty = true;
+  if (res.destroyed) { shadowDirty = true; onDestroyed(res.e); }
   const boom = car && res.destroyed;
   net?.edit({ k, x: dmg, rr: royale.round, ...(boom ? { cb: 1 } : {}) });
   if (boom) carBoom(res.e, true);
@@ -560,27 +625,57 @@ function damageStructure(k, dmg, harvest) {
   }
 }
 
-// Щепки/осколки при ударе киркой.
-const chipGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
-const fxList = [];
-function chips(p, e) {
-  const color = e.kind === 'piece' ? MAT_INFO[e.m].tint : e.type === 'rock' ? 0x9aa3ad : e.type === 'car' ? 0xc0c8d4 : 0xb07a45;
-  const mat = new THREE.MeshBasicMaterial({ color });
-  for (let i = 0; i < 6; i++) {
-    const m = new THREE.Mesh(chipGeo, mat);
-    m.position.copy(p);
-    scene.add(m);
-    fxList.push({ m, v: new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.8 + 0.3, Math.random() - 0.5).multiplyScalar(6), age: 0 });
+// Эффекты попаданий (fx.js): материал детали/объекта — для щепок, искр и обломков.
+const fxKind = (e) => (!e ? 'dirt' : e.kind === 'piece' ? e.m : e.type === 'rock' ? 'rock' : e.type === 'car' ? 'metal' : 'wood');
+function chips(p, e) { fx.chips(p, fxKind(e)); }
+function entryBox(e) {
+  const b = new THREE.Box3();
+  for (const x of [...(e.boxes || []), ...(e.soft || [])]) b.union(new THREE.Box3(x.min, x.max));
+  if (e.ramp) b.union(new THREE.Box3(new THREE.Vector3(e.ramp.ix * 4, e.ramp.iy * 4, e.ramp.iz * 4), new THREE.Vector3(e.ramp.ix * 4 + 4, e.ramp.iy * 4 + 4, e.ramp.iz * 4 + 4)));
+  return b;
+}
+// Разрушили деталь/объект (у себя или пришло по сети): обломки и пыль, следы от пуль на ней — убрать.
+function onDestroyed(e) {
+  if (e.kind === 'piece' || e.type !== 'car') fx.debris(entryBox(e), fxKind(e), e.kind === 'piece' ? 14 : 10);
+  fx.clearHoles(e.k);
+}
+// Нормаль поверхности в точке попадания: рельеф — по высотам, коробка — по ближайшей грани.
+function surfaceNormal(p, e, dir) {
+  if (!e) {
+    const h = (x, z) => world.height(x, z);
+    return new THREE.Vector3(h(p.x - 0.5, p.z) - h(p.x + 0.5, p.z), 1, h(p.x, p.z - 0.5) - h(p.x, p.z + 0.5)).normalize();
+  }
+  let best = Infinity; const n = dir.clone().negate();
+  for (const b of e.boxes || []) {
+    for (const [ax, v] of [['x', 1], ['y', 1], ['z', 1]]) {
+      for (const side of [-1, 1]) {
+        const d = Math.abs(p[ax] - (side < 0 ? b.min[ax] : b.max[ax]));
+        if (d < best) { best = d; n.set(0, 0, 0); n[ax] = side * v; }
+      }
+    }
+  }
+  return n;
+}
+// Пыль из-под ног у бегущих рядом (других игроков и ботов; своя в первом лице не видна).
+let dustT = 0;
+function runDust(dt) {
+  if ((dustT += dt) < 0.09) return;
+  dustT = 0;
+  for (const o of others.values()) {
+    if (!o.group.visible || !o.near || (o.spd || 0) < 4 || o.target.st || o.target.pr) continue;
+    const p = o.group.position;
+    if (p.y < WATER_Y + 0.2) continue;
+    fx.dust(new THREE.Vector3(p.x + (Math.random() - 0.5) * 0.4, p.y + 0.08, p.z + (Math.random() - 0.5) * 0.4), p.y < WATER_Y + 3 ? 0xe2cf9c : 0xb7a57c);
   }
 }
-function updateFx(dt) {
-  for (let i = fxList.length - 1; i >= 0; i--) {
-    const f = fxList[i];
-    f.age += dt;
-    f.v.y -= 20 * dt;
-    f.m.position.addScaledVector(f.v, dt);
-    if (f.age > 0.6) { scene.remove(f.m); fxList.splice(i, 1); }
-  }
+// Попадание пули в постройку/объект/землю (своё): след на поверхности, крошка, искры по металлу.
+function impact(p, e, dir) {
+  if (!world || p.distanceToSquared(feet) > 120 * 120) return;
+  const kind = fxKind(e);
+  const tree = e && (e.type === 'oak' || e.type === 'pine');
+  if (!tree && !e?.ramp) fx.hole(p, surfaceNormal(p, e, dir), e ? e.k : null);
+  if (!e) fx.dust(p, 0xb9a77f, 0.8);
+  else fx.chips(p, kind, 3);
 }
 
 // Стройка: деталь перед игроком за BUILD_COST материала.
@@ -611,6 +706,7 @@ function enterBuild(t) {
   buildType = t;
   scopeHeld = false;
   combat.cancelReload();
+  combat.cancelHeal();
   renderHotbar();
   showName(`${PIECE_NAMES[t]} · ${MAT_INFO[MATS[buildMat]].name}`, MAT_INFO[MATS[buildMat]].color);
 }
@@ -630,6 +726,8 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (!royale.alive) { spectatorNotice(); return; }
   if (riding) { if (e.button === 0) jumpOut(); return; }
   if (abilities.drone) { if (e.button === 0) abilities.detonate(); return; }
+  if (emote) { stopEmote(); return; }
+  if (emotePick) toggleEmotes(false);
   const w = currentWeapon();
   if (e.button === 2 && w && canAim(w.type)) { scopeHeld = true; return; }
   if (e.button === 2 && buildType) { exitBuild(); return; }
@@ -638,6 +736,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   const now = performance.now() / 1000;
   if (buildType) { updatePlan(); placePiece(now); return; }      // план — на момент клика, не ждём кадра
   if (ENTRIES[slot].pick) { swingPickaxe(now); return; }
+  if (ENTRIES[slot].med) { healTry(); return; }
   if (w) combat.fire(ENTRIES[slot].weapon, now);
   else {
     const chest = loot.chestNear(eye(), look());
@@ -661,6 +760,11 @@ function renderHotbar() {
     if (entry.pick) {
       d.innerHTML = '<b>⛏</b><small>Pickaxe</small>';
       d.title = 'Pickaxe — harvest wood, brick, metal';
+    } else if (entry.med) {
+      d.classList.add('med');
+      if (!combat.meds) d.classList.add('zero');
+      d.innerHTML = `<b>✚</b><small>${combat.meds}/${MED.max}</small>`;
+      d.title = `Medkit — hold the slot, click to heal +${MED.heal} HP (${MED.time}s)`;
     } else {
       const w = combat.slots[entry.weapon];
       if (w) {
@@ -707,12 +811,22 @@ function showName(text, color = '') {
 function pick(i) {
   scopeHeld = false;
   combat.cancelReload();
+  combat.cancelHeal();
   if (buildType) { buildType = null; structures.ghost(null); }
   slot = (i + ENTRIES.length) % ENTRIES.length;
   renderHotbar();
   const entry = ENTRIES[slot];
   const w = currentWeapon();
+  if (entry.med) { showName(`Medkit ×${combat.meds}`, '#ff5a6a'); return; }
   showName(entry.pick ? 'Pickaxe' : w ? weaponLabel(w) : 'Empty slot', w ? RARITY[w.rarity].color : '');
+}
+
+// Лечение аптечкой из слота 5 (почему не начали — подсказкой).
+function healTry() {
+  if (combat.healing) return;
+  if (!combat.meds) toast('✚ No medkits — loot chests');
+  else if (combat.hp >= 100) toast('✚ Health is full');
+  else combat.startHeal();
 }
 addEventListener('wheel', (e) => { if (controls.isLocked) pick(slot + Math.sign(e.deltaY)); }, { passive: true });
 
@@ -853,6 +967,8 @@ function toast(text) {
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
 }
 function hitmarker() { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); }
+// Число урона над целью: синее — у цели был щит (поле sd в позе), крупное жёлтое — 50 и больше.
+function dmgNumber(p, dmg, target) { if (dmg > 0) fx.number(p, dmg, target?.sd ? 'sh' : 'hp'); }
 
 // ---------- Бой, лут, раунды ----------
 
@@ -903,6 +1019,8 @@ const ctx = {
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
   hitmarker,
+  dmgNumber: (p, dmg, id) => dmgNumber(p, dmg, others.get(id)?.target),
+  impact,
   shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
   knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
   dropItems: (pos, items) => loot.drop(pos, items),
@@ -1032,13 +1150,23 @@ function banner(title, sub = '', ms = 3500) {
   bannerTimer = setTimeout(() => { $('banner').hidden = true; }, ms);
 }
 
+// Время суток раунда — от сида мира и номера раунда (у всех одинаковое): день чаще, утро и закат — по четверти.
+function roundMood(r) {
+  if (isDuelWorld(worldId)) return 'game';
+  const x = rng(seedOf(worldId || 'x') ^ Math.imul((r | 0) + 11, 2246822519))();
+  return x < 0.5 ? 'game' : x < 0.75 ? 'morning' : 'golden';
+}
+
 function onRoundStart(r, alive) {
+  if (playing) setMood(roundMood(r));
+  stopEmote(); toggleEmotes(false);
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
   bots.roundStart(r);
   abilities.reset();
   if (alive) { loadout.equip(abilities.slots); renderAbilities(); }
   loot.resetRound(r, royale.roundStart);
+  fx.reset();
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
   buildType = null;
@@ -1238,7 +1366,11 @@ function onStructEdit(d) {
   if (d.rr !== undefined && d.rr !== royale.round) return;
   shadowDirty = true;
   if (d.a) structures.add({ k: d.k, t: d.t, ix: d.ix, iy: d.iy, iz: d.iz, o: d.o, m: d.m });
-  else if (d.x) { const res = structures.damage(d.k, d.x); if (d.cb && res?.destroyed) carBoom(res.e, false); }
+  else if (d.x) {
+    const res = structures.damage(d.k, d.x);
+    if (res?.destroyed) onDestroyed(res.e);
+    if (d.cb && res?.destroyed) carBoom(res.e, false);
+  }
 }
 
 let startNet = function () {
@@ -1299,6 +1431,11 @@ function poseData() {
   if (riding) d.rd = 1;
   if (document.hidden) d.hd = 1;          // вкладка свёрнута — не годимся в хосты ботов
   if (prone) d.pr = 1; else if (crouching) d.cr = 1;
+  if (combat.shield > 0) d.sd = 1;           // у цели щит — числа урона у стрелка синие
+  if (combat.healing) d.hl = 1;              // лечится — другим видна поза и зелёные искры
+  if (combat.reloading) d.rl = 1;            // перезаряжается — оружие опущено
+  if (emote) d.em = emote.id;
+  if (myChute() !== 'classic') d.ch = myChute();
   if (gliding) { d.st = chute ? 'g' : 'f'; if (chute) d.pc = 1; } else if (!onGround) d.st = 'a';
   return d;
 }
@@ -1334,6 +1471,12 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.code === 'KeyM' && playing) { minimap.toggle(); return; }
+  if (e.code === 'KeyJ') { toggleEmotes(); return; }
+  if (emotePick) {
+    const k = e.code.match(/^Digit([1-4])$/);
+    if (k) { startEmote(EMOTES[+k[1] - 1].id); return; }
+  }
+  if (emote && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyZ', 'KeyX', 'KeyC', 'KeyE', 'KeyR', 'KeyP', 'KeyF', 'KeyQ', 'AltLeft', 'AltRight', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) stopEmote();
   if (gliding && !chute && e.code === 'Space') openChute();
   else if (e.code === 'Space' && canRedeploy()) { gliding = true; chute = false; openChute(); }
   if (e.code === 'KeyB') { openBuy(); return; }
@@ -1369,7 +1512,7 @@ addEventListener('keydown', (e) => {
       loot.drop(feet.clone(), [{ k: 'weapon', w: w.type, r: w.rarity, a: w.mag }]);
     }
   }
-  const n = e.code.match(/^Digit([1-4])$/);
+  const n = e.code.match(/^Digit([1-5])$/);
   if (n) pick(+n[1] - 1);
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -1423,7 +1566,7 @@ function start() {
     loadWorld(worldId);
     if (hero) { scene.remove(hero); hero = null; }
     lobbyScene.visible = false;
-    setMood('game');
+    setMood(roundMood(royale.round));
     playing = true;
     camera.rotation.set(0, 0, 0, 'YXZ');
     spawn(false);
@@ -1631,7 +1774,10 @@ $('nick').addEventListener('input', () => { renderPlayerCard(); clearTimeout(her
 // ---------- Атмосфера лобби: «золотой час», контровой свет, параллакс ----------
 
 const MOODS = {
-  game: { top: 0x2f8fff, bottom: 0xbfe9ff, sun: 0xfff0d8, sunI: 1.9, sky: 0xd8efff, ground: 0x7a6a48, hemiI: 1.25, dir: [-0.45, 1, 0.35], near: 140, far: 420 },
+  game: { top: 0x2f8fff, bottom: 0xbfe9ff, sun: 0xfff0d8, sunI: 1.9, sky: 0xd8efff, ground: 0x7a6a48, hemiI: 1.25, dir: [-0.45, 1, 0.35], near: 140, far: 420, rim: 0xfff2d8 },
+  // время суток раунда (roundMood): утро — низкое тёплое солнце с востока, закат — золотой свет и длинные тени
+  morning: { top: 0x5f9cff, bottom: 0xffe4c8, sun: 0xffe2bc, sunI: 1.75, sky: 0xe6eeff, ground: 0x7a6a58, hemiI: 1.15, dir: [0.75, 0.5, -0.35], near: 130, far: 400, rim: 0xffe8cc },
+  golden: { top: 0x4656d0, bottom: 0xffb47e, sun: 0xffa95e, sunI: 2.05, sky: 0xffd6b4, ground: 0x6a4a3a, hemiI: 1.0, dir: [-0.8, 0.32, 0.45], near: 120, far: 380, rim: 0xffb070 },
   lobby: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sunI: 2.2, sky: 0xcdbbff, ground: 0x8a5a48, hemiI: 1.15, dir: [0.55, 0.42, -0.72], near: 180, far: 950 },
 };
 const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
@@ -1687,6 +1833,8 @@ function setMood(name) {
   sun.color.set(m.sun); sun.intensity = m.sunI;
   hemi.color.set(m.sky); hemi.groundColor.set(m.ground); hemi.intensity = m.hemiI;
   SUN_DIR.set(...m.dir).normalize();
+  rimUniform.color.value.set(m.rim ?? 0xfff2d8);
+  rays.mat.uniforms.uTint.value.set(m.sun).lerp(new THREE.Color(1, 1, 1), 0.35);
   rimLight.visible = fillLight.visible = name === 'lobby';
   if (name === 'lobby') applyColors(moodNow);
 }
@@ -1792,6 +1940,31 @@ function renderLocker() {
       makeHero();
     });
     $('locker').appendChild(c);
+  }
+  renderChutes();
+}
+
+// Парашюты в Locker: покупка за монеты 🪙 один раз, затем — выбрать.
+function renderChutes() {
+  $('lchutes').innerHTML = '';
+  for (const c of CHUTES) {
+    const own = chuteSt.owned.includes(c.id);
+    const b = document.createElement('button');
+    b.className = `skin chute r${Math.min(4, Math.round(c.price / 100))}${c.id === myChute() ? ' on' : ''}`;
+    const hex = (v) => `#${v.toString(16).padStart(6, '0')}`;
+    b.style.setProperty('--sc', hex(c.a));
+    b.innerHTML = `<i class="cdome" style="--ca:${hex(c.a)};--cb:${hex(c.b)}"></i><b>${c.name}</b><small>${own ? (c.id === myChute() ? 'Equipped' : 'Owned') : `🪙 ${c.price}`}</small>`;
+    b.addEventListener('click', () => {
+      if (!own) {
+        if (!loadout.spend(c.price)) { $('lockerhint').textContent = `Need 🪙 ${c.price} — coins drop in every match`; return; }
+        chuteSt.owned.push(c.id);
+        $('lockerhint').textContent = `Unlocked parachute: ${c.name}`;
+      } else $('lockerhint').textContent = `Parachute equipped: ${c.name}`;
+      chuteSt.on = c.id;
+      saveChutes();
+      renderChutes();
+    });
+    $('lchutes').appendChild(b);
   }
 }
 
@@ -2095,22 +2268,48 @@ setInterval(updateRoundInfo, 500);
 // ---------- Настройки ----------
 
 const SETTINGS_KEY = 'pr:settings';
-const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true, bloom: true, grass: true, fps: true };
+const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true, bloom: true, grass: true, fps: true, ao: true, rays: true, auto: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { /* по умолчанию */ }
 
-function applySettings() {
+// Автокачество: держится FPS < 45 — по ступеньке снижаем (1: разрешение ×1, 2: без AO и лучей, 3: без травы и bloom).
+// Только на эту сессию, настройки игрока не трогаем. autoLevel — текущая ступенька.
+let autoLevel = 0;
+const fxOn = {
+  get hq() { return settings.hq && autoLevel < 1; },
+  get ao() { return settings.ao && settings.hq && autoLevel < 2; },
+  get rays() { return settings.rays && settings.hq && autoLevel < 2; },
+  get grass() { return settings.grass && autoLevel < 3; },
+  get bloom() { return settings.bloom && autoLevel < 3; },
+};
+let autoAcc = 0, autoN = 0, autoT = 0, autoWarm = true;
+function autoQuality(dt, now) {
+  if (!settings.auto || !playing || document.hidden || dt <= 0 || dt > 0.25 || autoLevel >= 3) { autoAcc = autoN = 0; autoT = now; autoWarm = true; return; }
+  autoAcc += dt; autoN++;
+  if (now - autoT < 3000) return;
+  const fps = autoN / autoAcc;
+  autoAcc = autoN = 0; autoT = now;
+  if (autoWarm) { autoWarm = false; return; }        // первые 3 с матча — компиляция шейдеров, не в счёт
+  if (fps >= 45) return;
+  autoLevel++;
+  applySettings(false);
+  toast(`⚙ Auto quality: ${['', 'resolution', 'shadows & rays', 'grass & glow'][autoLevel]} lowered (${Math.round(fps)} FPS)`);
+}
+
+function applySettings(save = true) {
   controls.pointerSpeed = settings.sens;
   FOV = settings.fov;
   if (!isScoped()) { camera.fov = FOV; camera.updateProjectionMatrix(); }
   sun.castShadow = settings.shadows;
-  renderer.setPixelRatio(settings.hq ? Math.min(devicePixelRatio, 2) : 1);
+  renderer.setPixelRatio(fxOn.hq ? Math.min(devicePixelRatio, 2) : 1);
   renderer.setSize(innerWidth, innerHeight);
-  composer.setPixelRatio(settings.hq ? Math.min(devicePixelRatio, 2) : 1);
+  composer.setPixelRatio(fxOn.hq ? Math.min(devicePixelRatio, 2) : 1);
   composer.setSize(innerWidth, innerHeight);
   fitFxaa();
-  grass.visible = settings.grass;
+  grass.visible = fxOn.grass;
+  bloom.enabled = fxOn.bloom;
+  aoPass.enabled = fxOn.ao;
   $('fps').hidden = !settings.fps;
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* без сохранения */ }
+  if (save) try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* без сохранения */ }
 }
 
 const SLIDERS = [
@@ -2123,6 +2322,9 @@ const TOGGLES = [
   { key: 'hq', label: 'Graphics quality', on: 'High', off: 'Fast' },
   { key: 'bloom', label: 'Bloom (glow)', on: 'On', off: 'Off' },
   { key: 'grass', label: 'Grass', on: 'On', off: 'Off' },
+  { key: 'ao', label: 'Ambient occlusion', on: 'On', off: 'Off' },
+  { key: 'rays', label: 'Sun rays & flare', on: 'On', off: 'Off' },
+  { key: 'auto', label: 'Auto quality', on: 'On', off: 'Off' },
   { key: 'fps', label: 'Show FPS', on: 'On', off: 'Off' },
 ];
 // Одни и те же настройки — во вкладке лобби и в паузе; меняешь в одном месте — обновляется везде.
@@ -2213,7 +2415,8 @@ const mainLoop = (now) => {
     abilities.update(dt);
     royale.update(dt);
     minimap.update(dt, playing);
-    updateFx(dt);
+    fx.update(dt);
+    runDust(dt);
     updatePlan();
     updatePoi();
 
@@ -2224,8 +2427,8 @@ const mainLoop = (now) => {
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());
-    const rl = combat.reloading;
-    const rtext = rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
+    const rl = combat.reloading, hl = combat.healing;
+    const rtext = hl ? `✚ Healing… ${Math.max(0, hl.left).toFixed(1)}s` : rl ? `Reloading… ${Math.max(0, rl.left).toFixed(1)}s` : '';
     if ($('reload').textContent !== rtext) $('reload').textContent = rtext;
 
     // Прицел снайперки.
@@ -2260,12 +2463,20 @@ const mainLoop = (now) => {
       // поза по движению: планирует / в воздухе / бежит / стоит
       const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
       o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
-      const st = o.target.st === 'g' ? 'chute' : o.target.st === 'f' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : 'idle';
+      const em = EMOTE_IDS.includes(o.target.em) ? o.target.em : null;
+      const st = o.target.st === 'g' ? 'chute' : o.target.st === 'f' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : em || (o.target.hl ? 'heal' : 'idle');
+      // лечится — зелёные искорки; эмоция/лечение — оружие убрано; перезарядка — оружие опущено
+      if (o.target.hl && o.near && Math.random() < dt * 5) fx.heal(o.group.position.clone().add(new THREE.Vector3(0, 1.3, 0)));
+      if (o.gun) {
+        o.gun.visible = !em && !o.target.hl;
+        o.gun.rotation.z += ((o.target.rl ? 0.8 : 0) - o.gun.rotation.z) * 0.2;
+      }
       // купол над тем, кто под парашютом; в свободном падении — животом вниз
-      if (o.target.pc && !o.chute) { o.chute = buildParachute(); o.group.add(o.chute); }
+      const chSkin = typeof o.target.ch === 'string' ? chuteById(o.target.ch).id : 'classic';
+      if (o.target.pc && (!o.chute || o.chute.userData.skin !== chSkin)) { if (o.chute) o.group.remove(o.chute); o.chute = buildParachute(chSkin); o.group.add(o.chute); }
       if (o.chute) o.chute.visible = !!o.target.pc;
       o.group.rotation.x += ((o.target.st === 'f' ? -1.1 : o.target.pr ? -1.5 : 0) - o.group.rotation.x) * 0.2;   // падение / лёжа
-      animateCharacter(o.group, t, st, Math.min(1, o.spd / RUN), !!o.target.g && o.target.g !== 'pickaxe');
+      animateCharacter(o.group, t, st, Math.min(1, o.spd / RUN), !!o.target.g && o.target.g !== 'pickaxe' && st !== 'heal' && !em);
     }
     sendPose(now);
     updateCrosshair(w, en);
@@ -2276,6 +2487,7 @@ const mainLoop = (now) => {
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 180);
   sky.position.copy(c);
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
+  structures.lod(renderer, c);                    // дальние деревья — карточками
   if (playing) grass.update(feet, t);             // в лобби камера высоко — траву не видно, не считаем
   windUniform.value = t;
   water.update(t);
@@ -2284,9 +2496,12 @@ const mainLoop = (now) => {
     renderer.shadowMap.needsUpdate = true;
     shadowAt.copy(c); shadowT = t; shadowDirty = false;
   }
-  if (settings.bloom) composer.render(); else renderer.render(scene, camera);
+  // через composer — если включён хоть один эффект кадра; иначе напрямую (дешевле, сглаживание браузера)
+  if (fxOn.rays) rays.aim(camera, SUN_DIR, innerWidth, innerHeight); else rays.enabled = false;
+  if (fxOn.bloom || fxOn.ao || rays.enabled) composer.render(); else renderer.render(scene, camera);
+  autoQuality(dt, now);
   countFps(now);
-  if (playing && !riding && !gliding && !abilities.drone && (controls.isLocked || debugView)) {
+  if (playing && !riding && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
     const h = holding();
     vm.set(h);
     vm.render(dt, { moving, reloading: !!combat.reloading, scoped: isScoped(), loaded: !!h && h.mag > 0 });
@@ -2354,7 +2569,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),

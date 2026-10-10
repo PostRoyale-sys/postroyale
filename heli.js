@@ -126,16 +126,28 @@ export function buildHeli() {
 
 // Парашют в фирменных цветах: купол из золотых и фиолетовых клиньев, ₿ на макушке, стропы к плечам.
 // Начало координат — ноги персонажа; купол висит над головой.
-export function buildParachute() {
+// Скины парашюта (вкладка Locker, за монеты): цвета клиньев купола. Первый — бесплатный.
+export const CHUTES = [
+  { id: 'classic', name: 'Degen Gold', price: 0, a: 0xffc928, b: 0x8b5cff },
+  { id: 'pepe', name: 'Pepe Glide', price: 150, a: 0x4fc26a, b: 0xffe14a },
+  { id: 'rug', name: 'Rug Pull', price: 200, a: 0xc0392b, b: 0xf2c14e },
+  { id: 'whale', name: 'Whale Wave', price: 200, a: 0x2f7fff, b: 0xf4f8ff },
+  { id: 'neon', name: 'Neon Degen', price: 300, a: 0xff4fd8, b: 0x1a1030 },
+  { id: 'diamond', name: 'Diamond Hands', price: 400, a: 0x8ff0ff, b: 0xffffff, stripes: 12 },
+];
+export const chuteById = (id) => CHUTES.find((c) => c.id === id) || CHUTES[0];
+
+export function buildParachute(skin = 'classic') {
+  const sk = chuteById(skin);
   const g = new THREE.Group();
   const R = 2.7, H = 1.5, Y = 4.4;
   const geo = new THREE.SphereGeometry(1, 24, 6, 0, Math.PI * 2, 0, Math.PI * 0.42).toNonIndexed();
   const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
-  const gold = new THREE.Color(0xffc928), purple = new THREE.Color(0x8b5cff);
+  const gold = new THREE.Color(sk.a), purple = new THREE.Color(sk.b);
   for (let i = 0; i < pos.count; i += 3) {
     // цвет клина — по углу центра треугольника
     const cx = (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3, cz = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
-    const k = Math.floor(((Math.atan2(cz, cx) + Math.PI) / (Math.PI * 2)) * 8) % 2;
+    const k = Math.floor(((Math.atan2(cz, cx) + Math.PI) / (Math.PI * 2)) * (sk.stripes || 8)) % 2;
     const c = k ? gold : purple;
     for (let j = 0; j < 3; j++) col.set([c.r, c.g, c.b], (i + j) * 3);
   }
@@ -159,6 +171,7 @@ export function buildParachute() {
   const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x23262d }));
   g.add(canopy, coin, lines);
   g.userData.canopy = canopy;
+  g.userData.skin = sk.id;
   return g;
 }
 

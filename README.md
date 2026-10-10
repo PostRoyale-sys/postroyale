@@ -78,6 +78,8 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 | Move · sprint · jump | `W A S D` · `Shift` · `Space` |
 | Shoot · aim | Left click · Right click |
 | Weapons | `1`–`4` |
+| Medkits (select, then left click to heal) | `5` |
+| Emotes | `J`, then `1`–`4` |
 | Build wall · floor · ramp · switch material | `Z` · `X` · `C` · `V` |
 | Crouch · prone | hold `Alt` · `P` |
 | Open chest · swap weapon · reload | `E` · `G` · `R` |

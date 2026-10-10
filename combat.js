@@ -33,6 +33,7 @@ export const AMMO = {
 };
 
 export const MAX_SHIELD = 100;
+export const MED = { max: 3, heal: 40, time: 3 };      // аптечки: в слоте до 3, лечение 3 с, +40 HP
 const ROCKET = { speed: 34, gravity: 3, life: 5 };
 const EXPLODE_R = 4, BUILD_DMG = 250, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус и урон по постройкам, по игрокам
 
@@ -58,6 +59,7 @@ export function createCombat(ctx) {
   const slots = [null, null, null];           // { type, rarity, mag }
   const ammo = Object.fromEntries(Object.keys(AMMO).map((k) => [k, 0]));
   let nextShot = 0, reloadUntil = 0, reloadSlot = -1;
+  let meds = 0, healUntil = 0;                // аптечки в слоте и конец текущего лечения
   // обвесы из Gunsmith (только для своего оружия)
   const mods = (type) => ctx.mods?.(type) || { mag: 1, reload: 1, spread: 1, optic: null };
   const magOf = (type) => WEAPONS[type].mag * mods(type).mag;
@@ -171,6 +173,8 @@ export function createCombat(ctx) {
     const items = [];
     slots.forEach((s, i) => { if (s) items.push({ k: 'weapon', w: s.type, r: s.rarity, a: s.mag }); slots[i] = null; });
     for (const [k, n] of Object.entries(ammo)) if (n > 0) { items.push({ k: 'ammo', w: k, a: n }); ammo[k] = 0; }
+    for (; meds > 0; meds--) items.push({ k: 'med', w: 'med', a: MED.heal });
+    healUntil = 0;
     ctx.dropItems(ctx.feet().clone(), items);
     hp = 100;
     shield = 0;
@@ -188,7 +192,7 @@ export function createCombat(ctx) {
       const p = o.group.position;
       const pr = !!o.target?.pr, top = pr ? 0.75 : o.target?.cr ? 1.35 : 1.95;   // присевший — ниже, лежачий — плашмя
       const w = pr ? 1.0 : 0.4;
-      list.push({ kind: 'player', id: peerId, min: new THREE.Vector3(p.x - w, p.y - (pr ? 0.32 : 0), p.z - w), max: new THREE.Vector3(p.x + w, p.y + top - (pr ? 0.32 : 0), p.z + w) });
+      list.push({ kind: 'player', id: peerId, sd: !!o.target?.sd, min: new THREE.Vector3(p.x - w, p.y - (pr ? 0.32 : 0), p.z - w), max: new THREE.Vector3(p.x + w, p.y + top - (pr ? 0.32 : 0), p.z + w) });
     }
     return list;
   }
@@ -208,6 +212,7 @@ export function createCombat(ctx) {
     const muzzle = o.clone().addScaledVector(base, 0.6).add(new THREE.Vector3(0, -0.15, 0));
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
+    const hitAt = new Map();     // цель → точка первого попадания (для числа урона)
     const dmgBuild = new Map();  // постройка → урон
     const tlist = targets();
     for (let i = 0; i < spec.pellets; i++) {
@@ -221,6 +226,8 @@ export function createCombat(ctx) {
       }
       if (!best && ob.e) dmgBuild.set(ob.e.k, (dmgBuild.get(ob.e.k) || 0) + spec.dmg * mult);
       const end = o.clone().addScaledVector(d, Math.min(tBest, spec.range));
+      if (!best && ob.point) ctx.impact?.(end, ob.e, d);
+      if (best && !hitAt.has(best)) hitAt.set(best, end);
       ends.push(end);
       tracer(muzzle, end, spec.pellets > 1 ? 0xffd38a : 0xffe066);
       if (best) dmgBy.set(best, (dmgBy.get(best) || 0) + spec.dmg * mult);
@@ -231,6 +238,7 @@ export function createCombat(ctx) {
     for (const [t, dmg] of dmgBy) {
       ctx.sendHit(t.id, { dmg: Math.round(dmg), by: ctx.nick(), w: w.type });
       ctx.hitmarker();
+      ctx.dmgNumber?.(hitAt.get(t), Math.round(dmg), t.id);
     }
     for (const [k, dmg] of dmgBuild) ctx.damageStructure(k, Math.round(dmg), false);
     ctx.recoil(w.type);
@@ -289,6 +297,7 @@ export function createCombat(ctx) {
       const dmg = Math.round(BLAST_DMG * mult * (1 - d / BLAST_R));
       ctx.sendHit(t.id, { dmg, by: ctx.nick(), w: 'bazooka' });
       ctx.hitmarker();
+      ctx.dmgNumber?.(c, dmg, t.id);
     }
     const me = ctx.feet().clone().add(new THREE.Vector3(0, 0.9, 0));
     const dm = me.distanceTo(p);
@@ -371,7 +380,7 @@ export function createCombat(ctx) {
     resetAll() {
       slots.fill(null);
       for (const k of Object.keys(ammo)) ammo[k] = 0;
-      hp = 100; shield = 0; reloadUntil = 0; nextShot = 0;
+      hp = 100; shield = 0; reloadUntil = 0; nextShot = 0; meds = 0; healUntil = 0;
       changed();
     },
 
@@ -392,12 +401,25 @@ export function createCombat(ctx) {
     reload(i) { return startReload(i); },
     cancelReload() { if (reloadUntil) { reloadUntil = 0; changed(); } },
 
+    // Аптечки: ЛКМ со слотом аптечек — лечение MED.time секунд, потом +MED.heal HP.
+    get meds() { return meds; },
+    get healing() { return healUntil ? { left: healUntil - performance.now() / 1000 } : null; },
+    startHeal() {
+      if (!meds || healUntil || hp >= 100 || !ctx.canPlay()) return false;
+      reloadUntil = 0;
+      healUntil = performance.now() / 1000 + MED.time;
+      sound('pickup');
+      changed();
+      return true;
+    },
+    cancelHeal() { if (healUntil) { healUntil = 0; changed(); } },
+
     // Подобрать предмет. Возвращает true, если взяли (иначе он остаётся лежать).
     // Возьмёт ли игрок предмет (без побочных эффектов) — для «магнита» лута.
     canGive(item) {
       if (item.k === 'ammo') return true;
       if (item.k === 'armor') return shield < MAX_SHIELD;
-      if (item.k === 'med') return hp < 100;
+      if (item.k === 'med') return meds < MED.max;
       if (item.k === 'weapon') return slots.some((s) => !s);
       return false;
     },
@@ -409,8 +431,8 @@ export function createCombat(ctx) {
         sound('pickup'); changed(); return true;
       }
       if (item.k === 'med') {
-        if (hp >= 100) return false;
-        hp = Math.min(100, hp + item.a);
+        if (meds >= MED.max) return false;
+        meds++;
         sound('pickup'); changed(); return true;
       }
       if (item.k === 'weapon') {
@@ -448,6 +470,11 @@ export function createCombat(ctx) {
 
     update(dt) {
       if (reloadUntil && performance.now() / 1000 >= reloadUntil) finishReload();
+      if (healUntil && performance.now() / 1000 >= healUntil) {
+        healUntil = 0;
+        if (meds > 0 && hp > 0) { meds--; hp = Math.min(100, hp + MED.heal); sound('pickup'); }
+        changed();
+      }
       updateRockets(dt);
       for (let i = fx.length - 1; i >= 0; i--) {
         const f = fx[i];

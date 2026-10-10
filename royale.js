@@ -47,9 +47,32 @@ export function createRoyale(ctx) {
   let alive = false, maxAliveSeen = 0, won = false, place = 0, ended = false;
   let surviveAcc = 0, stormAcc = 0;
 
-  // Стена шторма: открытый цилиндр.
-  const wall = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 160, 96, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0x9b4dff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+  // Стена шторма: открытый цилиндр (высота 160 м, низ на −20 м) со своим шейдером — фиолетовая дымка,
+  // бегущие наискосок полосы, клубы, яркая кромка у земли; к верху тает. Полосы — по метрам, а не по углу,
+  // поэтому их плотность не меняется, когда круг сжимается.
+  const wallU = { uTime: { value: 0 }, uR: { value: 1 } };
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 160, 128, 1, true), new THREE.ShaderMaterial({
+    uniforms: wallU, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    vertexShader: `varying vec2 vUv; varying float vDist;
+      void main(){ vUv = uv; vec4 mv = modelViewMatrix * vec4(position, 1.0); vDist = -mv.z; gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform float uTime, uR; varying vec2 vUv; varying float vDist;
+      float wave(vec2 p){ return sin(p.x) * sin(p.y * 1.3 + 1.7) * 0.5 + sin(p.x * 2.1 - p.y * 0.7 + 3.1) * 0.25; }
+      void main(){
+        float x = vUv.x * 6.2832 * uR, y = vUv.y * 160.0 - 20.0;       // метры по кругу и высота
+        // широкие мягкие полосы наискосок; издалека (где они стали бы тонкими линиями) растворяются
+        float band = fract((x + y * 0.6) / 14.0 - uTime * 0.3);
+        float stripe = smoothstep(0.0, 0.25, band) * (1.0 - smoothstep(0.3, 0.6, band));
+        stripe *= 1.0 - smoothstep(25.0, 70.0, vDist);
+        float cloud = wave(vec2(x * 0.05 + uTime * 0.25, y * 0.06 - uTime * 0.15)) + wave(vec2(x * 0.11 - uTime * 0.4, y * 0.13));
+        float fade = 1.0 - smoothstep(25.0, 120.0, y);
+        float rim = exp(-max(y - 2.0, 0.0) * 0.25) * (0.7 + 0.3 * sin(uTime * 3.0 + x * 0.2));
+        vec3 col = mix(vec3(0.42, 0.16, 0.85), vec3(0.68, 0.42, 1.0), clamp(cloud * 0.5 + 0.5, 0.0, 1.0));
+        col += vec3(0.45, 0.32, 0.6) * stripe * 0.45 + vec3(0.7, 0.55, 0.85) * rim * 0.4;   // не ярче порога bloom
+        float a = (0.24 + cloud * 0.07 + stripe * 0.1 + rim * 0.3) * fade;
+        gl_FragColor = vec4(col, clamp(a, 0.0, 0.75));
+#include <colorspace_fragment>
+      }`,
+  }));
   wall.visible = false;
   scene.add(wall);
 
@@ -203,6 +226,8 @@ export function createRoyale(ctx) {
 
       wall.position.set(center.x, 60, center.z);
       wall.scale.set(Math.max(0.01, s.r), 1, Math.max(0.01, s.r));
+      wallU.uR.value = Math.max(0.01, s.r);
+      wallU.uTime.value = now / 1000 % 1000;
       wall.visible = s.r < R0 - 1;
 
       const feet = ctx.feet();

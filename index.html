@@ -202,6 +202,13 @@
   .skin.locked { filter: grayscale(.85) brightness(.75); }
   .skin.locked small { color: #fff; }
   .skin.r0 { --rc: #b0b6bf; } .skin.r1 { --rc: #3fc85a; } .skin.r2 { --rc: #3d9bff; } .skin.r3 { --rc: #b45cff; } .skin.r4 { --rc: #ffb020; }
+  .lsub { margin: 18px 0 10px; font: 400 18px var(--display); font-style: italic; text-transform: uppercase; color: var(--mute); }
+  .skin i.cdome { width: 52px; height: 30px; margin: 11px 0; border-radius: 52px 52px 6px 6px; background: repeating-conic-gradient(from -90deg at 50% 100%, var(--ca) 0 22.5deg, var(--cb) 22.5deg 45deg); box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); }
+  #emotes { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); display: flex; gap: 8px; padding: 10px; border-radius: 16px; background: rgba(11,13,18,.78); box-shadow: 0 0 0 1px rgba(255,255,255,.12); z-index: 6; }
+  #emotes[hidden] { display: none; }
+  #emotes div { width: 74px; padding: 8px 4px; border-radius: 12px; background: rgba(255,255,255,.07); text-align: center; font-size: 11px; font-weight: 800; color: #c3c8d4; text-transform: uppercase; }
+  #emotes div i { display: block; font-size: 26px; font-style: normal; }
+  #emotes div span { display: block; color: var(--yellow); font: 400 13px var(--display); }
   #lockerhint { margin: 14px 0 0; min-height: 18px; font-size: 13px; font-weight: 700; color: var(--mute); }
   @media (max-width: 900px) { .lgrid { grid-template-columns: repeat(3, 1fr); } }
 
@@ -496,6 +503,12 @@
   #scope::before, #scope::after { content: ""; position: absolute; background: rgba(0,0,0,.85); }
   #scope::before { left: 50%; top: 18vh; bottom: 18vh; width: 2px; }
   #scope::after { top: 50%; left: calc(50% - 32vh); right: calc(50% - 32vh); height: 2px; }
+  #dmgnums { position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; }
+  #dmgnums .dn { position: absolute; left: 0; top: 0; font: 400 22px var(--display); color: #fff; -webkit-text-stroke: 1.5px #14161c; paint-order: stroke fill; text-shadow: 0 2px 0 #14161c; will-change: transform, opacity; }
+  #dmgnums .dn.sh { color: #6fc3ff; }
+  #dmgnums .dn.big { font-size: 30px; color: #ffd21a; }
+  #dmgnums .dn.sh.big { color: #9ad8ff; }
+  #dmgnums .dn.build { font-size: 15px; color: #d8dde6; }
   #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; opacity: 0; }
   #hitmark::before, #hitmark::after { content: ""; position: absolute; left: 10px; top: -2px; width: 2px; height: 26px; background: #fff; }
   #hitmark::before { transform: rotate(45deg); } #hitmark::after { transform: rotate(-45deg); }
@@ -516,6 +529,8 @@
   .pc-w { width: 20px; height: 22px; }
   .pc-f { width: 24px; height: 9px; transform: skewX(-35deg); }
   .pc-r { width: 26px; height: 6px; transform: rotate(-38deg); }
+  #hotbar div.wslot.med { --rar: #ff5a6a; margin-left: 8px; }
+  #hotbar div.wslot.med.zero b { opacity: .35; }
   #hotbar div.wslot small { max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #poi { position: fixed; left: 50%; top: 92px; transform: translateX(-50%); font: 400 40px var(--display); font-style: italic; text-transform: uppercase; color: #fff;
     -webkit-text-stroke: 1.5px #1a2a8a; text-shadow: 0 4px 0 #1a2a8a; pointer-events: none; opacity: 0; white-space: nowrap; }
@@ -529,7 +544,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm', 'fx'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -646,6 +661,8 @@
       <div class="glass lockerp">
         <h3>Locker</h3>
         <div class="lgrid" id="locker"></div>
+        <h4 class="lsub">Parachutes</h4>
+        <div class="lgrid" id="lchutes"></div>
         <p id="lockerhint">Pick a skin — everyone in the match sees it.</p>
       </div>
     </section>
@@ -727,7 +744,7 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · P prone · M map · Esc menu</div>
+<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · P prone · J emote · M map · Esc menu</div>
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>
@@ -767,6 +784,7 @@
 <div id="hitmark"></div>
 <div id="flash"></div>
 <div id="hotbar" hidden></div>
+<div id="emotes" hidden><div><span>1</span><i>🕺</i>Dance</div><div><span>2</span><i>🙌</i>Floss</div><div><span>3</span><i>👋</i>GM</div><div><span>4</span><i>🚀</i>To the Moon</div></div>
 <div id="toast" hidden></div>
 
 <div id="pause" hidden>
@@ -777,11 +795,12 @@
     <div class="prow"><button id="howto2">Controls</button><button id="leave">Leave to lobby</button></div>
     <div class="keys" id="pkeys" hidden>
       <b>WASD</b><span>move · Shift run · Space jump</span>
-      <b>1 · 2–4</b><span>pickaxe · weapons</span>
+      <b>1 · 2–4 · 5</b><span>pickaxe · weapons · medkits</span>
       <b>Z · X · C · V</b><span>wall · floor · ramp · material</span>
       <b>E · R · G · H</b><span>chest · reload · swap · drop</span>
       <b>Alt</b><span>crouch</span>
       <b>B · F · Q</b><span>buy abilities · ability 1 · ability 2</span>
+      <b>J</b><span>emotes (then 1–4)</span>
       <b>T</b><span>chat</span>
     </div>
   </div>

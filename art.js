@@ -180,6 +180,25 @@ function patch(mat, key, body) {
 // Материал с качанием (только для InstancedMesh — берёт позицию экземпляра).
 export const swayMaterial = (mat, from = 2) => patch(mat, `sway${from}`, swayChunk(from));
 
+// Контровой свет (rim) для персонажей: светлая кромка по силуэту — враг читается на фоне травы и стен.
+// Цвет и сила общие (rimUniform) — их меняет время суток раунда.
+export const rimUniform = { color: { value: new THREE.Color(0xfff2d8) }, power: { value: 0.45 } };
+export function rimMaterial(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uRimColor = rimUniform.color;
+    sh.uniforms.uRim = rimUniform.power;
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uRimColor; uniform float uRim;')
+      .replace('#include <opaque_fragment>', `{
+        float rf = 1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+        outgoingLight += uRimColor * pow(rf, 3.0) * uRim;
+      }
+      #include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey = () => 'rim';
+  return mat;
+}
+
 // Контур «обратной оболочкой»: задние грани, раздутые наружу, тёмно-фиолетовым.
 // box — раздуваем по знаку координаты (у коробок без щелей на рёбрах), иначе — по нормали.
 const OUTLINE = 0x1d1438;

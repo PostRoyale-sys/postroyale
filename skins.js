@@ -3,7 +3,7 @@
 // Часть скинов открывается уровнем сезона (500 очков на уровень), Gold Holder — только держателям токена.
 
 import * as THREE from 'three';
-import { toon, outlineGroup } from './art.js';
+import { toon, outlineGroup, rimMaterial } from './art.js';
 
 // rarity — индекс в RARITY (combat.js): 0 Common … 4 Legendary.
 export const SKINS = [
@@ -137,7 +137,7 @@ export function buildCharacter(skinId, fallbackColor) {
     }
     case 'lips': g.add(box(0.2, 0.05, 0.04, toon(0xc0392b), 0, 1.63, -0.28)); break;
   }
-  g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+  g.traverse((m) => { if (m.isMesh) { m.castShadow = true; if (m.material.isMeshToonMaterial && !m.material.transparent) rimMaterial(m.material); } });
   outlineGroup(g, 0.03);
   return g;
 }
@@ -158,13 +158,29 @@ export function animateCharacter(g, t, state, speed = 1, armed = false) {
   } else if (state === 'chute') {
     // под куполом: руки вверх держат стропы, ноги чуть вперёд
     lx = -0.35; rx = -0.25; ax1 = 0; ax2 = 0; az1 = -2.7 + Math.sin(t * 2) * 0.05; az2 = 2.7 - Math.sin(t * 2) * 0.05;
+  } else if (state === 'heal') {
+    // лечится: руки перед грудью, держит аптечку
+    ax1 = ax2 = -1.1; az1 = 0.55 + Math.sin(t * 9) * 0.05; az2 = -0.55 - Math.sin(t * 9) * 0.05;
+  } else if (state === 'dance') {
+    // танец: руки вверх-вниз по очереди, шаги на месте
+    const b = Math.sin(t * 8);
+    lx = b * 0.35; rx = -b * 0.35; az1 = -1.2 - b * 1.1; az2 = 1.2 - b * 1.1; ax1 = ax2 = -0.2;
+  } else if (state === 'floss') {
+    // флосс: прямые руки качаются из стороны в сторону, бёдра — навстречу
+    const b = Math.sin(t * 9);
+    az1 = -0.35 + b * 0.55; az2 = 0.35 + b * 0.55; ax1 = b > 0 ? -0.4 : 0.4; ax2 = -ax1; lx = -b * 0.15; rx = b * 0.15;
+  } else if (state === 'wave') {
+    az2 = 2.5 + Math.sin(t * 10) * 0.35; ax2 = -0.2;
+  } else if (state === 'moon') {
+    // «to the moon»: обе руки вверх, покачивается
+    az1 = -2.85 + Math.sin(t * 4) * 0.12; az2 = 2.85 + Math.sin(t * 4) * 0.12; lx = Math.sin(t * 4) * 0.2; rx = -lx;
   } else if (state === 'glide') {
     lx = 0.35; rx = 0.25; az1 = -1.35 + Math.sin(t * 3) * 0.08; az2 = 1.35 - Math.sin(t * 3) * 0.08; ax1 = ax2 = 0;
   } else {
     const br = Math.sin(t * 2.2);
     az1 = -0.12 - br * 0.04; az2 = 0.12 + br * 0.04;
   }
-  if (armed && state !== 'glide') { ax2 = -1.25; az2 = 0.1; ax1 = -1.0; az1 = 0.35; }  // руки вперёд — держит оружие
+  if (armed && !['glide', 'heal', 'dance', 'floss', 'wave', 'moon'].includes(state)) { ax2 = -1.25; az2 = 0.1; ax1 = -1.0; az1 = 0.35; }  // руки вперёд — держит оружие
   const k = 0.25;                                       // плавность перехода между позами
   r.l1.rotation.x += (lx - r.l1.rotation.x) * k; r.l2.rotation.x += (rx - r.l2.rotation.x) * k;
   r.a1.rotation.x += (ax1 - r.a1.rotation.x) * k; r.a2.rotation.x += (ax2 - r.a2.rotation.x) * k;

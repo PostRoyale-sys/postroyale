@@ -71,14 +71,24 @@ function chestModel() {
   const gold = new THREE.MeshLambertMaterial({ color: 0xffc83d, emissive: 0x4a3200 });
   const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.6), wood);
   base.position.y = 0.25;
+  // крышка на петле у задней кромки (+Z): при открытии откидывается назад
+  const hinge = new THREE.Group();
+  hinge.position.set(0, 0.5, 0.31);
   const lid = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.22, 0.62), gold);
-  lid.position.y = 0.6;
+  lid.position.set(0, 0.1, -0.31);
+  hinge.add(lid);
   const latch = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.05), gold);
   latch.position.set(0, 0.45, -0.32);
   const glow = glowSprite('rgba(255,200,60,0.55)', 2.4);
   glow.position.y = 0.5;
-  g.add(base, lid, latch, glow);
+  // вспышка при открытии
+  const burst = glowSprite('rgba(255,230,140,0.9)', 1);
+  burst.position.y = 0.7;
+  burst.visible = false;
+  g.add(base, hinge, latch, glow, burst);
   g.userData.glow = glow;
+  g.userData.hinge = hinge;
+  g.userData.burst = burst;
   return g;
 }
 
@@ -111,6 +121,8 @@ function itemModel(it) {
   }
   const glow = glowSprite(`${color}88`, 1.2);
   g.add(glow);
+  g.userData.glow = glow;
+  g.userData.rare = it.k === 'weapon' ? it.r : -1;
   return g;
 }
 
@@ -142,11 +154,14 @@ export function createLoot(ctx) {
 
   const isOpen = (c) => c.openedAt >= roundStart && c.openedAt > 0;
 
+  // Открытие: крышка откидывается, вспышка, через ~1.2 с сундук исчезает (у всех, кто видит).
+  const OPEN_ANIM = 1.2;
   function setOpened(i, t) {
     const c = chests[i];
     if (!c || (c.openedAt && c.openedAt >= t)) return;
     c.openedAt = t;
-    c.group.visible = !isOpen(c);
+    c.anim = isOpen(c) && Date.now() - t < 3000 ? performance.now() : 0;
+    c.group.visible = !isOpen(c) || !!c.anim;
   }
 
   function spawn(it, from) {
@@ -277,12 +292,31 @@ export function createLoot(ctx) {
     update(dt, now) {
       for (const c of chests) {
         const open = isOpen(c);
-        if (c.group.visible === open) c.group.visible = !open;
-        if (!open) c.group.userData.glow.material.opacity = 0.6 + Math.sin(now / 300 + c.i) * 0.3;
+        const u = c.group.userData;
+        if (open && c.anim) {
+          const k = (performance.now() - c.anim) / 1000 / OPEN_ANIM;
+          if (k >= 1) { c.anim = 0; c.group.visible = false; u.burst.visible = false; continue; }
+          c.group.visible = true;
+          u.hinge.rotation.x = -Math.min(1, k * 4) * 1.9;                   // крышка откинулась
+          u.burst.visible = true;
+          u.burst.scale.setScalar(0.5 + Math.min(1, k * 3) * 3.2);
+          u.burst.material.opacity = Math.max(0, 1 - k * 1.2);
+          const sh = k > 0.75 ? 1 - (k - 0.75) / 0.25 : 1;                 // в конце сундук «сдувается»
+          c.group.scale.setScalar(Math.max(0.01, sh));
+          continue;
+        }
+        if (c.group.visible === open) { c.group.visible = !open; c.group.scale.setScalar(1); u.hinge.rotation.x = 0; }
+        if (!open) u.glow.material.opacity = 0.6 + Math.sin(now / 300 + c.i) * 0.3;
       }
       for (const it of items.values()) {
         it.group.rotation.y += dt * 1.6;
-        it.group.position.y = it.pos.y + Math.sin(now / 400 + it.pos.x) * 0.08;
+        // выпал только что — подпрыгивает из сундука и «надувается»; оружие пульсирует цветом редкости
+        const age = (performance.now() - it.born) / 1000;
+        const hop = age < 0.55 ? Math.sin((age / 0.55) * Math.PI) * 1.1 : 0;
+        it.group.scale.setScalar(age < 0.25 ? 0.3 + (age / 0.25) * 0.7 : 1);
+        it.group.position.y = it.pos.y + hop + Math.sin(now / 400 + it.pos.x) * 0.08;
+        const u = it.group.userData;
+        if (u.rare >= 0 && u.glow) u.glow.scale.setScalar(1.2 + (0.25 + u.rare * 0.12) * (1 + Math.sin(now / 260 + it.pos.z)));
       }
     },
   };
