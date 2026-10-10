@@ -20,7 +20,8 @@ const CAPTIONS = [
 ];
 const END_AT = 23.2, TOTAL = 28;
 
-export async function record() {
+// end: 'soon' — карточка «SEASON 1 · SOON»; 'play' — «PLAY FREE» и адрес игры (GitHub Pages).
+export async function record({ end = 'soon' } = {}) {
   const pc = window.__pc;
   const src = pc.renderer.domElement;
   const out = document.createElement('canvas');
@@ -179,7 +180,11 @@ export async function record() {
     g.globalAlpha = f(1.3);
     const bw = 360, bh = 64, bx = W / 2 - bw / 2, by = H * 0.44 + 150;
     g.fillStyle = '#ffc928'; g.beginPath(); g.roundRect(bx, by, bw, bh, 16); g.fill();
-    g.fillStyle = '#1b1450'; g.font = `italic 400 34px ${DISPLAY}`; g.fillText('SEASON 1 · SOON', W / 2, by + 44);
+    g.fillStyle = '#1b1450'; g.font = `italic 400 34px ${DISPLAY}`; g.fillText(end === 'play' ? '▶ PLAY FREE NOW' : 'SEASON 1 · SOON', W / 2, by + 44);
+    if (end === 'play') {
+      g.globalAlpha = f(1.7); g.font = `700 24px ${SANS}`; g.fillStyle = '#ffffff';
+      g.fillText('postroyale-sys.github.io/postroyale', W / 2, by + bh + 46);
+    }
     g.globalAlpha = 1;
   }
 
@@ -211,7 +216,7 @@ export async function record() {
   // время и кадры — обратно настоящие
   performance.now = realPerf; Date.now = realDate;
   pc.renderer.setAnimationLoop(pc.mainLoop);
-  const name = 'postroyale-teaser.mp4';
+  const name = end === 'play' ? 'postroyale-teaser-play.mp4' : 'postroyale-teaser.mp4';
   const res = await fetch(`http://127.0.0.1:8767/upload?name=${name}`, { method: 'POST', body: blob });
   window.__trailer = { done: true, name, size: blob.size, ok: res.ok };
 }
