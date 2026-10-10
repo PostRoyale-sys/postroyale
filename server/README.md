@@ -28,9 +28,9 @@ ssh kolsscan 'cd /opt/postroyale-mm && docker build -t postroyale-mm . && \
 ```
 Caddy (`/etc/caddy/Caddyfile`), WebSocket проксируется сам:
 ```
-postroyale-mm.193-233-233-118.sslip.io {
+mm.postroyale.xyz, postroyale-mm.193-233-233-118.sslip.io {
     reverse_proxy 127.0.0.1:8793
 }
 ```
-Адрес по умолчанию в клиенте — `MM_URL` в `mm.js`. Нагрузка: на 2 ядра / 4 ГБ — сотни игроков онлайн (сервер только пересылает
+Адреса в клиенте — `MM_URLS` в `mm.js` (`wss://mm.postroyale.xyz`, запасной — sslip.io). Нагрузка: на 2 ядра / 4 ГБ — сотни игроков онлайн (сервер только пересылает
 сообщения); 20 игроков в матче ≈ 0.3–0.5 МБ/с исходящего трафика на матч.
