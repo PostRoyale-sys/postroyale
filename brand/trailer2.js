@@ -24,7 +24,15 @@ const SHOTS = [
 ];
 const END_AT = 20.3, TOTAL = 24.3;
 
-export async function record() {
+// mode: 'play' — финал «PLAY FREE NOW» с адресом; 'soon' — анонс: счётчик «FARMING $PR» с «+N $PR» за действия
+// и финал «COMING SOON · Farm $PR» (суммы условные — иллюстрация фарма, не обещание).
+// За каждую сцену в режиме 'soon': сколько «$PR» всплывает.
+const FARM = { loot: [[0.5, 15], [0.9, 10]], build: [[0.5, 5], [0.85, 5], [1.2, 5], [1.55, 5]], fight: [[1.2, 40]], car: [[0.9, 25]], drone: [[1.6, 60]], storm: [[1.0, 30]], win: [[0.4, 250]] };
+
+export async function record({ mode = 'play' } = {}) {
+  const soon = mode === 'soon';
+  let farmed = 0, shown = 0;
+  const pops = [];                                       // всплывающие «+N $PR»: { t, n }
   const pc = window.__pc;
   const src = pc.renderer.domElement;
   const out = document.createElement('canvas');
@@ -237,8 +245,9 @@ export async function record() {
     if (t < END_AT) {
       const i = shotAt(t);
       const [a, b, id, big, small] = SHOTS[i];
-      if (i !== cur) { cur = i; SCENES[id].start(); }
+      if (i !== cur) { cur = i; SCENES[id].start(); S.farmDone = new Set(); }
       SCENES[id].tick(t - a);
+      if (soon) for (const [at, n] of FARM[id] || []) if (t - a >= at && !S.farmDone.has(at)) { S.farmDone.add(at); farmed += n; pops.push({ t, n }); }
       // игра — «cover» в 16:9 с лёгким наездом за сцену
       const z = 1 + ((t - a) / (b - a)) * 0.06;
       const sw = src.width, sh = src.height, k = Math.max(W / sw, H / sh) * z;
@@ -247,7 +256,8 @@ export async function record() {
       if (id === 'drone' && pc.abilities.drone) fpvOverlay(t);
       vignette();
       watermark();
-      punch(big, small, t - a, b - t, id === 'win');
+      punch(big, soon && id === 'win' ? '#1 of 21 · +250 $PR' : small, t - a, b - t, id === 'win');
+      if (soon) farmHud(t);
       flash(t - a);
     } else endCard(t - END_AT);
   }
@@ -295,6 +305,32 @@ export async function record() {
     }
     g.restore();
   }
+  // счётчик «FARMING $PR» справа сверху и всплывающие «+N $PR»
+  function farmHud(t) {
+    shown += (farmed - shown) * 0.25;
+    g.save();
+    const x = W - 300, y = 24, w = 270, h = 64;
+    g.fillStyle = 'rgba(20,12,60,.72)'; g.beginPath(); g.roundRect(x, y, w, h, 16); g.fill();
+    g.strokeStyle = 'rgba(255,201,40,.75)'; g.lineWidth = 2; g.stroke();
+    g.textAlign = 'left'; g.font = `800 15px ${SANS}`; g.fillStyle = '#ffd84a';
+    g.fillText(Math.floor(t * 2) % 2 ? '● FARMING $PR' : '○ FARMING $PR', x + 16, y + 24);
+    g.font = `italic 400 32px ${DISPLAY}`; g.fillStyle = '#ffffff';
+    g.fillText(`${Math.round(shown).toLocaleString('en')} $PR`, x + 16, y + 56);
+    for (const p of pops) {
+      const age = t - p.t;
+      if (age > 1.1) continue;
+      const a = Math.min(1, (1.1 - age) / 0.35);
+      g.globalAlpha = a;
+      g.font = `italic 400 44px ${DISPLAY}`;
+      g.textAlign = 'center';
+      const py = H * 0.42 - age * 90;
+      g.lineWidth = 9; g.strokeStyle = 'rgba(20,12,60,.95)'; g.strokeText(`+${p.n} $PR`, W / 2 + 230, py);
+      g.fillStyle = '#ffc928'; g.fillText(`+${p.n} $PR`, W / 2 + 230, py);
+      g.globalAlpha = 1;
+    }
+    g.restore();
+  }
+
   function fpvOverlay(t) {
     g.save();
     g.fillStyle = 'rgba(0,0,0,0.12)';
@@ -305,7 +341,37 @@ export async function record() {
     if (Math.floor(t * 2) % 2 === 0) { g.font = `800 22px ui-monospace, Menlo, monospace`; g.textAlign = 'left'; g.fillText('● REC · FPV', W - 210, 52); }
     g.restore();
   }
-  function endCard(s) {
+  function endCard(s) { return soon ? endSoon(s) : endPlay(s); }
+  function endSoon(s) {
+    const bg = g.createRadialGradient(W / 2, H * 0.42, 40, W / 2, H / 2, W * 0.75);
+    bg.addColorStop(0, '#5b3dff'); bg.addColorStop(0.55, '#2a1880'); bg.addColorStop(1, '#0e0828');
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const f = (d) => Math.max(0, Math.min(1, (s - d) / 0.3));
+    const pop = Math.min(1, s / 0.3), e = 1 - (1 - pop) ** 3;
+    g.save(); g.globalAlpha = e; logo(W / 2, H * 0.26, 84, 'center'); g.restore();
+    // COMING SOON — крупно, золотом, «удар» и лёгкая пульсация
+    const k = Math.min(1, Math.max(0, (s - 0.25) / 0.18)), ek = 1 - (1 - k) ** 3;
+    const pulse = 1 + Math.sin(s * 5) * 0.02;
+    g.save();
+    g.globalAlpha = k;
+    g.translate(W / 2, H * 0.5); g.rotate((-3 * Math.PI) / 180); g.scale((1.6 - 0.6 * ek) * pulse, (1.6 - 0.6 * ek) * pulse);
+    g.textAlign = 'center'; g.font = `italic 400 128px ${DISPLAY}`;
+    g.lineWidth = 18; g.strokeStyle = 'rgba(20,12,60,.95)'; g.lineJoin = 'round';
+    g.strokeText('COMING SOON', 0, 0);
+    g.fillStyle = '#ffc928'; g.fillText('COMING SOON', 0, 0);
+    g.restore();
+    g.textAlign = 'center';
+    g.globalAlpha = f(0.7); g.font = `italic 400 46px ${DISPLAY}`; g.fillStyle = '#ffffff';
+    g.lineWidth = 8; g.strokeStyle = 'rgba(20,12,60,.9)';
+    g.strokeText('PLAY. WIN. FARM $PR.', W / 2, H * 0.67); g.fillText('PLAY. WIN. FARM $PR.', W / 2, H * 0.67);
+    g.globalAlpha = f(1.0); g.font = `700 24px ${SANS}`; g.fillStyle = '#d8d0ff';
+    g.fillText('Season 1 · the battle royale that lives inside a post', W / 2, H * 0.67 + 50);
+    g.globalAlpha = f(1.3); g.font = `800 22px ${SANS}`; g.fillStyle = '#ffd84a';
+    g.fillText('Follow so you don’t miss the drop', W / 2, H * 0.67 + 88);
+    g.globalAlpha = 1;
+    flash(s);
+  }
+  function endPlay(s) {
     const bg = g.createRadialGradient(W / 2, H * 0.42, 40, W / 2, H / 2, W * 0.75);
     bg.addColorStop(0, '#5b3dff'); bg.addColorStop(0.55, '#2a1880'); bg.addColorStop(1, '#0e0828');
     g.fillStyle = bg; g.fillRect(0, 0, W, H);
@@ -357,7 +423,7 @@ export async function record() {
   const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
   performance.now = realPerf; Date.now = realDate;
   pc.renderer.setAnimationLoop(pc.mainLoop);
-  const name = 'postroyale-trailer-fast.mp4';
+  const name = soon ? 'postroyale-trailer-soon.mp4' : 'postroyale-trailer-fast.mp4';
   const res = await fetch(`http://127.0.0.1:8767/upload?name=${name}`, { method: 'POST', body: blob });
   window.__trailer = { done: true, name, size: blob.size, ok: res.ok };
 }
