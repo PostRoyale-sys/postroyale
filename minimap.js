@@ -79,6 +79,9 @@ export function createMinimap(ctx) {
         g.fillStyle = 'rgba(80,255,150,.25)'; g.strokeStyle = '#6dffa8'; g.lineWidth = 2 * s;
         g.beginPath(); g.arc(x, y, Math.max(6 * s, m.r * k), 0, 7); g.fill(); g.stroke();
         g.fillStyle = '#0b3a1e'; g.font = `900 ${11 * s}px Inter, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('↑', x, y);
+      } else if (m.kind === 'pad') {
+        g.fillStyle = '#9b5cff'; g.strokeStyle = '#ffd21a'; g.lineWidth = 1.5 * s;
+        g.beginPath(); g.arc(x, y, 3.5 * s, 0, 7); g.fill(); g.stroke();
       } else if (m.kind === 'drop' && (m.state !== 1 || Math.floor(performance.now() / 300) % 2)) {
         const h = 6 * s;
         g.fillStyle = '#7a3cff'; g.strokeStyle = '#ffc83d'; g.lineWidth = 2 * s;

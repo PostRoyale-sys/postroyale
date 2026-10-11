@@ -38,6 +38,7 @@ import { createFx } from './fx.js';
 import { AOPass, SunRaysPass } from './post.js';
 import { createAudio } from './audio.js';
 import { createEvents, PUMP_MULT } from './events.js';
+import { createPads, PAD_VY, PAD_PUSH } from './pads.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -222,12 +223,17 @@ let world = null, terrain = null;
 const grass = createGrass(scene);
 let playing = false;                       // false — лобби (остров на фоне), true — в матче
 const structures = createStructures({ scene });
+const pads = createPads(scene);
 
 // ---------- Физика игрока ----------
 
 const vel = new THREE.Vector3();
 let onGround = false, moving = false, gliding = false, crouching = false;
 let prone = false;                             // лёжа (P): совсем низко, медленно, точнее всего
+// Скольжение: Alt на бегу — рывок вперёд в приседе, скорость гаснет за SLIDE с (направление — куда бежал).
+const SLIDE = 0.9, SLIDE_BOOST = 1.75, SLIDE_CD = 0.5;
+let slideT = 0, slideReady = 0, altWas = false, camRoll = 0, padCd = 0;
+const slideDir = new THREE.Vector3();
 let chute = false;                             // gliding && !chute — свободное падение; chute — под куполом
 let eyeH = EYE;                                // высота глаз: плавно опускается при приседании
 const bodyH = () => (prone ? PRONE_H : crouching ? CROUCH_H : HEIGHT);   // полёта нет: только ходьба, прыжок и планирование при высадке
@@ -411,7 +417,37 @@ function step(dt) {
   if (keys.has('KeyD') || keys.has('ArrowRight')) move.add(right);
   if (keys.has('KeyA') || keys.has('ArrowLeft')) move.sub(right);
   moving = move.lengthSq() > 0 || !onGround;
-  if (move.lengthSq()) move.normalize().multiplyScalar(speed * dt);
+  // скольжение: нажал Alt, когда бежал вперёд по земле
+  const sprint = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !scoped;
+  const nowS = performance.now() / 1000;
+  if (wantCrouch && !altWas && sprint && onGround && move.lengthSq() && !prone && nowS > slideReady) {
+    slideT = SLIDE; slideDir.copy(move).normalize(); slideReady = nowS + SLIDE + SLIDE_CD;
+    audio.play('slide');
+  }
+  altWas = wantCrouch;
+  if (slideT > 0 && (!wantCrouch || prone)) slideT = 0;
+  if (slideT > 0) {
+    slideT -= dt;
+    const k = Math.max(0, slideT / SLIDE);
+    // чуть подруливаем мышью/клавишами, но в основном — по инерции
+    if (move.lengthSq()) slideDir.lerp(move.clone().normalize(), Math.min(1, dt * 2)).normalize();
+    move.copy(slideDir).multiplyScalar((WALK * 0.45 + (RUN * SLIDE_BOOST - WALK * 0.45) * Math.sqrt(k)) * dt);
+    if (onGround && Math.random() < dt * 25) fx.dust(feet.clone().addScaledVector(slideDir, 0.5).add(new THREE.Vector3(0, 0.15, 0)), 0xcbb894, 0.9);
+  } else if (move.lengthSq()) move.normalize().multiplyScalar(speed * dt);
+  // наклон камеры в скольжении
+  const roll = slideT > 0 ? 0.06 : 0;
+  camera.rotation.z += (roll - camera.rotation.z) * Math.min(1, dt * 10);
+
+  // батут: подкинуло вверх и чуть вперёд (по взгляду); дальше можно раскрыть парашют
+  padCd -= dt;
+  const pad = padCd <= 0 && !gliding ? pads.under(feet) : null;
+  if (pad && vel.y <= 0.5) {
+    vel.y = PAD_VY; onGround = false; padCd = 0.5; slideT = 0;
+    knockVel.addScaledVector(fwd, PAD_PUSH);
+    pads.bounce(pad);
+    audio.play('bounce', new THREE.Vector3(pad.x, pad.y + 1, pad.z));
+    fx.dust(new THREE.Vector3(pad.x, pad.y + 0.8, pad.z), 0xc8a8ff, 2);
+  }
 
   // Отброс от взрыва гасится за полсекунды.
   move.addScaledVector(knockVel, dt);
@@ -1140,7 +1176,7 @@ const minimap = createMinimap({
   yaw: () => new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y,
   flight: () => flight,
   heliPos: () => (flight ? heliPos(new THREE.Vector3()) : null),
-  mapMarks: () => (playing ? [...events.marks(), ...loot.drops().filter((d) => d.state === 1 || d.state === 2).map((d) => ({ kind: 'drop', ...d }))] : []),
+  mapMarks: () => (playing ? [...pads.list.map((p) => ({ kind: 'pad', x: p.x, z: p.z })), ...events.marks(), ...loot.drops().filter((d) => d.state === 1 || d.state === 2).map((d) => ({ kind: 'drop', ...d }))] : []),
 });
 minimap.setWorld(world);
 // руки от первого лица — в цветах скина (рукав — тело скина, кисти — его кожа)
@@ -1670,6 +1706,7 @@ function loadWorld(id) {
   terrain = world.mesh();
   scene.add(terrain);
   structures.load(world);
+  pads.load(world, structures);
   grass.setMap(world);
   try { minimap.setWorld(world); } catch (e) { /* миникарта ещё не создана — подложку сделает при создании */ }
   water.setHeights(world.heightTexture(), MAP);
@@ -2630,6 +2667,7 @@ const mainLoop = (now) => {
     abilities.update(dt);
     royale.update(dt);
     if (royale.round >= 0) events.update(dt, (Date.now() - royale.roundStart) / 1000);
+    pads.update(dt, t);
     minimap.update(dt, playing);
     fx.update(dt);
     runDust(dt);
@@ -2793,7 +2831,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, audio, killfeed, events, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, killfeed, events, pads, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),
