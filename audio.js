@@ -319,6 +319,19 @@ const SFX = {
   hit: (D) => { const x = D.arr(0.15); D.add(x, D.modes(0.05, [3900, 5300], 0.008), 0, 0.9); D.add(x, D.burst(0.06, { a: 0.001, d: 0.015, type: 'lp', f: 1000 }), 0, 0.7); D.add(x, D.thud(0.06, 190, 95, 0.015), 0, 0.5); return x; },
   hitShield: (D) => { const x = D.arr(0.35); D.add(x, D.modes(0.3, [2650, 3970, 5300], 0.07), 0, 1); D.add(x, D.modes(0.05, [4400], 0.008), 0, 0.4); return x; },
   hitBig: (D) => { const x = D.arr(0.3); D.add(x, D.modes(0.08, [3200, 4700], 0.015), 0, 0.8); D.add(x, D.thud(0.2, 160, 60, 0.05), 0, 1); D.add(x, D.burst(0.1, { d: 0.025, type: 'lp', f: 1400 }), 0, 0.7); return D.sat(x, 1.5); },
+  // хедшот: звонкий «дзынь» поверх удара — сразу слышно, что попал в голову
+  hitHead: (D) => { const x = D.arr(0.5); D.add(x, D.modes(0.45, [2637, 3951, 5274], 0.12), 0, 1); D.add(x, D.tone(0.35, 3520, 3520, { d: 0.1 }), 0, 0.35); D.add(x, D.thud(0.12, 200, 90, 0.025), 0, 0.6); D.add(x, D.burst(0.05, { d: 0.01, type: 'hp', f: 3000 }), 0, 0.5); return D.sat(x, 1.3); },
+  // серия убийств: быстрый восходящий арпеджио-аккорд с «искрами»
+  streak: (D) => {
+    const x = D.arr(1.6);
+    [[784, 0], [988, 0.07], [1175, 0.14], [1568, 0.21]].forEach(([f, t]) => { const h = D.add(D.tone(1, f, f, { a: 0.004, d: 0.35, shape: 'saw' }), D.tone(1, f * 1.005, f * 1.005, { a: 0.004, d: 0.35, shape: 'sq' }), 0, 0.5); D.filt(h, 'lp', 4200); D.add(x, h, t, 0.32); });
+    D.add(x, D.thud(0.5, 180, 60, 0.12), 0, 0.7);
+    D.bells(x, [3136, 3951, 4699], 0.05, 0.3, 0.25, 0.25);
+    D.add(x, D.burst(1, { a: 0.02, d: 0.3, type: 'hp', f: 7000 }), 0.2, 0.2);
+    return D.sat(x, 1.3);
+  },
+  // монетки PR рассыпаются (убийство)
+  coins: (D) => { const x = D.arr(1.1); for (let i = 0; i < 12; i++) { const t = D.r(0, 0.7) ** 1.4, f = D.r(3200, 5200); D.add(x, D.modes(0.3, [f, f * 1.48, f * 2.3], D.r(0.04, 0.09)), t, D.r(0.2, 0.55) * (1 - t * 0.8)); } return x; },
   kill: (D) => {
     const x = D.arr(1.2);
     D.add(x, D.thud(0.4, 130, 48, 0.1), 0, 1);
@@ -397,7 +410,7 @@ const GAIN = {
   wind: 0.6, canopy: 0.35, rotor: 0.7, storm: 0.6, chuteOpen: 0.7, jumpOut: 0.5,
   medOpen: 0.8, bandage: 0.6, spray: 0.44, medTape: 0.6, healDone: 0.8,
   pickAmmo: 0.52, pickWeapon: 0.59, pickArmor: 0.52, pickMed: 0.52, chest: 0.6,
-  hit: 0.45, hitShield: 0.38, hitBig: 0.55, kill: 0.6, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
+  hit: 0.5, hitShield: 0.42, hitBig: 0.6, hitHead: 0.55, streak: 0.55, coins: 0.32, kill: 0.7, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
   uiClick: 0.25, uiHover: 0.08, beep: 0.35, beepGo: 0.4, roundStart: 0.45, victory: 0.55, lose: 0.4, caseTick: 0.25,
   swing: 0.3, chop: 0.55, build_wood: 0.45, build_brick: 0.45, build_metal: 0.4, break_wood: 0.6, break_brick: 0.6, break_metal: 0.55,
   impact_dirt: 0.25, impact_wood: 0.3, impact_brick: 0.3, impact_rock: 0.3, impact_metal: 0.28, dash: 0.4, launch: 0.5,

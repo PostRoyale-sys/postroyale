@@ -29,7 +29,7 @@ export function createFx(scene, camera) {
     parts.push({
       p: p.clone(), v: o.v || new THREE.Vector3(), life: o.life ?? 0.6, age: 0, size: o.size ?? 0.12, grow: o.grow ?? 0,
       g: o.g ?? 20, drag: o.drag ?? 0, color: new THREE.Color(o.color ?? 0xffffff), rot: new THREE.Vector3(Math.random() * 6, Math.random() * 6, 0),
-      spin: o.spin ?? 6,
+      spin: o.spin ?? 6, flat: o.flat || 0,
     });
   }
   const rand = (a) => (Math.random() - 0.5) * 2 * a;
@@ -71,6 +71,25 @@ export function createFx(scene, camera) {
     emit(p.clone().add(new THREE.Vector3(rand(0.4), rand(0.3), rand(0.4))), { v: new THREE.Vector3(rand(0.2), 1.2 + Math.random() * 0.6, rand(0.2)), life: 0.8, size: 0.07, g: 0, color: Math.random() < 0.5 ? 0x5dff9a : 0xc8ffd8, spin: 3 });
   }
 
+  // Убийство: персонаж «лопается» — вспышка-облачко, конфетти цветов скина и монетки PR веером вверх.
+  const COIN = [0xffd21a, 0xffb020, 0xfff1a0];
+  function pop(p, colors = [0xffffff]) {
+    for (let i = 0; i < 6; i++) emit(p.clone().add(new THREE.Vector3(rand(0.4), rand(0.6), rand(0.4))), { v: new THREE.Vector3(rand(2), 1 + Math.random() * 2, rand(2)), life: 0.55, size: 0.25, grow: 1.4, g: 0, drag: 4, color: i % 2 ? 0xffffff : 0xfff3c4, spin: 2 });
+    for (let i = 0; i < 26; i++) {
+      emit(p, { v: new THREE.Vector3(rand(5), 3 + Math.random() * 6, rand(5)), life: 0.9 + Math.random() * 0.6, size: 0.09 + Math.random() * 0.08, color: colors[i % colors.length], g: 14, drag: 0.6, spin: 10, flat: 0.35 });
+    }
+    for (let i = 0; i < 16; i++) {
+      emit(p, { v: new THREE.Vector3(rand(4), 5 + Math.random() * 6, rand(4)), life: 1.3 + Math.random() * 0.5, size: 0.2, color: COIN[i % COIN.length], g: 16, drag: 0.4, spin: 12, flat: 0.22 });
+    }
+    sparks(p, 10);
+  }
+  // Конфетти дождём сверху (победа): вокруг точки, медленно планирует.
+  function confetti(p, n = 60, colors = [0xffd21a, 0xff4d8d, 0x5cc4ff, 0x6dffa8, 0xb45cff, 0xffffff]) {
+    for (let i = 0; i < n; i++) {
+      emit(p.clone().add(new THREE.Vector3(rand(7), 6 + Math.random() * 6, rand(7))), { v: new THREE.Vector3(rand(1.2), -1 - Math.random(), rand(1.2)), life: 3 + Math.random() * 1.5, size: 0.12 + Math.random() * 0.06, color: colors[i % colors.length], g: 0.6, drag: 0.3, spin: 7, flat: i % 3 ? 0.15 : 0.6 });
+    }
+  }
+
   function updateParts(dt) {
     let n = 0, np = 0;
     for (let i = parts.length - 1; i >= 0; i--) {
@@ -86,7 +105,7 @@ export function createFx(scene, camera) {
       const k = f.age / f.life;
       // обычные — к концу уменьшаются; пыль (grow) — растёт, потом сходит на нет
       const s = f.grow ? (f.size + f.grow * k) * (k > 0.6 ? (1 - k) / 0.4 : 1) : f.size * (k > 0.7 ? (1 - k) / 0.3 : 1);
-      M.compose(f.p, Q.setFromEuler(E.set(f.rot.x, f.rot.y, 0)), S.set(s, s * (f.grow ? 0.8 : 1), s));
+      M.compose(f.p, Q.setFromEuler(E.set(f.rot.x, f.rot.y, 0)), S.set(s, s * (f.grow ? 0.8 : f.flat || 1), s));
       if (f.grow) {
         if (np >= PCAP / 2) continue;
         puffMesh.setMatrixAt(np, M); puffMesh.setColorAt(np, f.color); np++;
@@ -146,6 +165,7 @@ export function createFx(scene, camera) {
     if (nums.length >= NCAP) { nums[0].el.remove(); nums.shift(); }
     const el = document.createElement('b');
     el.className = `dn ${kind}${value >= 50 ? ' big' : ''}`;
+    el.dataset.pop = /head/.test(kind) ? 2.2 : value >= 50 ? 1.9 : 1.6;
     el.textContent = value;
     layer.appendChild(el);
     nums.push({ el, p: p.clone().add(new THREE.Vector3(rand(0.5), 0.2 + Math.random() * 0.4, rand(0.5))), age: 0, dx: rand(40) });
@@ -154,18 +174,21 @@ export function createFx(scene, camera) {
     for (let i = nums.length - 1; i >= 0; i--) {
       const n = nums[i];
       n.age += dt;
-      if (n.age > 0.9) { n.el.remove(); nums.splice(i, 1); continue; }
+      if (n.age > 1.05) { n.el.remove(); nums.splice(i, 1); continue; }
       V.copy(n.p).project(camera);
       if (V.z > 1) { n.el.style.opacity = 0; continue; }
-      const x = (V.x * 0.5 + 0.5) * innerWidth + n.dx * n.age, y = (-V.y * 0.5 + 0.5) * innerHeight - 46 * n.age;
-      const pop = n.age < 0.1 ? 0.6 + n.age * 6 : 1.2 - Math.min(0.2, (n.age - 0.1) * 0.6);
+      // вылет: резко крупно → «отскок» до нормального, потом всплывает вверх и тает
+      const rise = 1 - (1 - Math.min(1, n.age / 0.9)) ** 2;
+      const x = (V.x * 0.5 + 0.5) * innerWidth + n.dx * rise, y = (-V.y * 0.5 + 0.5) * innerHeight - 70 * rise;
+      const big = +n.el.dataset.pop, k = Math.min(1, n.age / 0.14);
+      const pop = n.age < 0.14 ? big - (big - 0.9) * k * k : n.age < 0.22 ? 0.9 + (n.age - 0.14) / 0.08 * 0.1 : 1 - Math.max(0, n.age - 0.75) * 0.6;
       n.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%) scale(${pop.toFixed(2)})`;
-      n.el.style.opacity = n.age > 0.6 ? ((0.9 - n.age) / 0.3).toFixed(2) : 1;
+      n.el.style.opacity = n.age > 0.75 ? ((1.05 - n.age) / 0.3).toFixed(2) : 1;
     }
   }
 
   return {
-    chips, sparks, debris, dust, heal, hole, clearHoles, number,
+    chips, sparks, debris, dust, heal, hole, clearHoles, number, pop, confetti,
     update(dt) { updateParts(dt); updateNums(dt); },
     reset() { parts.length = 0; pMesh.count = 0; puffMesh.count = 0; clearHoles(); for (const n of nums) n.el.remove(); nums.length = 0; },
   };

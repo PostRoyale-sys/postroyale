@@ -20,7 +20,7 @@ export const WEAPONS = {
   smg: { name: 'SMG', tag: 'SMG', ammo: 'light', dmg: 13, pellets: 1, mag: 30, rate: 0.075, reload: 1.8, spread: 0.04, range: 50, auto: true },
   ar: { name: 'Assault Rifle', tag: 'AR', ammo: 'medium', dmg: 27, pellets: 1, mag: 25, rate: 0.13, reload: 2.0, spread: 0.02, range: 90, auto: true },
   shotgun: { name: 'Shotgun', tag: 'SG', ammo: 'shells', dmg: 10, pellets: 9, mag: 5, rate: 0.85, reload: 2.4, spread: 0.09, range: 25 },
-  sniper: { name: 'Sniper', tag: 'SNP', ammo: 'heavy', dmg: 95, pellets: 1, mag: 1, rate: 1.4, reload: 2.2, spread: 0, range: 200, scope: true },
+  sniper: { name: 'Sniper', tag: 'SNP', ammo: 'heavy', dmg: 95, pellets: 1, mag: 1, rate: 1.4, reload: 2.2, spread: 0, range: 200, scope: true, head: 2 },
   bazooka: { name: 'Bazooka', tag: 'BZK', ammo: 'rockets', mag: 1, rate: 1.0, reload: 2.4, rocket: true, minRarity: 1 },
 };
 
@@ -36,6 +36,7 @@ export const MAX_SHIELD = 100;
 export const MED = { max: 3, heal: 40, time: 3 };      // аптечки: в слоте до 3, лечение 3 с, +40 HP
 const ROCKET = { speed: 34, gravity: 3, life: 5 };
 const EXPLODE_R = 4, BUILD_DMG = 250, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус и урон по постройкам, по игрокам
+const HEAD = 1.5;                 // множитель урона в голову (у снайперки свой — spec.head)
 
 export const weaponLabel = (w) => `${RARITY[w.rarity].name} ${WEAPONS[w.type].name}`;
 
@@ -85,9 +86,38 @@ export function createCombat(ctx) {
     fx.push({ obj, age: 0, life, tick });
   }
 
+  // Трассер: светящийся след по всей длине (тает) и яркая «пуля», которая летит от дула к цели.
+  // Аддитивное смешивание — на фоне неба и в тени одинаково заметно; издалека видно, где идёт перестрелка.
+  const BOX = new THREE.BoxGeometry(1, 1, 1).translate(0, 0, 0.5);
+  BOX.userData.shared = true;
   function tracer(a, b, color = 0xffe066) {
-    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color, transparent: true }));
-    addFx(line, 0.12, (k) => { line.material.opacity = 1 - k; });
+    const len = a.distanceTo(b);
+    if (len < 0.5) return;
+    const add = { color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false };
+    const trail = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ ...add, opacity: 0.5 }));
+    trail.position.copy(a); trail.lookAt(b); trail.scale.set(0.035, 0.035, len);
+    addFx(trail, 0.16, (k) => { trail.material.opacity = 0.5 * (1 - k) ** 2; trail.scale.x = trail.scale.y = 0.035 + k * 0.05; });
+    const head = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ ...add, color: 0xfffbe0 }));
+    const hl = Math.min(4, len * 0.5), fly = Math.min(0.12, len / 700);
+    head.position.copy(a); head.lookAt(b); head.scale.set(0.07, 0.07, hl);
+    const dir = b.clone().sub(a).normalize();
+    addFx(head, fly + 0.02, (k) => { const d = Math.min(1, k * (fly + 0.02) / Math.max(fly, 1e-3)) * (len - hl); head.position.copy(a).addScaledVector(dir, d); });
+  }
+
+  // Вспышка у дула (чужие выстрелы: видно, откуда стреляют).
+  const flashTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,230,1)'); gr.addColorStop(0.25, 'rgba(255,214,90,.9)'); gr.addColorStop(1, 'rgba(255,140,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+  function muzzleFlash(p, size = 1.1) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: flashTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    s.position.copy(p);
+    s.material.rotation = Math.random() * 6;
+    addFx(s, 0.07, (k) => { s.scale.setScalar(size * (0.7 + k * 0.6)); s.material.opacity = 1 - k; });
   }
 
   // mult > 1 (взрыв машины) — шар крупнее и дольше, плюс клубы дыма, которые поднимаются и тают.
@@ -158,7 +188,7 @@ export function createCombat(ctx) {
       const p = o.group.position;
       const pr = !!o.target?.pr, top = pr ? 0.75 : o.target?.cr ? 1.35 : 1.95;   // присевший — ниже, лежачий — плашмя
       const w = pr ? 1.0 : 0.4;
-      list.push({ kind: 'player', id: peerId, sd: !!o.target?.sd, min: new THREE.Vector3(p.x - w, p.y - (pr ? 0.32 : 0), p.z - w), max: new THREE.Vector3(p.x + w, p.y + top - (pr ? 0.32 : 0), p.z + w) });
+      list.push({ kind: 'player', id: peerId, sd: !!o.target?.sd, pr, cr: !!o.target?.cr, min: new THREE.Vector3(p.x - w, p.y - (pr ? 0.32 : 0), p.z - w), max: new THREE.Vector3(p.x + w, p.y + top - (pr ? 0.32 : 0), p.z + w) });
     }
     return list;
   }
@@ -179,6 +209,7 @@ export function createCombat(ctx) {
     const ends = [];
     const dmgBy = new Map();     // цель → суммарный урон (дробовик: все дробины одним пакетом)
     const hitAt = new Map();     // цель → точка первого попадания (для числа урона)
+    const heads = new Set();     // цели, которым попали в голову
     const dmgBuild = new Map();  // постройка → урон
     const tlist = targets();
     for (let i = 0; i < spec.pellets; i++) {
@@ -195,16 +226,19 @@ export function createCombat(ctx) {
       if (!best && ob.point) ctx.impact?.(end, ob.e, d);
       if (best && !hitAt.has(best)) hitAt.set(best, end);
       ends.push(end);
-      tracer(muzzle, end, spec.pellets > 1 ? 0xffd38a : 0xffe066);
-      if (best) dmgBy.set(best, (dmgBy.get(best) || 0) + spec.dmg * mult);
+      tracer(muzzle, end, spec.pellets > 1 ? 0xffc46a : 0xffd84a);
+      // голова — верхние ~0.42 м стоящего/присевшего (лежачего — нет)
+      const head = best && !best.pr && end.y > best.max.y - (best.cr ? 0.36 : 0.42);
+      if (head) heads.add(best);
+      if (best) dmgBy.set(best, (dmgBy.get(best) || 0) + spec.dmg * mult * (head ? spec.head || HEAD : 1));
     }
     ctx.audio?.shot(w.type, null);
     const r2 = (v) => v.toArray().map((x) => +x.toFixed(2));
     ctx.net()?.shot({ w: w.type, o: r2(muzzle), e: ends.map(r2) });
     for (const [t, dmg] of dmgBy) {
       ctx.sendHit(t.id, { dmg: Math.round(dmg), by: ctx.nick(), w: w.type });
-      ctx.hitmarker();
-      ctx.dmgNumber?.(hitAt.get(t), Math.round(dmg), t.id);
+      ctx.hitmarker(heads.has(t) ? 'head' : '');
+      ctx.dmgNumber?.(hitAt.get(t), Math.round(dmg), t.id, heads.has(t));
     }
     for (const [k, dmg] of dmgBuild) ctx.damageStructure(k, Math.round(dmg), false);
     ctx.recoil(w.type);
@@ -427,7 +461,8 @@ export function createCombat(ctx) {
         return;
       }
       const a = new THREE.Vector3(...d.o);
-      for (const e of d.e || []) tracer(a, new THREE.Vector3(...e), (d.e.length > 1) ? 0xffd38a : 0xffe066);
+      for (const e of d.e || []) tracer(a, new THREE.Vector3(...e), (d.e.length > 1) ? 0xffc46a : 0xffd84a);
+      muzzleFlash(a, d.w === 'shotgun' || d.w === 'sniper' ? 1.5 : 1.1);
       ctx.audio?.shot(d.w, a);
       if (d.e?.length) ctx.audio?.whiz(a, new THREE.Vector3(...d.e[0]));
     },
@@ -447,7 +482,7 @@ export function createCombat(ctx) {
         f.age += dt;
         const k = Math.min(1, f.age / f.life);
         f.tick?.(k, dt);
-        if (k >= 1) { scene.remove(f.obj); f.obj.geometry?.dispose(); fx.splice(i, 1); }
+        if (k >= 1) { scene.remove(f.obj); if (!f.obj.geometry?.userData.shared) f.obj.geometry?.dispose(); f.obj.material?.dispose(); fx.splice(i, 1); }
       }
     },
   };

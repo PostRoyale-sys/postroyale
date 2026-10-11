@@ -937,11 +937,60 @@ function say(name, text) {
 }
 
 const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏' };
+// Где сейчас персонаж с таким ником (для эффекта убийства): ты сам или кто-то из others.
+function bodyOf(name) {
+  if (name === nick) return { pos: feet.clone().add(new THREE.Vector3(0, 1, 0)), self: true };
+  for (const o of others.values()) if (o.name === name) return { pos: o.group.position.clone().add(new THREE.Vector3(0, 1, 0)), o };
+  return null;
+}
+const hexNum = (c) => parseInt(c.slice(1), 16);
+// Серия: убийства, каждое не позже STREAK_GAP после предыдущего (как мультикилл), и счёт за жизнь.
+const STREAK_GAP = 9;
+const STREAK = { 2: ['Double', 'kill'], 3: ['Triple', 'kill'], 4: ['Quad', 'kill'], 5: ['Rampage', '5 in a row'], 6: ['Unstoppable', ''], 8: ['Godlike', ''] };
+let multi = 0, multiAt = 0, lifeKills = 0, matchKills = 0, slowUntil = 0;
+function onMyKill(victim) {
+  const now = performance.now() / 1000;
+  multi = now - multiAt < STREAK_GAP ? multi + 1 : 1;
+  multiAt = now;
+  lifeKills++; matchKills++;
+  hitmarker('kill');
+  shakeAmt = Math.max(shakeAmt, 0.06);
+  // «ELIMINATED ник» с номером убийства в матче
+  const e = document.createElement('div'); e.className = 'e';
+  const i = document.createElement('i'); i.textContent = matchKills;
+  const b = document.createElement('b'); b.textContent = victim;
+  e.append(i, 'Eliminated ', b);
+  $('elim').replaceChildren(e);
+  // мультикилл (или веха серии за жизнь: 5, 10)
+  const tier = STREAK[Math.min(multi, 8)] || (multi > 8 ? STREAK[8] : null);
+  const life = lifeKills >= 5 && lifeKills % 5 === 0 && multi < 2 ? [`${lifeKills} streak`, 'kills without dying'] : null;
+  const show = multi >= 2 ? tier : life;
+  if (show) {
+    const s = document.createElement('b'); s.textContent = show[0];
+    const sp = document.createElement('span'); sp.textContent = show[1] || `${multi} kills`;
+    $('streak').replaceChildren(s, sp);
+    audio.play('streak', null, { at: 0.12 });
+  }
+  // последний соперник: короткое замедление времени (кадр «как в кино»)
+  if (royale.alive && !royale.duel && royale.aliveCount() <= 2) {
+    slowUntil = now + 1.3;
+    $('slowmo').classList.add('on');
+  }
+}
 function killfeed(by, victim, w) {
   if (victim === nick && playing) audio.play('death');
   else if (by === nick) audio.play('kill', null, { at: 0.05 });
+  if (victim === nick) { multi = 0; lifeKills = 0; }
+  // персонаж «лопается»: вспышка, конфетти его цвета, монетки PR
+  const body = playing && w !== 'storm' ? bodyOf(victim) : null;
+  if (body && body.pos.distanceTo(feet) < 160) {
+    const col = hexNum(colorOf(victim));
+    fx.pop(body.pos, [col, 0xffffff, col, 0xffd21a]);
+    audio.play('coins', body.self ? null : body.pos);
+  }
+  if (by === nick && victim !== nick && playing) onMyKill(victim);
   const line = document.createElement('div');
-  line.className = 'kill';
+  line.className = `kill${by === nick && victim !== nick ? ' mine' : victim === nick ? ' me' : ''}`;
   const icon = KILL_ICON[w] || '💀';
   line.textContent = w === 'storm' ? `${victim} ${icon} got caught in the storm` : by === victim ? `${victim} ${icon} blew themselves up` : `${by} ${icon} ${victim}`;
   $('chatlog').appendChild(line);
@@ -973,12 +1022,29 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 1600);
 }
-function hitmarker() { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); }
-// Число урона над целью: синее — у цели был щит (поле sd в позе), крупное жёлтое — 50 и больше.
-function dmgNumber(p, dmg, target) {
+// Хитмаркер: белый — попадание, жёлтый — в голову, красный и крупнее — убийство (его не перебивает следующий хит).
+let killMarkUntil = 0;
+function hitmarker(kind = '') {
+  const now = performance.now();
+  if (kind === 'kill') killMarkUntil = now + 450;
+  else if (now < killMarkUntil) return;
+  const h = $('hitmark'); h.className = ''; void h.offsetWidth; h.className = `${kind} on`;
+}
+// Число урона над целью: синее — у цели был щит (поле sd в позе), крупное жёлтое — 50 и больше, в голову — оранжево-жёлтое с «!».
+function dmgNumber(p, dmg, target, head = false) {
   if (dmg <= 0) return;
-  fx.number(p, dmg, target?.sd ? 'sh' : 'hp');
-  audio.play(target?.sd ? 'hitShield' : dmg >= 50 ? 'hitBig' : 'hit');
+  fx.number(p, dmg, `${target?.sd ? 'sh' : 'hp'}${head ? ' head' : ''}`);
+  audio.play(head ? 'hitHead' : target?.sd ? 'hitShield' : dmg >= 50 ? 'hitBig' : 'hit');
+}
+// Отдача камеры: прицел подбрасывает вверх и он сам возвращается (у снайперки и дробовика — сильнее, с тряской).
+const PUNCH = { pistol: 0.014, smg: 0.006, ar: 0.01, shotgun: 0.038, sniper: 0.055, bazooka: 0.045, pickaxe: 0 };
+let camPunch = 0;
+function punch(type) {
+  const v = (PUNCH[type] ?? 0.01) * (isScoped() ? 0.6 : 1);
+  if (!v) return;
+  camera.rotation.x = Math.min(Math.PI / 2 - 0.01, camera.rotation.x + v);
+  camPunch += v;
+  if (type === 'shotgun' || type === 'sniper' || type === 'bazooka') shakeAmt = Math.max(shakeAmt, 0.05);
 }
 
 // ---------- Бой, лут, раунды ----------
@@ -1031,12 +1097,12 @@ const ctx = {
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
   hitmarker,
-  dmgNumber: (p, dmg, id) => dmgNumber(p, dmg, others.get(id)?.target),
+  dmgNumber: (p, dmg, id, head) => dmgNumber(p, dmg, others.get(id)?.target, head),
   impact,
   shake: (a) => { shakeAmt = Math.max(shakeAmt, a); },
   knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
   dropItems: (pos, items) => loot.drop(pos, items),
-  recoil: (type) => vm.kick(type),
+  recoil: (type) => { vm.kick(type); punch(type); },
 };
 const combat = createCombat(ctx);
 const loot = createLoot(ctx);
@@ -1186,6 +1252,7 @@ function onRoundStart(r, alive) {
   for (const m of MATS) mats[m] = 0;
   buildType = null;
   goldenKeyRound = -1;
+  multi = 0; lifeKills = 0; matchKills = 0;
   renderHotbar();
   if (alive && royale.duel) duelSpawn();
   else if (alive) {
@@ -2478,8 +2545,14 @@ function envSound() {
 let last = performance.now();
 // Главный цикл кадра. Вынесен в функцию: запись промо-видео (brand/trailer.js) вызывает его сама, покадрово.
 const mainLoop = (now) => {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  let dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // последнее убийство: ~1.3 с замедления (плавно возвращается к обычной скорости)
+  if (slowUntil) {
+    const left = slowUntil - now / 1000;
+    if (left <= 0) { slowUntil = 0; $('slowmo').classList.remove('on'); }
+    else dt *= left > 0.4 ? 0.3 : 0.3 + (0.4 - left) / 0.4 * 0.7;
+  }
   const t = now / 1000;
   if (!playing && world) lobbyFrame(dt, t);
   if (playing) {
@@ -2542,6 +2615,7 @@ const mainLoop = (now) => {
     }
     if (opt) $('ads').dataset.dot = opt.dot;
 
+    if (camPunch > 1e-4) { const r = camPunch * Math.min(1, dt * 9); camera.rotation.x -= r; camPunch -= r; }
     if (shakeAmt > 0.001) {
       player.position.add(new THREE.Vector3((Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt, (Math.random() - 0.5) * shakeAmt));
       shakeAmt *= Math.max(0, 1 - 6 * dt);
@@ -2670,7 +2744,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, audio, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, killfeed, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),

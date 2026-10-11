@@ -412,6 +412,8 @@
   @keyframes hurtsh { 0% { box-shadow: inset 0 0 140px 50px rgba(61,155,255,.7); } 100% { box-shadow: inset 0 0 120px 40px rgba(61,155,255,0); } }
   @keyframes hurt { 0% { box-shadow: inset 0 0 140px 50px rgba(244,33,46,.75); } 100% { box-shadow: inset 0 0 120px 40px rgba(244,33,46,0); } }
   #chatlog .kill { background: rgba(244,33,46,.35); font-weight: 800; }
+  #chatlog .kill.mine { background: linear-gradient(90deg, rgba(255,200,30,.55), rgba(255,120,20,.35)); color: #fff; box-shadow: inset 3px 0 0 #ffd21a; }
+  #chatlog .kill.me { background: rgba(120,20,30,.7); }
   #blockname { bottom: 112px; }
   #hotbar div.wslot { width: 58px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 2px var(--rar, rgba(255,255,255,.15)); display: flex; flex-direction: column; align-items: center; justify-content: center; }
   #hotbar div.wslot.on { box-shadow: inset 0 0 0 3px #fff, 0 0 12px var(--rar, transparent); }
@@ -504,16 +506,41 @@
   #scope::before { left: 50%; top: 18vh; bottom: 18vh; width: 2px; }
   #scope::after { top: 50%; left: calc(50% - 32vh); right: calc(50% - 32vh); height: 2px; }
   #dmgnums { position: fixed; inset: 0; pointer-events: none; z-index: 5; overflow: hidden; }
-  #dmgnums .dn { position: absolute; left: 0; top: 0; font: 400 22px var(--display); color: #fff; -webkit-text-stroke: 1.5px #14161c; paint-order: stroke fill; text-shadow: 0 2px 0 #14161c; will-change: transform, opacity; }
-  #dmgnums .dn.sh { color: #6fc3ff; }
-  #dmgnums .dn.big { font-size: 30px; color: #ffd21a; }
-  #dmgnums .dn.sh.big { color: #9ad8ff; }
-  #dmgnums .dn.build { font-size: 15px; color: #d8dde6; }
-  #hitmark { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; opacity: 0; }
-  #hitmark::before, #hitmark::after { content: ""; position: absolute; left: 10px; top: -2px; width: 2px; height: 26px; background: #fff; }
+  #dmgnums .dn { position: absolute; left: 0; top: 0; font: 400 32px/1 var(--display); color: #fff; -webkit-text-stroke: 2.5px #14161c; paint-order: stroke fill; letter-spacing: .02em;
+    text-shadow: 0 3px 0 #14161c, 0 0 16px rgba(255,255,255,.55); will-change: transform, opacity; }
+  #dmgnums .dn.sh { color: #5cc4ff; text-shadow: 0 3px 0 #14161c, 0 0 18px rgba(60,170,255,.9); }
+  #dmgnums .dn.big { font-size: 42px; color: #ffe14a; text-shadow: 0 3px 0 #14161c, 0 0 20px rgba(255,200,40,.85); }
+  #dmgnums .dn.sh.big { color: #8fd8ff; text-shadow: 0 3px 0 #14161c, 0 0 20px rgba(60,170,255,.9); }
+  #dmgnums .dn.head { font-size: 46px; color: #ffd21a; font-style: italic; text-shadow: 0 3px 0 #14161c, 0 0 22px rgba(255,140,20,.95), 0 0 4px #fff3b0; }
+  #dmgnums .dn.head.big { font-size: 56px; }
+  #dmgnums .dn.head::after { content: "!"; margin-left: 1px; }
+  #dmgnums .dn.build { font-size: 17px; color: #d8dde6; -webkit-text-stroke-width: 1.5px; text-shadow: 0 2px 0 #14161c; }
+  #hitmark { position: fixed; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; pointer-events: none; opacity: 0; z-index: 6; }
+  #hitmark::before, #hitmark::after { content: ""; position: absolute; left: 13px; top: -3px; width: 4px; height: 36px; border-radius: 2px;
+    background: linear-gradient(#fff 0 32%, transparent 32% 68%, #fff 68%); filter: drop-shadow(0 0 2px #000); }
   #hitmark::before { transform: rotate(45deg); } #hitmark::after { transform: rotate(-45deg); }
-  #hitmark.on { animation: hm .25s; }
-  @keyframes hm { 0% { opacity: 1; } 100% { opacity: 0; } }
+  #hitmark.on { animation: hm .28s ease-out; }
+  #hitmark.head::before, #hitmark.head::after { background: linear-gradient(#ffd21a 0 32%, transparent 32% 68%, #ffd21a 68%); }
+  #hitmark.kill::before, #hitmark.kill::after { background: linear-gradient(#ff2d3d 0 38%, transparent 38% 62%, #ff2d3d 62%); width: 5px; filter: drop-shadow(0 0 6px rgba(255,40,60,.9)); }
+  #hitmark.kill.on { animation: hmk .6s ease-out; }
+  @keyframes hm { 0% { opacity: 1; transform: scale(1.35); } 30% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1); } }
+  @keyframes hmk { 0% { opacity: 1; transform: scale(1.9) rotate(-10deg); } 25% { opacity: 1; transform: scale(1.15); } 70% { opacity: 1; } 100% { opacity: 0; transform: scale(1.1); } }
+  /* Убийство: «ELIMINATED ник» внизу по центру и серия (DOUBLE / TRIPLE …) */
+  #elim { position: fixed; left: 50%; bottom: 26%; transform: translateX(-50%); pointer-events: none; text-align: center; white-space: nowrap; z-index: 6; }
+  #elim .e { display: inline-flex; align-items: center; gap: 10px; padding: 6px 18px 6px 12px; border-radius: 12px; background: linear-gradient(90deg, rgba(255,45,61,.0), rgba(255,45,61,.55) 18%, rgba(255,45,61,.55) 82%, rgba(255,45,61,0));
+    font: 400 26px/1 var(--display); letter-spacing: .03em; text-transform: uppercase; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.5); animation: elim 2.4s cubic-bezier(.2,.9,.3,1.2) forwards; }
+  #elim .e b { color: #ffe14a; font-weight: 400; }
+  #elim .e i { font-style: normal; display: grid; place-items: center; min-width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #d0102a; font-size: 18px; }
+  @keyframes elim { 0% { opacity: 0; transform: scale(1.6); } 10% { opacity: 1; transform: scale(1); } 80% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-14px); } }
+  #streak { position: fixed; left: 50%; top: 30%; transform: translateX(-50%); pointer-events: none; text-align: center; white-space: nowrap; z-index: 6; }
+  #streak b { display: block; font: 400 72px/1 var(--display); font-style: italic; text-transform: uppercase; letter-spacing: .02em; color: #fff;
+    background: linear-gradient(180deg, #fff6b0, #ffc21a 55%, #ff7a1a); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 4px 0 #6a1d00) drop-shadow(0 0 24px rgba(255,150,30,.75)); animation: streak 1.9s cubic-bezier(.2,.9,.3,1.3) forwards; }
+  #streak span { display: block; margin-top: 2px; font: 400 18px var(--display); letter-spacing: .08em; color: #ffe9a8; text-transform: uppercase; text-shadow: 0 2px 6px rgba(0,0,0,.7); animation: streak 1.9s .05s both; }
+  @keyframes streak { 0% { opacity: 0; transform: scale(2.4) rotate(-6deg); } 14% { opacity: 1; transform: scale(.94) rotate(0); } 22% { transform: scale(1.04); } 30%, 78% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.08); } }
+  /* Последнее убийство: замедление — края кадра темнеют, лёгкая желтизна */
+  #slowmo { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s; background: radial-gradient(ellipse at center, rgba(255,230,150,0) 45%, rgba(40,10,0,.55) 100%); z-index: 4; }
+  #slowmo.on { opacity: 1; }
   /* Материалы, стройка, локация */
   #mats { position: fixed; right: 14px; bottom: 16px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); display: grid; gap: 3px; min-width: 150px; font-size: 13px; }
   #mats div { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 6px; }
@@ -748,6 +775,9 @@
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>
+<div id="elim"></div>
+<div id="streak"></div>
+<div id="slowmo"></div>
 <div id="pts"></div>
 <div id="chatlog"></div>
 <div id="chatbox" hidden><input id="chatin" maxlength="140" placeholder="Say something… (Enter)" autocomplete="off"></div>
