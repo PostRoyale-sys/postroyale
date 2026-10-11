@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { MAP, WATER_Y, rng, seedOf } from './map.js';
-import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
+import { WEAPONS, AMMO, RARITY, weaponLabel, disposeTree } from './combat.js';
 
 const CHESTS = 90;                     // не больше стольких сундуков за раунд
 const CHEST_CHANCE = 0.95;             // доля мест, где в раунде есть сундук
@@ -28,10 +28,11 @@ function weighted(table, rand = Math.random) {
   return entries[0][0];
 }
 
-// bonus — +к редкости (золотой ключ держателя токена).
-function rollChest(bonus = 0) {
-  let type = weighted(WEAPON_WEIGHTS);
-  let rarity = Math.min(RARITY.length - 1, +weighted(Object.fromEntries(RARITY_WEIGHTS.map((w, i) => [i, w]))) + bonus);
+// bonus — +к редкости (золотой ключ держателя токена). rand — от сида сундука: двое открыли его одновременно —
+// у обоих выпало одно и то же с одинаковыми id, и предметы не задваиваются.
+function rollChest(bonus = 0, rand = Math.random) {
+  let type = weighted(WEAPON_WEIGHTS, rand);
+  let rarity = Math.min(RARITY.length - 1, +weighted(Object.fromEntries(RARITY_WEIGHTS.map((w, i) => [i, w])), rand) + bonus);
   const min = WEAPONS[type].minRarity || 0;
   if (rarity < min) rarity = min;
   const spec = WEAPONS[type];
@@ -40,9 +41,9 @@ function rollChest(bonus = 0) {
     { k: 'ammo', w: spec.ammo, a: AMMO[spec.ammo].pack },
     { k: 'ammo', w: spec.ammo, a: AMMO[spec.ammo].pack },
   ];
-  if (Math.random() < 0.55) items.push(Math.random() < 0.75 ? { k: 'armor', w: 'light', a: 50 } : { k: 'armor', w: 'heavy', a: 100 });
-  if (Math.random() < 0.35) items.push({ k: 'med', w: 'med', a: 40 });
-  if (Math.random() < 0.3) { const t = weighted({ light: 3, medium: 3, shells: 2, heavy: 1 }); items.push({ k: 'ammo', w: t, a: AMMO[t].pack }); }
+  if (rand() < 0.55) items.push(rand() < 0.75 ? { k: 'armor', w: 'light', a: 50 } : { k: 'armor', w: 'heavy', a: 100 });
+  if (rand() < 0.35) items.push({ k: 'med', w: 'med', a: 40 });
+  if (rand() < 0.3) { const t = weighted({ light: 3, medium: 3, shells: 2, heavy: 1 }, rand); items.push({ k: 'ammo', w: t, a: AMMO[t].pack }); }
   return items;
 }
 
@@ -54,17 +55,25 @@ export const itemLabel = (it) => {
 };
 
 // Аирдроп: эпическое+ оружие и полный «набор выживания».
-function rollDrop() {
-  const items = rollChest(2);
+function rollDrop(rand = Math.random) {
+  const items = rollChest(2, rand);
   items.push({ k: 'armor', w: 'heavy', a: 100 }, { k: 'med', w: 'med', a: 40 }, { k: 'med', w: 'med', a: 40 });
-  const t = weighted({ light: 3, medium: 3, shells: 2, heavy: 1 });
+  const t = weighted({ light: 3, medium: 3, shells: 2, heavy: 1 }, rand);
   items.push({ k: 'ammo', w: t, a: AMMO[t].pack * 2 });
   return items;
 }
 
 // ---------- Модели ----------
 
+// Текстура свечения — одна на цвет (раньше на каждый сундук и предмет создавалась новая и не освобождалась).
+const glowTex = new Map();
 function glowSprite(color, size) {
+  if (!glowTex.has(color)) glowTex.set(color, makeGlow(color));
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex.get(color), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  s.scale.set(size, size, 1);
+  return s;
+}
+function makeGlow(color) {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
   const g = c.getContext('2d');
@@ -73,9 +82,7 @@ function glowSprite(color, size) {
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
-  s.scale.set(size, size, 1);
-  return s;
+  return new THREE.CanvasTexture(c);
 }
 
 function chestModel() {
@@ -201,7 +208,7 @@ export function createLoot(ctx) {
   // Сундуки — на местах из карты (этажи домов, под деревьями): каждый раунд появляется случайная часть мест
   // (одинаково у всех — от сида мира и номера раунда), как в Fortnite.
   function placeChests() {
-    for (const c of chests) scene.remove(c.group);
+    for (const c of chests) { scene.remove(c.group); disposeTree(c.group); }
     chests.length = 0;
     const w = ctx.world();
     const addDrops = () => {
@@ -214,9 +221,11 @@ export function createLoot(ctx) {
         for (let i = 0; i < 60; i++) {
           const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * z0.r * 0.75;
           const px = z0.x + Math.cos(a) * d, pz = z0.z + Math.sin(a) * d;
-          if (px > 6 && pz > 6 && px < MAP - 6 && pz < MAP - 6 && w.surfaceY(Math.floor(px), Math.floor(pz)) > WATER_Y + 1.5) { x = px; z = pz; break; }
+          // на открытой земле: не на крыше, стволе или машине (иначе ящик повиснет, когда опору сломают)
+          const free = Math.abs(st.ground(px, pz, 999, 0.9) - w.height(px, pz)) < 0.3;
+          if (px > 6 && pz > 6 && px < MAP - 6 && pz < MAP - 6 && w.surfaceY(Math.floor(px), Math.floor(pz)) > WATER_Y + 1.5 && free) { x = px; z = pz; break; }
         }
-        const pos = new THREE.Vector3(x, st.ground(x, z, 999), z);
+        const pos = new THREE.Vector3(x, w.height(x, z), z);
         const group = dropModel();
         group.position.copy(pos);
         group.visible = false;
@@ -265,19 +274,22 @@ export function createLoot(ctx) {
     const it = items.get(id);
     if (!it) return;
     scene.remove(it.group);
+    disposeTree(it.group);
     items.delete(id);
   }
 
   // Разложить предметы веером вокруг точки (и разослать всем).
-  function drop(center, list) {
+  // idBase — общий id для всех (сундук): одинаковые предметы от двух открывших сольются в один.
+  function drop(center, list, idBase = null) {
     const out = [];
+    const rand = idBase ? rng(seedOf(idBase)) : Math.random;
     list.forEach((it, k) => {
-      const ang = (k / list.length) * Math.PI * 2 + Math.random() * 0.5;
-      const r = 0.8 + Math.random() * 0.7;
+      const ang = (k / list.length) * Math.PI * 2 + rand() * 0.5;
+      const r = 0.8 + rand() * 0.7;
       const x = Math.max(1, Math.min(MAP - 1, center.x + Math.cos(ang) * r));
       const z = Math.max(1, Math.min(MAP - 1, center.z + Math.sin(ang) * r));
       const y = ctx.structures().ground(x, z, center.y + 0.5) + 0.45;
-      const full = { ...it, id: `${ctx.selfId()}:${seq++}`, rr: round, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) };
+      const full = { ...it, id: idBase ? `${idBase}:${k}` : `${ctx.selfId()}:${seq++}`, rr: round, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2) };
       spawn(full);
       out.push(full);
     });
@@ -316,7 +328,8 @@ export function createLoot(ctx) {
       const t = Date.now();
       setOpened(c.i, t);
       ctx.net()?.chest({ list: [[c.i, t]], rr: round });
-      drop(c.pos, c.drop ? rollDrop() : rollChest(bonus));
+      const key = `c${round}:${c.i}${bonus ? 'k' : ''}`, rand = rng(seedOf(`${ctx.world().id}:${key}`));
+      drop(c.pos, c.drop ? rollDrop(rand) : rollChest(bonus, rand), key);
       if (c.drop) ctx.onDrop?.('open', c);
       return true;
     },

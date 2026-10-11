@@ -559,7 +559,7 @@ function startWinCam() {
   if (!emote && onGround && !riding) startEmote(Math.random() < 0.5 ? 'dance' : 'floss');
 }
 function startKillcam(killerName, at, w) {
-  const k = [...others.entries()].find(([, o]) => o.name === killerName);
+  const k = [...others.entries()].find(([, o]) => sameNick(o.name, killerName));
   if (!k) { startSpectate(); return; }
   cine = { mode: 'killcam', id: k[0], at: at.clone(), until: performance.now() / 1000 + 3.2 };
   cineCam = null;
@@ -1112,10 +1112,12 @@ function say(name, text) {
 }
 
 const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏' };
+// В дуэли в позе ник с тикером («$BONK nick»), а в ленте убийств — просто ник.
+const sameNick = (poseName, nickName) => poseName === nickName || (!!royale.duel && poseName.endsWith(` ${nickName}`));
 // Где сейчас персонаж с таким ником (для эффекта убийства): ты сам или кто-то из others.
 function bodyOf(name) {
   if (name === nick) return { pos: feet.clone().add(new THREE.Vector3(0, 1, 0)), self: true };
-  for (const o of others.values()) if (o.name === name) return { pos: o.group.position.clone().add(new THREE.Vector3(0, 1, 0)), o };
+  for (const o of others.values()) if (sameNick(o.name, name)) return { pos: o.group.position.clone().add(new THREE.Vector3(0, 1, 0)), o };
   return null;
 }
 const hexNum = (c) => parseInt(c.slice(1), 16);
@@ -1218,8 +1220,9 @@ let camPunch = 0;
 function punch(type) {
   const v = (PUNCH[type] ?? 0.01) * (isScoped() ? 0.6 : 1);
   if (!v) return;
-  camera.rotation.x = Math.min(Math.PI / 2 - 0.01, camera.rotation.x + v);
-  camPunch += v;
+  const before = camera.rotation.x;
+  camera.rotation.x = Math.min(Math.PI / 2 - 0.01, before + v);
+  camPunch += camera.rotation.x - before;         // упёрлись в «зенит» — возвращать только то, что реально подбросило
   if (type === 'shotgun' || type === 'sniper' || type === 'bazooka') shakeAmt = Math.max(shakeAmt, 0.05);
 }
 
@@ -1393,7 +1396,8 @@ function sendHit(id, d) {
 function hostId() {
   if (!net) return 'me';
   const all = [net.selfId, ...[...peers].filter((id) => !foreign.has(id))];
-  const fresh = (id) => { const o = others.get(id); return !o || performance.now() - (o.seen ?? 0) < 6000; };   // молчит 6 с — не хост
+  // молчит 6 с — не хост; в комнате по коду ещё не приславший позу (может быть из чужого матча) — тоже
+  const fresh = (id) => { const o = others.get(id); return o ? performance.now() - (o.seen ?? 0) < 6000 : !sepMatches(); };
   const awake = all.filter((id) => (id === net.selfId ? !document.hidden : !others.get(id)?.target?.hd && fresh(id)));
   return (awake.length ? awake : all).sort()[0];
 }
@@ -1439,11 +1443,12 @@ function onRoundStart(r, alive) {
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
   bots.roundStart(r);
+  loadout.giveBack(abilities.slots);          // раунд перезапустился (дуэль, синхронизация) — заряды прошлого раунда вернуть на склад
   abilities.reset();
   if (alive) { loadout.equip(abilities.slots); renderAbilities(); }
   loot.resetRound(r, royale.roundStart);
   events.resetRound(r);
-  stormWarn = -1; aliveMark = 99;
+  stormWarn = -1; aliveMark = 99; $('stormwarn').className = '';
   fx.reset();
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
@@ -1514,6 +1519,8 @@ function duelCountdown(at) {
 }
 
 function onEliminated(place, by) {
+  slideT = 0; camera.rotation.z = 0;              // умер в скольжении — без наклона камеры
+  stormWarn = -1; $('stormwarn').className = '';
   // килкам (если убил игрок/бот), потом — зритель за живыми
   if (playing && by && by !== 'Storm' && by !== nick) startKillcam(by, feet, lastDeathW);
   else if (playing) setTimeout(() => { if (!royale.alive && !cine) startSpectate(); }, 1500);
@@ -1530,6 +1537,7 @@ function onEliminated(place, by) {
 }
 
 function onWinner(name, me) {
+  stormWarn = -1; $('stormwarn').className = '';
   if (me) { award('win'); audio.play('victory'); startWinCam(); }
   if (royale.duel) {
     const w = me ? myTicker() : oppTicker(), l = me ? oppTicker() : myTicker();
@@ -1681,7 +1689,7 @@ function onStructEdit(d) {
 
 let startNet = function () {
   try {
-    net = (mmMatch ? mmMatch.connect : (h) => connect(worldId, h))({
+    const H = {
       join(peerId) {
         peers.add(peerId);
         if (sepMatches()) net.match({ e: royale.epoch, ...(royale.ended ? { x: 1 } : {}) }, peerId);
@@ -1713,13 +1721,25 @@ let startNet = function () {
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
       abil(peerId, d) { abilities.onNet(peerId, d); },
       // друг начал этот матч раньше — переходим на его отсчёт (раунд заново)
-      match(peerId, d) { if (sepMatches() && !d.x && royale.adoptEpoch(d.e)) { foreign.clear(); toast('Synced with the match in progress'); } },
+      match(peerId, d) { if (sepMatches() && !d.x && !royale.ended && royale.adoptEpoch(d.e)) { foreign.clear(); toast('Synced with the match in progress'); } },
       duel(peerId, d) { if (d && d.go > 0 && royale.duel === 'wait') duelCountdown(Math.min(d.go, Date.now() + 6000)); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
       take(peerId, d) { loot.onTake(peerId, d); },
       closed() { toast('Lost connection to the match server'); },
-    });
+    };
+    // Комната по коду: игровые сообщения помечены точкой отсчёта матча (ep) — из чужого матча (кто-то доигрывает старый)
+    // не принимаем: его победа, сундуки, лут, постройки и убийства не попадают в твой матч.
+    const TAGGED = ['shot', 'hit', 'dead', 'chest', 'loot', 'take', 'win', 'bots', 'bothit', 'abil', 'edit', 'sync'];
+    for (const a of TAGGED) {
+      const h = H[a];
+      if (h) H[a] = (peerId, d) => { if (sepMatches() && d && d.ep !== undefined && d.ep !== myEp()) return; h(peerId, d); };
+    }
+    net = (mmMatch ? mmMatch.connect : (h) => connect(worldId, h))(H);
+    if (sepMatches()) for (const a of TAGGED) {
+      const send = net[a];
+      if (send) net[a] = (d, to) => send(d && typeof d === 'object' && !Array.isArray(d) ? { ...d, ep: myEp() } : d, to);
+    }
     updateCount();
   } catch (e) {
     console.warn(`[${NAME}] P2P недоступен:`, e);
@@ -2908,9 +2928,9 @@ const mainLoop = (now) => {
     updateCrosshair(w, en);
     selfSound(dt);
   }
-  audio.frame(dt, envSound());
   camSave.p.copy(camera.position); camSave.q.copy(camera.quaternion);
   const cineOn = applyCine(dt, t);
+  audio.frame(dt, envSound());                    // слушатель — там же, где кадр (у зрителя — у того, за кем смотришь)
   // Солнце с тенью ездит за игроком (тени — только вокруг); небо — за камерой.
   const c = player.position;
   sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));

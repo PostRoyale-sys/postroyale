@@ -117,10 +117,11 @@ export function createBots(ctx) {
     const loot = ctx.loot();
     let best = null, bd = 400;                  // без оружия — к ближайшему сундуку где угодно (в зоне)
     const rs = ctx.royale(), safe = rs.safeRadius();
+    const claimed = new Set();                  // к этим сундукам уже идут другие боты
+    for (const o of bots.values()) if (o !== b && o.alive && o.chest) claimed.add(o.chest);
     for (const c of loot.chests) {
       if (Math.hypot(c.pos.x - rs.center.x, c.pos.z - rs.center.z) > safe) continue;
-      if (loot.isOpen(c) || !loot.ready(c)) continue;
-      if ([...bots.values()].some((o) => o !== b && o.alive && o.chest === c)) continue;
+      if (loot.isOpen(c) || !loot.ready(c) || claimed.has(c)) continue;
       const d = Math.hypot(c.pos.x - b.pos.x, c.pos.z - b.pos.z);
       if (d < bd) { bd = d; best = c; }
     }
@@ -190,6 +191,7 @@ export function createBots(ctx) {
     const looting = !outside && !b.gun && !b.gliding && lootStep(b);
     if (b.gliding && b.drop) b.way = b.drop;                      // в падении — к своей точке высадки
     else if (!looting && (!b.way || outside || Math.hypot(b.way.x - b.pos.x, b.way.z - b.pos.z) < 2)) b.way = outside ? { x: c.x, z: c.z } : zonePoint();
+    if (!b.way) b.way = zonePoint();                // лут мог не выбрать точку (бот подхвачен у прежнего хоста)
     let dx = b.way.x - b.pos.x, dz = b.way.z - b.pos.z;
     let speed = SPEED * (0.9 + 0.25 * b.skill);
     if (outside || (!b.target && Math.hypot(dx, dz) > 25)) speed *= 1.45;          // далеко или от шторма — бегом
@@ -292,7 +294,7 @@ export function createBots(ctx) {
     const me = ctx.me();
     if (me.alive && !me.riding) list.push({ id: null, name: me.nick, pos: me.feet, prone: !!me.prone });
     for (const [k, o] of ctx.others) {
-      if (k.startsWith('bot:') || o.target?.a === false || o.target?.rd || o.target?.rr !== round) continue;
+      if (k.startsWith('bot:') || o.target?.a === false || o.target?.rd || o.target?.rr !== round || !o.group.visible) continue;   // ушедших (молчат) не преследуем
       list.push({ id: k, name: o.name, pos: o.group.position, prone: !!o.target?.pr });
     }
     return list;
@@ -434,7 +436,7 @@ export function createBots(ctx) {
     ctx.net()?.bots({ l: list });
   }
 
-  let wasHost = false, lastTick = performance.now();
+  let wasHost = false, lastTick = performance.now(), spawnWait = 0;
   return {
     get list() { return bots; },
     // Новый раунд: у хоста — свежие боты; у остальных — убрать старых.
@@ -442,7 +444,10 @@ export function createBots(ctx) {
       round = r;
       ctx.removeBots();
       if (ctx.isDuel?.()) { bots.clear(); return; }     // в дуэли 1v1 ботов нет
-      if (ctx.isHost()) spawnAll();
+      // зашёл в идущий раунд (или подхватил чужой отсчёт) — сначала дождаться поз ботов прежнего хоста и забрать их,
+      // а не выпускать свежих (иначе воскресают убитые и у всех сбрасываются боты)
+      if (Date.now() - ctx.royale().roundStart > 5000) { bots.clear(); spawnWait = performance.now() + 2500; }
+      else if (ctx.isHost()) spawnAll();
     },
     // Попадание по боту: хост применяет, остальные шлют хосту.
     hit(k, d) {
@@ -463,13 +468,17 @@ export function createBots(ctx) {
       if (tick - lastTick > 2000 && [...ctx.others.keys()].some((k) => !k.startsWith('bot:'))) { bots.clear(); wasHost = false; }
       lastTick = tick;
       const host = ctx.isHost();
-      if (host && !wasHost && round >= 0 && !bots.size) {
+      if (host && !wasHost && round >= 0 && !bots.size && !spawnWait) {
         adoptFromOthers();                                                       // хост сменился — подхватываем
         if (!bots.size && !ctx.isDuel?.() && !ctx.royale().ended) spawnAll();     // прошлый хост так и не выпустил ботов — свои
       }
       if (!host && wasHost) bots.clear();                                       // хостом стал другой — его боты главнее
       wasHost = host;
-      if (!host || round < 0 || ctx.royale().ended) return;
+      if (spawnWait && performance.now() > spawnWait) {
+        spawnWait = 0;
+        if (host && !bots.size) { adoptFromOthers(); if (!bots.size && !ctx.royale().ended) spawnAll(); }
+      }
+      if (!host || round < 0 || ctx.royale().ended || spawnWait) return;
       clock += dt;
       const now = clock;
       thinkT -= dt;

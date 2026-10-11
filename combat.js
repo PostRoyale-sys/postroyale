@@ -38,6 +38,15 @@ const ROCKET = { speed: 34, gravity: 3, life: 5 };
 const EXPLODE_R = 4, BUILD_DMG = 250, BLAST_R = 5.5, BLAST_DMG = 100;     // базука: радиус и урон по постройкам, по игрокам
 const HEAD = 1.5;                 // множитель урона в голову (у снайперки свой — spec.head)
 
+// Убрать модель из памяти видеокарты: геометрии и материалы всего дерева (текстуры — общие, их не трогаем).
+// Геометрия спрайтов общая на весь three.js — её пропускаем.
+export function disposeTree(obj) {
+  obj.traverse((o) => {
+    if (o.geometry && !o.isSprite && !o.geometry.userData?.shared) o.geometry.dispose();
+    if (o.material) for (const m of [].concat(o.material)) m.dispose();
+  });
+}
+
 export const weaponLabel = (w) => `${RARITY[w.rarity].name} ${WEAPONS[w.type].name}`;
 
 // Пересечение луча с AABB: расстояние или Infinity.
@@ -184,7 +193,7 @@ export function createCombat(ctx) {
   function targets() {
     const list = [];
     for (const [peerId, o] of ctx.others) {
-      if (o.target?.a === false) continue;               // наблюдатель — не цель
+      if (o.target?.a === false || o.target?.rd || !o.group.visible) continue;   // наблюдатель, в вертолёте, замолчавший — не цель
       const p = o.group.position;
       const pr = !!o.target?.pr, top = pr ? 0.75 : o.target?.cr ? 1.35 : 1.95;   // присевший — ниже, лежачий — плашмя
       const w = pr ? 1.0 : 0.4;
@@ -331,6 +340,7 @@ export function createCombat(ctx) {
       if (r.puff > 0.03) { r.puff = 0; smoke(r.pos.clone().addScaledVector(r.vel.clone().normalize(), -0.6)); }
       if (boom) {
         scene.remove(r.mesh);
+        disposeTree(r.mesh);
         rockets.splice(i, 1);
         explode(r.pos.clone(), r.own, r.mult || 1);
       }
@@ -482,7 +492,8 @@ export function createCombat(ctx) {
         f.age += dt;
         const k = Math.min(1, f.age / f.life);
         f.tick?.(k, dt);
-        if (k >= 1) { scene.remove(f.obj); if (!f.obj.geometry?.userData.shared) f.obj.geometry?.dispose(); f.obj.material?.dispose(); fx.splice(i, 1); }
+        // у Sprite геометрия общая на весь three.js — её не трогаем
+        if (k >= 1) { scene.remove(f.obj); if (!f.obj.isSprite && !f.obj.geometry?.userData.shared) f.obj.geometry?.dispose(); f.obj.material?.dispose(); fx.splice(i, 1); }
       }
     },
   };

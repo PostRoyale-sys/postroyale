@@ -37,7 +37,8 @@ export function createWeather(scene) {
         if (z - cam.z > BOX / 2) z -= BOX; else if (cam.z - z > BOX / 2) z += BOX;
         if (y < lo) y += H; else if (y > lo + H) y -= H;
         drops[i * 3] = x; drops[i * 3 + 1] = y; drops[i * 3 + 2] = z;
-        pos.set([x, y, z, x - dir.x, y - dir.y, z - dir.z], i * 6);
+        const j = i * 6;
+        pos[j] = x; pos[j + 1] = y; pos[j + 2] = z; pos[j + 3] = x - dir.x; pos[j + 4] = y - dir.y; pos[j + 5] = z - dir.z;
       }
       geo.attributes.position.needsUpdate = true;
       const now = performance.now() / 1000;
