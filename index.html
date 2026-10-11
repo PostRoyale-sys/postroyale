@@ -548,6 +548,16 @@
     font: 400 26px/1 var(--display); letter-spacing: .03em; text-transform: uppercase; color: #fff; animation: swarn 1s ease-in-out infinite; }
   #stormwarn.go b { background: linear-gradient(90deg, #d0102a, #ff4d6a); box-shadow: 0 0 0 2px rgba(255,255,255,.3), 0 8px 30px rgba(255,40,60,.6); animation: swarn .5s ease-in-out 4; }
   @keyframes swarn { 50% { transform: scale(1.06); } }
+  /* Зритель и килкам: плашка внизу по центру; у килкама — «кино»-полосы сверху и снизу */
+  #spec { position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); pointer-events: none; text-align: center; z-index: 6; padding: 8px 20px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+  #spec b { display: block; font: 400 24px/1.1 var(--display); letter-spacing: .03em; color: #fff; text-transform: uppercase; }
+  #spec span { display: block; margin-top: 3px; font-size: 13px; font-weight: 700; color: #c9ccd3; }
+  #spec.kc { background: rgba(208,16,42,.78); }
+  #letterbox { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #letterbox::before, #letterbox::after { content: ""; position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height .35s ease; }
+  #letterbox::before { top: 0; } #letterbox::after { bottom: 0; }
+  #letterbox.on::before, #letterbox.on::after { height: 9vh; }
+  #spec.kc b { color: #ffe14a; }
   /* Материалы, стройка, локация */
   #mats { position: fixed; right: 14px; bottom: 16px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); display: grid; gap: 3px; min-width: 150px; font-size: 13px; }
   #mats div { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 6px; }
@@ -778,7 +788,7 @@
   <span class="pill off" id="net">offline</span>
   <button id="share">Share on X</button>
 </div>
-<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch · P prone · J emote · M map · Esc menu</div>
+<div id="hint" hidden>⛏ harvest · Z X C build · B abilities · Alt crouch / slide · P prone · J emote · M map · Esc menu</div>
 <div id="storm" class="pill" hidden></div>
 <div id="stormtint"></div>
 <div id="banner" hidden></div>
@@ -786,6 +796,8 @@
 <div id="streak"></div>
 <div id="slowmo"></div>
 <div id="stormwarn"></div>
+<div id="spec" hidden></div>
+<div id="letterbox"></div>
 <div id="pts"></div>
 <div id="chatlog"></div>
 <div id="chatbox" hidden><input id="chatin" maxlength="140" placeholder="Say something… (Enter)" autocomplete="off"></div>

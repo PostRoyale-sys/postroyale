@@ -539,10 +539,113 @@ function stopEmote() {
   emote = null;
 }
 
+// ---------- Кино-камера: победа, килкам, зритель ----------
+// Перед рендером камеру ставим «как в кино», после — возвращаем: мышь всё время крутит настоящую камеру
+// (у зрителя ею и вращаешь вид вокруг игрока).
+// win — облёт вокруг победителя (ты танцуешь, сверху конфетти); killcam — 3 с из-за плеча убийцы на место
+// твоей гибели; spec — от третьего лица за живым игроком (ЛКМ/ПКМ — следующий/предыдущий, V — свободная камера).
+let cine = null;
+const camSave = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
+const CINE_V = new THREE.Vector3(), CINE_L = new THREE.Vector3();
+let cineCam = null;                                  // сглаженная позиция кино-камеры
+const aliveOthers = () => [...others.entries()].filter(([, o]) => o.target?.a && o.target.rr === royale.round);
+function startWinCam() {
+  if (cine?.mode === 'win') return;
+  cine = { mode: 'win', t0: performance.now() / 1000, burst: 0 };
+  cineCam = null;
+  $('spec').hidden = true;
+  if (!emote && onGround && !riding) startEmote(Math.random() < 0.5 ? 'dance' : 'floss');
+}
+function startKillcam(killerName, at, w) {
+  const k = [...others.entries()].find(([, o]) => o.name === killerName);
+  if (!k) { startSpectate(); return; }
+  cine = { mode: 'killcam', id: k[0], at: at.clone(), until: performance.now() / 1000 + 3.2 };
+  cineCam = null;
+  $('spec').hidden = false;
+  $('spec').className = 'kc';
+  $('spec').innerHTML = '';
+  const b = document.createElement('b'); b.textContent = 'Killcam';
+  const sp = document.createElement('span'); sp.textContent = `Eliminated by ${killerName}${w && KILL_ICON[w] ? ` ${KILL_ICON[w]}` : ''}`;
+  $('spec').append(b, sp);
+}
+function startSpectate(id) {
+  const list = aliveOthers();
+  if (!list.length) { stopCine(); return false; }
+  const pickId = id && others.has(id) ? id : list[0][0];
+  cine = { mode: 'spec', id: pickId };
+  cineCam = null;
+  renderSpec();
+  return true;
+}
+function renderSpec() {
+  const o = others.get(cine?.id);
+  if (!o) return;
+  $('spec').hidden = false;
+  $('spec').className = '';
+  $('spec').innerHTML = '';
+  const b = document.createElement('b'); b.textContent = `👁 ${o.name}`;
+  const sp = document.createElement('span'); sp.textContent = `${aliveOthers().length} alive · LMB / RMB — next / previous · V — free camera`;
+  $('spec').append(b, sp);
+}
+// ЛКМ/ПКМ у выбывшего: следующий/предыдущий живой игрок.
+function specNext(dir) {
+  if (!playing || royale.alive || royale.ended) return false;
+  if (cine?.mode === 'killcam') { startSpectate(cine.id); return true; }
+  const list = aliveOthers();
+  if (!list.length) return false;
+  const i = list.findIndex(([k]) => k === cine?.id);
+  return startSpectate(list[(i + dir + list.length) % list.length][0]);
+}
+function stopCine() { cine = null; cineCam = null; $('spec').hidden = true; $('letterbox').classList.remove('on'); }
+// Ставит кино-камеру на этот кадр; true — включена (после рендера вернуть настоящую).
+function applyCine(dt, t) {
+  if (!cine || !playing) return false;
+  const now = performance.now() / 1000;
+  $('letterbox').classList.toggle('on', cine.mode !== 'spec');
+  let pos, look;
+  if (cine.mode === 'win') {
+    const k = now - cine.t0;
+    const ang = (cine.yaw ??= new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y + Math.PI) + k * 0.45;
+    const r = Math.max(3.6, 7 - k * 0.8), h = 1.2 + Math.max(0, 2.6 - k * 0.5);
+    look = feet.clone().add(new THREE.Vector3(0, 1.1, 0));
+    pos = look.clone().add(new THREE.Vector3(Math.sin(ang) * r, h, Math.cos(ang) * r));
+    if (k < 5 && now > cine.burst) { cine.burst = now + 0.7; fx.confetti(feet, 40); }
+  } else {
+    const o = others.get(cine.id);
+    if (!o || (cine.mode === 'spec' && !(o.target?.a && o.target.rr === royale.round))) {
+      if (cine.mode === 'spec' && startSpectate()) return applyCine(dt, t);
+      stopCine(); return false;
+    }
+    if (cine.mode === 'killcam') {
+      if (now > cine.until) { if (!startSpectate(cine.id)) { stopCine(); return false; } return applyCine(dt, t); }
+      const head = o.group.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+      const dir = cine.at.clone().sub(head); dir.y = 0;
+      if (dir.lengthSq() < 0.01) dir.set(0, 0, -1);
+      dir.normalize();
+      const side = new THREE.Vector3(-dir.z, 0, dir.x);
+      pos = head.clone().addScaledVector(dir, -3.4).addScaledVector(side, 1.1).add(new THREE.Vector3(0, 0.8, 0));
+      look = cine.at.clone().add(new THREE.Vector3(0, 0.8, 0));
+    } else {
+      // за спиной у игрока; мышь вращает вид вокруг него; камера не уходит сквозь постройки
+      look = o.group.position.clone().add(new THREE.Vector3(0, 1.6, 0));
+      const back = camSave.q ? new THREE.Vector3(0, 0, 1).applyQuaternion(camSave.q) : new THREE.Vector3(0, 0, 1);
+      const hit = structures.raycast(look, back, 4.5);
+      pos = look.clone().addScaledVector(back, hit ? Math.max(0.8, hit.t - 0.3) : 4.5);
+    }
+  }
+  pos.y = Math.max(pos.y, world.height(pos.x, pos.z) + 0.7, WATER_Y + 0.5);       // не под землю и не под воду
+  if (!cineCam || cineCam.distanceTo(pos) > 30) cineCam = pos.clone();
+  else cineCam.lerp(pos, Math.min(1, dt * (cine.mode === 'win' ? 4 : 8)));
+  camera.position.copy(cineCam);
+  camera.lookAt(look);
+  return true;
+}
+
 function updateSelfFigure(t) {
   const fpv = !!abilities.drone;
   if (emote && (!royale.alive || !onGround || gliding || riding)) stopEmote();
-  const show = playing && (gliding || fpv || !!emote) && !riding && royale.alive;
+  const winCam = cine?.mode === 'win';
+  const show = playing && (gliding || fpv || !!emote || winCam) && !riding && (royale.alive || winCam);
   if (selfChute.userData.skin !== myChute()) {
     selfFig?.remove(selfChute);
     selfChute = buildParachute(myChute());
@@ -569,6 +672,11 @@ function updateSelfFigure(t) {
     const head = feet.clone().add(new THREE.Vector3(0, 1.4, 0));
     const hit = structures.raycast(head, back, 4.2);
     player.position.copy(head).addScaledVector(back, hit ? Math.max(0.6, hit.t - 0.3) : 4.2);
+    return;
+  }
+  if (winCam && !gliding) {
+    selfFig.rotation.set(0, selfFig.rotation.y, 0, 'YXZ'); selfChute.visible = false;
+    animateCharacter(selfFig, t, 'dance');
     return;
   }
   if (fpv) {
@@ -765,7 +873,7 @@ function spectatorNotice() {
 
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !playing) return;
-  if (!royale.alive) { spectatorNotice(); return; }
+  if (!royale.alive) { if (!specNext(e.button === 2 ? -1 : 1)) spectatorNotice(); return; }
   if (riding) { if (e.button === 0) jumpOut(); return; }
   if (abilities.drone) { if (e.button === 0) abilities.detonate(); return; }
   if (emote) { stopEmote(); return; }
@@ -984,6 +1092,7 @@ const hexNum = (c) => parseInt(c.slice(1), 16);
 // Серия: убийства, каждое не позже STREAK_GAP после предыдущего (как мультикилл), и счёт за жизнь.
 const STREAK_GAP = 9;
 const STREAK = { 2: ['Double', 'kill'], 3: ['Triple', 'kill'], 4: ['Quad', 'kill'], 5: ['Rampage', '5 in a row'], 6: ['Unstoppable', ''], 8: ['Godlike', ''] };
+let lastDeathW = '';
 let multi = 0, multiAt = 0, lifeKills = 0, matchKills = 0, slowUntil = 0;
 function onMyKill(victim) {
   const now = performance.now() / 1000;
@@ -1017,7 +1126,7 @@ function onMyKill(victim) {
 function killfeed(by, victim, w) {
   if (victim === nick && playing) audio.play('death');
   else if (by === nick) audio.play('kill', null, { at: 0.05 });
-  if (victim === nick) { multi = 0; lifeKills = 0; }
+  if (victim === nick) { multi = 0; lifeKills = 0; lastDeathW = w; }
   // персонаж «лопается»: вспышка, конфетти его цвета, монетки PR
   const body = playing && w !== 'storm' ? bodyOf(victim) : null;
   if (body && body.pos.distanceTo(feet) < 160) {
@@ -1294,6 +1403,7 @@ function roundMood(r) {
 
 function onRoundStart(r, alive) {
   if (playing) setMood(roundMood(r));
+  stopCine();
   stopEmote(); toggleEmotes(false);
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
@@ -1373,6 +1483,9 @@ function duelCountdown(at) {
 }
 
 function onEliminated(place, by) {
+  // килкам (если убил игрок/бот), потом — зритель за живыми
+  if (playing && by && by !== 'Storm' && by !== nick) startKillcam(by, feet, lastDeathW);
+  else if (playing) setTimeout(() => { if (!royale.alive && !cine) startSpectate(); }, 1500);
   gliding = false;
   buildType = null;
   structures.ghost(null);
@@ -1386,7 +1499,7 @@ function onEliminated(place, by) {
 }
 
 function onWinner(name, me) {
-  if (me) { award('win'); audio.play('victory'); }
+  if (me) { award('win'); audio.play('victory'); startWinCam(); }
   if (royale.duel) {
     const w = me ? myTicker() : oppTicker(), l = me ? oppTicker() : myTicker();
     banner(`🏆 ${w} WINS`, `${w} beat ${l} 1v1`, 6000);
@@ -1403,6 +1516,7 @@ function onRoundEnd({ me, winners, early }) {
   loadout.giveBack(abilities.slots);
   if (!early) {
     const others = winners.filter((n) => n !== nick);
+    if (me) startWinCam();
     if (me) banner('🏆 VICTORY ROYALE', others.length ? `You survived the storm — winners: ${winners.join(', ')}` : 'You survived the storm!', LOBBY_DELAY * 1000);
     else if (winners.length) banner(`🏆 ${winners.join(', ')}`, `${winners.length > 1 ? 'survived the storm and win' : 'survived the storm and wins'}`, LOBBY_DELAY * 1000);
     else banner('Round over', 'No survivors — the storm took everyone', LOBBY_DELAY * 1000);
@@ -1641,7 +1755,8 @@ addEventListener('keydown', (e) => {
   if (gliding && !chute && e.code === 'Space') openChute();
   else if (e.code === 'Space' && canRedeploy()) { gliding = true; chute = false; openChute(); }
   if (e.code === 'KeyB') { openBuy(); return; }
-  if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
+  if (!royale.alive && playing && e.code === 'KeyV') { if (cine) stopCine(); else if (!startSpectate()) spectatorNotice(); return; }
+  if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
   if (e.code === 'KeyE') {
     const chest = loot.chestNear(eye(), look());
     if (chest) openChest(chest);
@@ -2739,6 +2854,8 @@ const mainLoop = (now) => {
     selfSound(dt);
   }
   audio.frame(dt, envSound());
+  camSave.p.copy(camera.position); camSave.q.copy(camera.quaternion);
+  const cineOn = applyCine(dt, t);
   // Солнце с тенью ездит за игроком (тени — только вокруг); небо — за камерой.
   const c = player.position;
   sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));
@@ -2746,7 +2863,7 @@ const mainLoop = (now) => {
   sky.position.copy(c);
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
   structures.lod(renderer, c);                    // дальние деревья — карточками
-  if (playing) grass.update(feet, t);             // в лобби камера высоко — траву не видно, не считаем
+  if (playing) grass.update(cineOn ? camera.position : feet, t);             // в лобби камера высоко — траву не видно, не считаем
   windUniform.value = t;
   water.update(t);
   // Тени: при сдвиге на 1.5 м, после правок построек и не реже 10 раз в секунду (движутся другие игроки)
@@ -2757,9 +2874,10 @@ const mainLoop = (now) => {
   // через composer — если включён хоть один эффект кадра; иначе напрямую (дешевле, сглаживание браузера)
   if (fxOn.rays) rays.aim(camera, SUN_DIR, innerWidth, innerHeight); else rays.enabled = false;
   if (fxOn.bloom || fxOn.ao || rays.enabled) composer.render(); else renderer.render(scene, camera);
+  if (cineOn) { camera.position.copy(camSave.p); camera.quaternion.copy(camSave.q); }
   autoQuality(dt, now);
   countFps(now);
-  if (playing && !riding && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
+  if (playing && !cineOn && !riding && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
     const h = holding();
     const inHand = h || (ENTRIES[slot].med && !buildType && combat.meds ? { type: 'medkit', rarity: 0 } : null);   // слот 5 — аптечка в руке
     const run = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && moving && onGround;
@@ -2831,7 +2949,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, audio, killfeed, events, pads, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, killfeed, events, pads, winCam: () => startWinCam(), setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),
