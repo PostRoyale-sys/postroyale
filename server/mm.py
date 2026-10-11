@@ -1,9 +1,8 @@
 # PostRoyale — сервер матчмейкинга и ретранслятор матча (WebSocket). Только стандартная библиотека Python 3.10+.
 #
 # Очередь одна: игроки нажимают Play («Online») и попадают в общее лобби на CAP мест.
-#   - первые WAIT с ожидания (от первого в очереди) — боты подмешиваются понемногу: +1 каждые WAIT/6 с;
-#   - после WAIT — добиваем ботами до полного лобби по нарастающей (всё быстрее) и запускаем матч;
-#   - набралось CAP живых игроков — старт сразу.
+#   - сразу BOTS0 ботов (от первого в очереди), дальше +1 бот каждые STEP с, пока лобби не заполнится — тогда старт;
+#   - живые игроки занимают места ботов; набралось CAP живых — старт сразу.
 # После старта то же соединение становится каналом матча: сервер пересылает действия игры (pose, shot, hit, …)
 # всем в матче или одному адресату. Игровую логику по-прежнему считают клиенты (ботов — хост, игрок с меньшим id).
 #
@@ -17,14 +16,16 @@
 #            {t:'a', a, d, f}            действие от игрока f
 #   GET /health → {"ok":true, "queue":…, "matches":…, "players":…}
 #
-# Запуск: python3 mm.py  (переменные: PORT=8770, HOST=127.0.0.1, MM_WAIT=60, MM_CAP=20)
+# Запуск: python3 mm.py  (переменные: PORT=8770, HOST=127.0.0.1, MM_CAP=20, MM_BOTS0=13, MM_STEP=3)
 
 import asyncio, base64, hashlib, json, os, secrets, struct, time
 
 HOST = os.environ.get('HOST', '127.0.0.1')
 PORT = int(os.environ.get('PORT', '8770'))
-WAIT = float(os.environ.get('MM_WAIT', '60'))     # с — после этого добиваем ботами
 CAP = int(os.environ.get('MM_CAP', '20'))         # мест в матче (люди + боты)
+BOTS0 = int(os.environ.get('MM_BOTS0', '13'))     # ботов сразу
+STEP = float(os.environ.get('MM_STEP', '3'))      # с — ещё по боту, пока лобби не полное
+WAIT = max(0, CAP - 1 - BOTS0) * STEP             # самое долгое ожидание (один живой игрок) — для статуса
 MAX_MSG = 1 << 20                                 # 1 МБ на сообщение (sync построек бывает большим)
 MAX_QUEUE = 600                                   # исходящих сообщений в очереди клиента — больше, значит не успевает: отключаем
 MATCH_TTL = 6 * 60                                # с — матч живёт не дольше (раунд 4 мин + итоги)
@@ -111,11 +112,7 @@ async def ticker():
         e = now - lobby.t0
         room = CAP - len(lobby.players)
         before = lobby.bots
-        if e < WAIT:
-            want = int(e / (WAIT / 6))                          # до порога — по одному боту каждые WAIT/6
-        else:
-            x = e - WAIT                                         # после — всё быстрее: 6 + 0.6x + 0.25x²
-            want = int(6 + 0.6 * x + 0.25 * x * x)
+        want = BOTS0 + int(e / STEP)                            # сразу BOTS0, потом +1 каждые STEP с
         lobby.bots = max(0, min(room, max(lobby.bots, want)))
         if len(lobby.players) + lobby.bots >= CAP:
             broadcast_lobby()

@@ -1600,7 +1600,7 @@ function start() {
     }
     else { royale.setDuel(null); royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500); }
     pick(0);
-    $('wname').textContent = mmMatch ? `🌐 Online · ${mmMatch.ids.length} ${mmMatch.ids.length > 1 ? 'players' : 'player'} + ${mmMatch.bots} bots` : rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
+    $('wname').textContent = mmMatch ? `🌐 Online · ${mmMatch.ids.length + mmMatch.bots} players` : rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats', 'abil', 'credits']) $(id).hidden = false;
     renderAbilities();
@@ -1634,8 +1634,8 @@ $('nick').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').cl
 $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').click(); });
 
 // ---------- Online: поиск матча ----------
-// Очередь на сервере: первую минуту ищем живых игроков (боты подмешиваются понемногу), потом лобби
-// добивается ботами всё быстрее до полного и матч стартует. Сервер недоступен — предлагаем Private.
+// Очередь на сервере: сразу 13 ботов, дальше по одному каждые 3 с до полного лобби (живые занимают их места).
+// В интерфейсе онлайна ботов не упоминаем — показываем общее число игроков. Сервер недоступен — предлагаем Private.
 const setGoLabel = (t) => { $('go').lastChild.textContent = t; };
 function beginSearch() {
   nick = ($('nick').value.trim() || nick).slice(0, 16);
@@ -1648,15 +1648,15 @@ function beginSearch() {
     status(s) {
       const filled = s.h + s.b;
       $('tring').style.strokeDashoffset = (125.66 * (1 - filled / s.cap)).toFixed(1);
-      $('roundinfo').innerHTML = `<b class="live">● Searching ${mmss(s.s)}</b>👥 ${s.h} ${s.h > 1 ? 'players' : 'player'} · 🤖 ${s.b} bots · ${filled}/${s.cap}`;
-      $('status').textContent = s.s < s.wait ? `🔎 Finding players — bots fill the rest in ${Math.ceil(s.wait - s.s)}s` : '🤖 Filling the lobby with bots…';
+      $('roundinfo').innerHTML = `<b class="live">● Searching ${mmss(s.s)}</b>👥 ${filled}/${s.cap} players`;
+      $('status').textContent = filled < s.cap ? '🔎 Finding players…' : '✓ Lobby full — starting';
     },
     go(m) {
       mmSearch = null;
       mmMatch = m;
       $('go').classList.remove('searching');
       setGoLabel('Play');
-      $('status').textContent = `✓ Match found — ${m.ids.length} ${m.ids.length > 1 ? 'players' : 'player'} + ${m.bots} bots`;
+      $('status').textContent = `✓ Match found — ${m.ids.length + m.bots} players`;
       document.title = `Match found — ${NAME}`;
       $('go').disabled = true;
       $('flashout').classList.add('on');
@@ -2278,7 +2278,7 @@ function updateRoundInfo() {
   if (gameMode === 'casual') {
     $('tring').style.strokeDashoffset = '0';
     $('roundinfo').innerHTML = mode === 'online'
-      ? `<b class="live">● Online</b>Real players + bots · ${ROUND_MS / 60e3} min · starts in ≤1 min`
+      ? `<b class="live">● Online</b>${ROUND_MS / 60e3} min · starts in ≤20 s`
       : mode === 'join'
       ? `<b class="live">● Friend's match</b>Drop in with everyone on the link`
       : `<b class="live">● Fresh match</b>Starts the moment you hit Play · ${ROUND_MS / 60e3} min`;
