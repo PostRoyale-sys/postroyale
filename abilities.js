@@ -95,10 +95,10 @@ export function createAbilities(ctx) {
         drone = { pos: p, vel: look().multiplyScalar(DRONE_SPEED * 0.5), born: performance.now() / 1000, mesh: droneMesh(), sent: 0 };
         drone.mesh.visible = false;                    // своего не видно — смотрим из него
         scene.add(drone.mesh);
-        ctx.combat().sfx('swing');
+        ctx.combat().sfx('dash');
         break;
       }
-      case 'recon': reconUntil = performance.now() / 1000 + RECON_LIFE; ctx.combat().sfx('pickup'); break;
+      case 'recon': reconUntil = performance.now() / 1000 + RECON_LIFE; ctx.combat().sfx('beepGo'); break;
       case 'nade': {
         const o = eye().addScaledVector(look(), 0.8);
         const v = look().multiplyScalar(19).add(new THREE.Vector3(0, 5, 0));

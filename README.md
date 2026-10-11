@@ -58,6 +58,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 - Storm with phases that shrink to a final circle; it damages players and bots alike.
 - Minimap and full island map (**M**) with the storm, next safe zone and the chopper route.
 - Up to 20 bots that loot, build-break, strafe, flank and parachute to their own landing spots.
+- Full sound: a distinct shot per gun with distance falloff and echo, reload and bolt/pump mechanics, footsteps by surface, wind and parachute, medkits, loot, hits and kills, plus lobby music. All synthesized in the browser, no audio files.
 
 **Modes**
 - **Casual** — a fresh match the moment you hit Play; friends join from your link.
@@ -99,6 +100,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 | `main.js` | game loop, player, lobby UI, wiring |
 | `map.js` · `structures.js` | island generator · buildings, objects, building and destruction |
 | `combat.js` · `viewmodel.js` | weapons, damage, explosions · first-person guns and attachments |
+| `audio.js` | synthesized sound effects, positional playback, lobby music |
 | `royale.js` | rounds, storm phases, winners, duel rules |
 | `bots.js` | bot AI: looting, movement, aim, building-breaking, drops |
 | `heli.js` · `lobby.js` | helicopter and parachute · lobby island and ad plane |

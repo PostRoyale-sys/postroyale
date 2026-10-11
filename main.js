@@ -36,6 +36,7 @@ import { createGrass } from './grass.js';
 import { buildHeli, buildParachute, buildCabin, CHUTES, chuteById } from './heli.js';
 import { createFx } from './fx.js';
 import { AOPass, SunRaysPass } from './post.js';
+import { createAudio } from './audio.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -328,7 +329,7 @@ function jumpOut(forced = false) {
   knockVel.copy(flight.dir).multiplyScalar(6);
   gliding = true;
   chute = false;
-  combat.sfx('swing');
+  audio.play('jumpOut');
   if (forced) toast('Auto-dropped at the edge of the jump zone');
 }
 
@@ -418,7 +419,7 @@ function step(dt) {
   {
     moveAxis('x', move.x);
     moveAxis('z', move.z);
-    if (keys.has('Space') && onGround && !prone) { vel.y = JUMP; onGround = false; }
+    if (keys.has('Space') && onGround && !prone) { vel.y = JUMP; onGround = false; audio.play('jump'); }
     // свободное падение до −32 м/с; на высоте ~40 м купол раскрывается сам (или раньше — Space)
     if (gliding && !chute && feet.y - world.height(feet.x, feet.z) < 40) openChute();
     vel.y = Math.max(vel.y - GRAVITY * dt, !gliding ? -45 : chute ? -6 : -32);
@@ -431,6 +432,7 @@ function step(dt) {
     const g = structures.ground(feet.x, feet.z, Math.max(feet.y, ny), HALF);
     // На земле прилипаем к опоре, если она чуть ниже (спуск по рампе и склону без подпрыгиваний).
     if (ny <= g || (onGround && vel.y <= 0 && feet.y - g < 0.6)) {
+      if (!onGround && vel.y < -5 && playing && royale.alive) audio.land(-vel.y, surfaceUnder());
       ny = g; vel.y = 0; onGround = true; gliding = false; chute = false;
     }
     else onGround = false;
@@ -455,7 +457,7 @@ function canRedeploy() {
 function openChute() {
   if (!gliding || chute) return;
   chute = true;
-  combat.sfx('swing');
+  audio.play('chuteOpen');
 }
 
 // Своя фигурка (видна только в падении/под куполом — камера в это время сзади-сверху).
@@ -638,6 +640,8 @@ function entryBox(e) {
 function onDestroyed(e) {
   if (e.kind === 'piece' || e.type !== 'car') fx.debris(entryBox(e), fxKind(e), e.kind === 'piece' ? 14 : 10);
   fx.clearHoles(e.k);
+  const k = fxKind(e);
+  audio.play(k === 'wood' || k === 'metal' ? `break_${k}` : 'break_brick', entryBox(e).getCenter(new THREE.Vector3()));
 }
 // Нормаль поверхности в точке попадания: рельеф — по высотам, коробка — по ближайшей грани.
 function surfaceNormal(p, e, dir) {
@@ -676,6 +680,7 @@ function impact(p, e, dir) {
   if (!tree && !e?.ramp) fx.hole(p, surfaceNormal(p, e, dir), e ? e.k : null);
   if (!e) fx.dust(p, 0xb9a77f, 0.8);
   else fx.chips(p, kind, 3);
+  audio.play(`impact_${kind}`, p);
 }
 
 // Стройка: деталь перед игроком за BUILD_COST материала.
@@ -695,7 +700,7 @@ function placePiece(now) {
   shadowDirty = true;
   mats[m] -= BUILD_COST;
   nextBuild = now + BUILD_RATE;
-  combat.sfx('build');
+  audio.play(`build_${m}`);
   net?.edit({ a: 1, k, t, ix, iy, iz, o, m, rr: royale.round });
   renderMats();
 }
@@ -933,6 +938,8 @@ function say(name, text) {
 
 const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏' };
 function killfeed(by, victim, w) {
+  if (victim === nick && playing) audio.play('death');
+  else if (by === nick) audio.play('kill', null, { at: 0.05 });
   const line = document.createElement('div');
   line.className = 'kill';
   const icon = KILL_ICON[w] || '💀';
@@ -968,15 +975,20 @@ function toast(text) {
 }
 function hitmarker() { const h = $('hitmark'); h.classList.remove('on'); void h.offsetWidth; h.classList.add('on'); }
 // Число урона над целью: синее — у цели был щит (поле sd в позе), крупное жёлтое — 50 и больше.
-function dmgNumber(p, dmg, target) { if (dmg > 0) fx.number(p, dmg, target?.sd ? 'sh' : 'hp'); }
+function dmgNumber(p, dmg, target) {
+  if (dmg <= 0) return;
+  fx.number(p, dmg, target?.sd ? 'sh' : 'hp');
+  audio.play(target?.sd ? 'hitShield' : dmg >= 50 ? 'hitBig' : 'hit');
+}
 
 // ---------- Бой, лут, раунды ----------
 
 let shakeAmt = 0;
 let swapCandidate = null;
 
+const audio = createAudio({ camera, volume: () => settings.vol, music: () => settings.music });
 const ctx = {
-  scene, camera,
+  scene, camera, audio,
   world: () => world,
   structures: () => structures,
   feet: () => feet,
@@ -1064,8 +1076,8 @@ const abilities = createAbilities({
   toast: (t) => pointsToast(t), onChange: () => renderAbilities(),
   canUse: () => playing && royale.alive && !riding,
   moveDir,
-  dash: (d) => { knockVel.copy(d).multiplyScalar(36); vel.y = Math.max(vel.y, 3); onGround = false; combat.sfx('swing'); },
-  launch: (vy) => { vel.y = vy; onGround = false; combat.sfx('bazooka'); },
+  dash: (d) => { knockVel.copy(d).multiplyScalar(36); vel.y = Math.max(vel.y, 3); onGround = false; audio.play('dash'); },
+  launch: (vy) => { vel.y = vy; onGround = false; audio.play('launch'); },
   canFly: () => playing && royale.alive && !royale.ended,
   key: (code) => keys.has(code),
 });
@@ -1139,6 +1151,7 @@ function openChest(chest) {
   if (!loot.open(chest, key ? 1 : 0)) return;
   if (key) { goldenKeyRound = royale.round; toast('🔑 Golden key: +1 rarity'); }
   award('chest');
+  audio.play('chest', chest.pos);
 }
 
 let bannerTimer = 0;
@@ -1179,6 +1192,7 @@ function onRoundStart(r, alive) {
     startRide(Date.now() - royale.roundStart > 20e3);
     season.roundStarted();
     const late = Date.now() - royale.roundStart > 20e3;
+    audio.play('roundStart');
     banner('DROP!', late ? 'Match in progress — press SPACE to jump out, loot fast, watch the storm' : 'Press SPACE to jump out of the chopper — the storm starts closing in 90s');
   } else {
     gliding = false;
@@ -1224,10 +1238,11 @@ function duelCountdown(at) {
     if (!playing) return;
     const left = Math.ceil((at - Date.now()) / 1000);
     if (left > 0) {
-      if (left !== shown) { shown = left; banner(String(left), `${myTicker()} vs ${oppTicker()} · get ready`, 950); combat.sfx('pickup'); }
+      if (left !== shown) { shown = left; banner(String(left), `${myTicker()} vs ${oppTicker()} · get ready`, 950); audio.play('beep'); }
       setTimeout(step, 100);
       return;
     }
+    audio.play('beepGo');
     royale.setDuel('fight');
     royale.init(Date.now(), at);
   };
@@ -1241,13 +1256,14 @@ function onEliminated(place, by) {
   vel.set(0, 0, 0);
   feet.y += 3;                                    // призрак поднимается над местом гибели
   season.placed(place);
+  audio.play('lose', null, { at: 1.2 });
   if (place === 2 || place === 3) loadout.earn(place === 2 ? 'top2' : 'top3');
   if (rankedMatch && (place === 2 || place === 3)) ranked.add(place === 2 ? 'top2' : 'top3');
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
 
 function onWinner(name, me) {
-  if (me) award('win');
+  if (me) { award('win'); audio.play('victory'); }
   if (royale.duel) {
     const w = me ? myTicker() : oppTicker(), l = me ? oppTicker() : myTicker();
     banner(`🏆 ${w} WINS`, `${w} beat ${l} 1v1`, 6000);
@@ -1842,6 +1858,15 @@ function setMood(name) {
 }
 
 const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
+// Звуки интерфейса лобби: наведение и нажатие на кнопки, вкладки, карточки.
+const UI_SEL = 'button, [data-tab], .skin, .gsmod, .slot';
+let uiHover = null;
+addEventListener('click', (e) => { if (!controls.isLocked && e.target.closest?.(UI_SEL)) audio.play('uiClick'); }, true);
+addEventListener('pointerover', (e) => {
+  const b = !controls.isLocked && e.target.closest?.(UI_SEL);
+  if (b && b !== uiHover) audio.play('uiHover');
+  uiHover = b || null;
+}, true);
 addEventListener('mousemove', (e) => { mouse.x = e.clientX / innerWidth * 2 - 1; mouse.y = e.clientY / innerHeight * 2 - 1; });
 
 const V_HERO = new THREE.Vector3(), V_TMP = new THREE.Vector3();
@@ -2107,7 +2132,7 @@ function openCase(cid) {
     tr.style.transition = 'transform 5.2s cubic-bezier(.12,.75,.12,1)';
     tr.style.transform = `translateX(${-x}px)`;
   }));
-  combat.sfx('pickup');
+  for (let t = 0, d = 0.045; t < 5; t += d, d *= 1.075) audio.play('caseTick', null, { at: t, vol: 1 - t / 7 });
   setTimeout(() => {
     const s = skinInfo(res.id);
     $('csres').hidden = false;
@@ -2115,7 +2140,7 @@ function openCase(cid) {
       <div class="rbtn"><button id="cseq">Equip</button><button id="csok">OK</button></div>`;
     $('cseq').addEventListener('click', () => { if (wskins.equipped(s.gun) !== res.id) wskins.equip(res.id); closeOpen(); $('cshint').textContent = `✓ ${s.name} equipped`; });
     $('csok').addEventListener('click', closeOpen);
-    if (s.rarity >= 2) combat.sfx('bazooka');
+    audio.play(s.rarity >= 2 ? 'victory' : 'healDone');
   }, 5400);
 }
 function closeOpen() { $('csopen').hidden = true; opening = false; renderCases(); }
@@ -2270,7 +2295,7 @@ setInterval(updateRoundInfo, 500);
 // ---------- Настройки ----------
 
 const SETTINGS_KEY = 'pr:settings';
-const settings = { sens: 1, fov: 80, vol: 0.8, shadows: true, hq: true, bloom: true, grass: true, fps: true, ao: true, rays: true, auto: true };
+const settings = { sens: 1, fov: 80, vol: 0.8, music: 0.5, shadows: true, hq: true, bloom: true, grass: true, fps: true, ao: true, rays: true, auto: true };
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch (e) { /* по умолчанию */ }
 
 // Автокачество: держится FPS < 45 — по ступеньке снижаем (1: разрешение ×1, 2: без AO и лучей, 3: без травы и bloom).
@@ -2318,6 +2343,7 @@ const SLIDERS = [
   { key: 'sens', label: 'Mouse sensitivity', min: 0.2, max: 2.5, step: 0.05, fmt: (v) => v.toFixed(2) },
   { key: 'fov', label: 'Field of view', min: 60, max: 110, step: 1, fmt: (v) => `${v}°` },
   { key: 'vol', label: 'Volume', min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
+  { key: 'music', label: 'Lobby music', min: 0, max: 1, step: 0.05, fmt: (v) => `${Math.round(v * 100)}%` },
 ];
 const TOGGLES = [
   { key: 'shadows', label: 'Shadows', on: 'On', off: 'Off' },
@@ -2379,6 +2405,73 @@ if (!params.has('shot')) {
     renderLoadout();
     setTimeout(() => $('splash').classList.add('done'), 350);
   }, 60);
+}
+
+// ---------- Звук: шаги, перезарядка, лечение, прицел, окружение (audio.js) ----------
+
+const V_SND = new THREE.Vector3(), V_DOWN = new THREE.Vector3(0, -1, 0), prevFeet = new THREE.Vector3();
+let stepAcc = 0, stepSide = 0, lastReload = null, lastHeal = null, wasScoped = false, heldKey = '';
+// Поверхность под ногами: вода, песок у берега, трава; на постройке/объекте — его материал.
+function surfaceUnder(p = feet) {
+  if (p.y < WATER_Y + 0.15) return 'water';
+  const hit = structures.raycast(V_SND.set(p.x, p.y + 0.3, p.z), V_DOWN, 0.9);
+  if (hit?.e) return fxKind(hit.e);
+  return p.y < WATER_Y + 2.5 ? 'sand' : 'grass';
+}
+function selfSound(dt) {
+  // шаги: по пройденному пути (бег — шире шаг, громче и звякает снаряжение; присел — тихо)
+  const h = Math.hypot(feet.x - prevFeet.x, feet.z - prevFeet.z);
+  prevFeet.copy(feet);
+  if (onGround && royale.alive && !riding && !abilities.drone && h < 1) {
+    const run = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && !isScoped();
+    const quiet = crouching || prone;
+    stepAcc += h;
+    if (stepAcc >= (quiet ? 1.1 : run ? 2.2 : 1.65)) {
+      stepAcc = 0;
+      audio.step(surfaceUnder(), null, quiet ? 0.35 : run ? 1.2 : 0.8);
+      if (run && (stepSide ^= 1)) audio.play('gear', null, { vol: 0.8 });
+    }
+  } else if (!onGround) stepAcc = 1.3;                        // первый шаг после приземления — сразу
+  // перезарядка и лечение: по фазам анимации; прервали — звук обрывается
+  const rl = combat.reloading, hl = combat.healing;
+  if (rl && (!lastReload || rl.slot !== lastReload.slot || rl.left > lastReload.left + 0.05)) audio.reload(combat.slots[rl.slot]?.type, rl.left);
+  else if (!rl && lastReload && lastReload.left > 0.1) audio.stop();
+  lastReload = rl ? { slot: rl.slot, left: rl.left } : null;
+  if (hl && (!lastHeal || hl.left > lastHeal.left + 0.05)) audio.heal(hl.left);
+  else if (!hl && lastHeal && lastHeal.left > 0.1) audio.stop();
+  lastHeal = hl ? { left: hl.left } : null;
+  const sc = isScoped() && !!holding();
+  if (sc !== wasScoped) { audio.play(sc ? 'adsIn' : 'adsOut'); wasScoped = sc; }
+}
+// Другие игроки и боты рядом: шаги, перезарядка, аптечка — слышно, откуда идут.
+function othersSound(o, dt) {
+  if (!o.near || o.target.a === false) return;
+  const p = o.group.position;
+  if (o.spd > 1.2 && !o.target.st && !o.target.pr) {
+    o.stepAcc = (o.stepAcc || 0) + o.spd * dt;
+    const run = o.spd > 6.5;
+    if (o.stepAcc > (run ? 2.2 : 1.65)) { o.stepAcc = 0; audio.step(surfaceUnder(p), p, run ? 1.3 : 0.8); }
+  }
+  if (o.target.rl && !o.rlWas) { audio.play('magOut', p); audio.play('magIn', p, { at: 0.8 }); audio.play('chargeFwd', p, { at: 1.2 }); }
+  if (o.target.hl && !o.hlWas) audio.play('medOpen', p);
+  o.rlWas = !!o.target.rl; o.hlWas = !!o.target.hl;
+}
+// Окружение: ветер в падении, купол, вертолёт, шторм рядом/снаружи; музыка — в лобби.
+function envSound() {
+  if (!playing) return { lobby: world && !params.has('shot') && !params.has('rec') };
+  let storm = 0;
+  if (royale.round >= 0 && !royale.ended) {
+    const s = royale.stormNow(), c = royale.center;
+    const d = s.r - Math.hypot(player.position.x - c.x, player.position.z - c.z);
+    storm = d < 0 ? 1 : Math.max(0, 1 - d / 35) * 0.45;
+  }
+  const air = gliding && feet.y > WATER_Y + 0.5;                 // в воде парашют уже не шумит
+  const hd = heli.visible ? heli.getWorldPosition(V_SND).distanceTo(player.position) : 1e9;
+  return {
+    fall: air && !chute, chute: air && chute, speed: Math.abs(vel.y), riding,
+    heli: riding ? 1 : Math.max(0, 1 - hd / 260) * 0.8,
+    storm, hp: royale.alive ? combat.hp : 100,
+  };
 }
 
 // ---------- Цикл ----------
@@ -2465,6 +2558,7 @@ const mainLoop = (now) => {
       // поза по движению: планирует / в воздухе / бежит / стоит
       const sp = Math.hypot(o.group.position.x - prev.x, o.group.position.z - prev.z) / Math.max(dt, 1e-3);
       o.spd = (o.spd || 0) * 0.85 + sp * 0.15;
+      othersSound(o, dt);
       const em = EMOTE_IDS.includes(o.target.em) ? o.target.em : null;
       const st = o.target.st === 'g' ? 'chute' : o.target.st === 'f' ? 'glide' : o.target.st === 'a' ? 'air' : o.spd > 0.8 ? 'run' : em || (o.target.hl ? 'heal' : 'idle');
       // лечится — зелёные искорки; эмоция/лечение — оружие убрано; перезарядка — оружие опущено
@@ -2482,7 +2576,9 @@ const mainLoop = (now) => {
     }
     sendPose(now);
     updateCrosshair(w, en);
+    selfSound(dt);
   }
+  audio.frame(dt, envSound());
   // Солнце с тенью ездит за игроком (тени — только вокруг); небо — за камерой.
   const c = player.position;
   sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));
@@ -2508,6 +2604,8 @@ const mainLoop = (now) => {
     const inHand = h || (ENTRIES[slot].med && !buildType && combat.meds ? { type: 'medkit', rarity: 0 } : null);   // слот 5 — аптечка в руке
     const run = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && moving && onGround;
     vm.set(inHand);
+    const hk = inHand ? `${slot}:${inHand.type}` : '';
+    if (hk !== heldKey) { if (inHand) audio.play(inHand.type === 'pickaxe' ? 'equipPick' : inHand.type === 'medkit' ? 'equipMed' : 'equip'); heldKey = hk; }
     vm.render(dt, { moving: moving && onGround, running: run, reload: combat.reloading, heal: combat.healing, scoped: isScoped(), loaded: !!inHand && (inHand.mag === undefined || inHand.mag > 0) });
   }
   window.__frameHook?.(dt, t);                   // запись промо-видео: кадр готов
@@ -2573,7 +2671,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),

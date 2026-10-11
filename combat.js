@@ -74,44 +74,9 @@ export function createCombat(ctx) {
   const fx = [];
   const rockets = [];
 
-  // ---------- Звук (синтез, без файлов) ----------
+  // ---------- Звук (audio.js) ----------
 
-  let ac = null;
-  function audio() {
-    if (!ac) try { ac = new AudioContext(); } catch (e) { return null; }
-    return ac;
-  }
-  function noise(dur, freq, vol, type = 'lowpass') {
-    const a = audio();
-    if (!a || vol <= 0.01) return;
-    const buf = a.createBuffer(1, Math.floor(a.sampleRate * dur), a.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 2;
-    const src = a.createBufferSource();
-    src.buffer = buf;
-    const f = a.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = freq;
-    const gain = a.createGain();
-    gain.gain.value = vol;
-    src.connect(f).connect(gain).connect(a.destination);
-    src.start();
-  }
-  const volAt = (p) => Math.max(0, 1 - camera.getWorldPosition(new THREE.Vector3()).distanceTo(p) / 70);
-  const SOUNDS = {
-    pistol: (v) => noise(0.12, 2500, 0.35 * v, 'highpass'),
-    smg: (v) => noise(0.07, 3200, 0.25 * v, 'highpass'),
-    ar: (v) => noise(0.11, 1800, 0.35 * v, 'highpass'),
-    shotgun: (v) => noise(0.3, 900, 0.6 * v),
-    sniper: (v) => noise(0.45, 1200, 0.7 * v),
-    bazooka: (v) => noise(0.45, 500, 0.45 * v),
-    boom: (v) => noise(0.9, 400, 0.9 * v),
-    pickup: (v) => noise(0.05, 5000, 0.15 * v, 'highpass'),
-    chop: (v) => noise(0.09, 1400, 0.4 * v),
-    build: (v) => noise(0.06, 2600, 0.25 * v),
-    swing: (v) => noise(0.08, 3800, 0.12 * v, 'highpass'),
-  };
-  const sound = (kind, p) => SOUNDS[kind]?.((p ? volAt(p) : 1) * (ctx.volume?.() ?? 1));
+  const sound = (kind, p) => ctx.audio?.play(kind, p);
 
   // ---------- Эффекты ----------
 
@@ -161,6 +126,7 @@ export function createCombat(ctx) {
     const toShield = Math.min(shield, dmg);
     shield -= toShield;
     hp = Math.max(0, hp - (dmg - toShield));
+    sound(w === 'storm' ? 'stormZap' : toShield > 0 && shield <= 0 ? 'shieldBreak' : toShield >= dmg ? 'shieldHurt' : 'hurt');
     ctx.flash(toShield > 0 && hp > 0 ? 'shield' : 'hp');
     if (hp <= 0) die(by, w);
     changed();
@@ -232,7 +198,7 @@ export function createCombat(ctx) {
       tracer(muzzle, end, spec.pellets > 1 ? 0xffd38a : 0xffe066);
       if (best) dmgBy.set(best, (dmgBy.get(best) || 0) + spec.dmg * mult);
     }
-    sound(w.type, null);
+    ctx.audio?.shot(w.type, null);
     const r2 = (v) => v.toArray().map((x) => +x.toFixed(2));
     ctx.net()?.shot({ w: w.type, o: r2(muzzle), e: ends.map(r2) });
     for (const [t, dmg] of dmgBy) {
@@ -272,7 +238,7 @@ export function createCombat(ctx) {
     mesh.lookAt(o.clone().add(v));
     scene.add(mesh);
     rockets.push({ mesh, pos: o.clone(), vel: v.clone(), own, age: 0, puff: 0 });
-    sound('bazooka', o);
+    ctx.audio?.shot('bazooka', own ? null : o);
   }
 
   function fireRocket(w) {
@@ -390,7 +356,7 @@ export function createCombat(ctx) {
       if (!w || now < nextShot || !ctx.canPlay()) return false;
       if (reloadUntil) return false;
       const spec = WEAPONS[w.type];
-      if (w.mag <= 0) { startReload(i); return false; }
+      if (w.mag <= 0) { if (!startReload(i)) sound('dry'); nextShot = now + 0.25; return false; }
       w.mag--;
       nextShot = now + spec.rate;
       if (spec.rocket) fireRocket(w); else hitscan(w, spec);
@@ -408,7 +374,6 @@ export function createCombat(ctx) {
       if (!meds || healUntil || hp >= 100 || !ctx.canPlay()) return false;
       reloadUntil = 0;
       healUntil = performance.now() / 1000 + MED.time;
-      sound('pickup');
       changed();
       return true;
     },
@@ -424,23 +389,23 @@ export function createCombat(ctx) {
       return false;
     },
     give(item, slotHint) {
-      if (item.k === 'ammo') { ammo[item.w] += item.a; sound('pickup'); changed(); return true; }
+      if (item.k === 'ammo') { ammo[item.w] += item.a; sound('pickAmmo'); changed(); return true; }
       if (item.k === 'armor') {
         if (shield >= MAX_SHIELD) return false;
         shield = Math.min(MAX_SHIELD, shield + item.a);
-        sound('pickup'); changed(); return true;
+        sound('pickArmor'); changed(); return true;
       }
       if (item.k === 'med') {
         if (meds >= MED.max) return false;
         meds++;
-        sound('pickup'); changed(); return true;
+        sound('pickMed'); changed(); return true;
       }
       if (item.k === 'weapon') {
         const free = slotHint ?? slots.findIndex((s) => !s);
         if (free < 0) return false;
         // полный магазин с земли — сразу полный и с твоим «двойным»
         slots[free] = { type: item.w, rarity: item.r, mag: item.a == null || item.a >= WEAPONS[item.w].mag ? magOf(item.w) : item.a };
-        sound('pickup'); changed(); return true;
+        sound('pickWeapon'); changed(); return true;
       }
       return false;
     },
@@ -463,7 +428,8 @@ export function createCombat(ctx) {
       }
       const a = new THREE.Vector3(...d.o);
       for (const e of d.e || []) tracer(a, new THREE.Vector3(...e), (d.e.length > 1) ? 0xffd38a : 0xffe066);
-      sound(d.w, a);
+      ctx.audio?.shot(d.w, a);
+      if (d.e?.length) ctx.audio?.whiz(a, new THREE.Vector3(...d.e[0]));
     },
     onHit(peerId, d) { takeDamage(d.dmg, d.by, d.w); },
     onDead(peerId, d) { ctx.killfeed(d.by, d.n, d.w); },
@@ -472,7 +438,7 @@ export function createCombat(ctx) {
       if (reloadUntil && performance.now() / 1000 >= reloadUntil) finishReload();
       if (healUntil && performance.now() / 1000 >= healUntil) {
         healUntil = 0;
-        if (meds > 0 && hp > 0) { meds--; hp = Math.min(100, hp + MED.heal); sound('pickup'); }
+        if (meds > 0 && hp > 0) { meds--; hp = Math.min(100, hp + MED.heal); sound('healDone'); }
         changed();
       }
       updateRockets(dt);
