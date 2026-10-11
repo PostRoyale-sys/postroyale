@@ -2106,16 +2106,13 @@ const stars = (() => {
 const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
 const fillLight = new THREE.PointLight(0x8b6bff, 18, 12, 1.6);     // фиолетовая подсветка спереди-слева
 scene.add(rimLight, fillLight);
-// В лобби атмосфера — под выбранный скин (SKIN_MOODS): небо, солнце, туман, подсветка героя;
-// при смене скина цвета плавно перетекают (moodTarget → moodNow в lobbyFrame).
+// Атмосфера лобби одна для всех скинов (небо, солнце, туман, подсветка героя — как у Default);
+// цвета плавно перетекают (moodTarget → moodNow в lobbyFrame).
 const MOOD_COLORS = ['top', 'bottom', 'sun', 'sky', 'rim', 'fill'];
 let moodTarget = null;
 const moodNow = {};
 function skinMood() {
-  let id = 'default';
-  try { id = mySkin; } catch (e) { /* скин ещё не загружен */ }
-  const p = SKIN_MOODS[id] || SKIN_MOODS.default;
-  return { ...MOODS.lobby, ...p };
+  return { ...MOODS.lobby, ...SKIN_MOODS.default };
 }
 function applyColors(c) {
   sky.material.uniforms.top.value.copy(c.top);
@@ -2267,7 +2264,6 @@ function renderLocker() {
     c.addEventListener('click', () => {
       if (!open) { $('lockerhint').textContent = s.shop ? 'Buy it in the Shop with RP from Ranked matches' : s.holder ? 'Hold the token and link your wallet (Season tab) to unlock' : `Reach level ${s.level} — earn points by playing`; return; }
       mySkin = s.id;
-      if (moodTarget) moodTarget = skinMood();      // фон лобби — под новый скин
       try { localStorage.setItem('pr:skin', mySkin); } catch (e) { /* без сохранения */ }
       $('lockerhint').textContent = `Equipped: ${s.name}`;
       renderLocker();

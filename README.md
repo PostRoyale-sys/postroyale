@@ -72,7 +72,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 - **Abilities** (Valorant-style): dash, moon jump, shield, smoke, recon, grenade and an **FPV kamikaze drone**.
 - **Gunsmith**: optics (red dot, holo, ACOG 3x), double mags, grips, fast reloads — visible on the gun.
 - **Cases**: weapon skins from 77 finish × weapon combos, CS-style roll, inventory.
-- **Skins**: 16 character skins; each one restyles the lobby sky and lights.
+- **Skins**: 16 character skins.
 - **Season** levels, coins and RP. RP and coins have no cash value.
 
 ## Controls
