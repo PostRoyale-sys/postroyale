@@ -132,12 +132,16 @@ export function createRoyale(ctx) {
       warn, moving: !duel && s > MOVE_FROM && s < MOVE_TO };
   }
 
+  // Живой соперник: жив в этом раунде и недавно присылал позу (ушедший без «leave» — вкладку закрыли,
+  // сеть оборвалась — через STALE_MS живым не считается, иначе раунд бы так и не кончился).
+  const STALE_MS = 6000;
+  const isAlive = (o) => o.target?.a && o.target.rr === round && performance.now() - (o.seen ?? 0) < STALE_MS;
   function aliveOthers() {
     let n = 0;
-    for (const o of ctx.others.values()) if (o.target?.a && o.target.rr === round) n++;
+    for (const o of ctx.others.values()) if (isAlive(o)) n++;
     return n;
   }
-  const survivorNames = () => [...ctx.others.values()].filter((o) => o.target?.a && o.target.rr === round).map((o) => o.name);
+  const survivorNames = () => [...ctx.others.values()].filter(isAlive).map((o) => o.name);
 
   return {
     get round() { return round; },

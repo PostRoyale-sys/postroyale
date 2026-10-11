@@ -550,7 +550,7 @@ let cine = null;
 const camSave = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
 const CINE_V = new THREE.Vector3(), CINE_L = new THREE.Vector3();
 let cineCam = null;                                  // сглаженная позиция кино-камеры
-const aliveOthers = () => [...others.entries()].filter(([, o]) => o.target?.a && o.target.rr === royale.round);
+const aliveOthers = () => [...others.entries()].filter(([, o]) => o.target?.a && o.target.rr === royale.round && performance.now() - (o.seen ?? 0) < 6000);
 function startWinCam() {
   if (cine?.mode === 'win') return;
   cine = { mode: 'win', t0: performance.now() / 1000, burst: 0 };
@@ -1073,6 +1073,7 @@ function upsertOther(peerId, d) {
     others.set(peerId, o);
   }
   o.target = d;
+  o.seen = performance.now();
   o.group.visible = d.a !== false && !d.rd;     // наблюдателей и сидящих в вертолёте не видно
   // Что в руках: тип g и редкость q из pose.
   const ws = typeof d.ws === 'string' && FINISHES[d.ws] ? d.ws : null;
@@ -1392,7 +1393,8 @@ function sendHit(id, d) {
 function hostId() {
   if (!net) return 'me';
   const all = [net.selfId, ...[...peers].filter((id) => !foreign.has(id))];
-  const awake = all.filter((id) => (id === net.selfId ? !document.hidden : !others.get(id)?.target?.hd));
+  const fresh = (id) => { const o = others.get(id); return !o || performance.now() - (o.seen ?? 0) < 6000; };   // молчит 6 с — не хост
+  const awake = all.filter((id) => (id === net.selfId ? !document.hidden : !others.get(id)?.target?.hd && fresh(id)));
   return (awake.length ? awake : all).sort()[0];
 }
 function isHost() { return !net || hostId() === net.selfId; }
@@ -2874,6 +2876,7 @@ const mainLoop = (now) => {
       shakeAmt *= Math.max(0, 1 - 6 * dt);
     }
     for (const o of others.values()) {
+      o.group.visible = performance.now() - (o.seen ?? 0) < 6000;      // замолчал (ушёл без «leave») — не показываем
       const prev = o.group.position.clone();
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y + (o.target.pr ? 0.32 : 0), o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
