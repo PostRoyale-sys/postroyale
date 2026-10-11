@@ -49,6 +49,7 @@ export function createRoyale(ctx) {
   let PHASES = PHASE_TABLE, R0 = Math.hypot(SX, SZ);
   let alive = false, maxAliveSeen = 0, won = false, place = 0, ended = false;
   let surviveAcc = 0, stormAcc = 0;
+  let specMax = 0, lastFew = 0;      // зритель: сколько живых видел и сколько секунд остался ≤1 живой
 
   // Стена шторма: открытый цилиндр (высота 160 м, низ на −20 м) со своим шейдером — фиолетовая дымка,
   // бегущие наискосок полосы, клубы, яркая кромка у земли; к верху тает. Полосы — по метрам, а не по углу,
@@ -159,7 +160,7 @@ export function createRoyale(ctx) {
     get epoch() { return epoch; },
     init(now = Date.now(), ep = epoch) {
       epoch = ep;
-      ended = false; won = false; maxAliveSeen = 0; place = 0;
+      ended = false; won = false; maxAliveSeen = 0; place = 0; specMax = 0; lastFew = 0;
       round = roundOf(now);
       roundStart = epoch + round * roundMs;
       setCenter(round);
@@ -170,6 +171,7 @@ export function createRoyale(ctx) {
     // Друг начал этот матч раньше — переходим на его отсчёт (раунд начинается заново под его время).
     adoptEpoch(e) {
       if (!(e > 0) || e >= epoch - 1000) return false;
+      if (Date.now() - e > roundMs - LATE_CUTOFF) return false;     // тот матч уже не для высадки (или кончился) — играем свой
       this.init(Date.now(), e);
       return true;
     },
@@ -260,7 +262,22 @@ export function createRoyale(ctx) {
       const outside = Math.hypot(feet.x - center.x, feet.z - center.z) > s.r;
       ctx.stormHud({ t, storm: s, alive: this.aliveCount(), outside: outside && alive, round, spectating: !alive, drop: t < dropMs, duel });
 
-      if (!alive) return;
+      if (!alive) {
+        // ты выбыл, а в живых остался один (например, бот — он сам о победе не объявит) или никого:
+        // через 2.5 с — конец раунда, победитель — последний выживший
+        const n = aliveOthers();
+        specMax = Math.max(specMax, n);
+        if (!duel && t > dropMs && ctx.inMatch?.() && specMax >= 2 && n <= 1) {
+          lastFew += dt;
+          if (lastFew > 2.5) {
+            ended = true;
+            const winners = survivorNames();
+            if (winners.length) ctx.onWinner(winners[0], false);
+            ctx.onRoundEnd({ me: false, winners, early: true });
+          }
+        } else lastFew = 0;
+        return;
+      }
       // Урон шторма копим и снимаем целыми единицами.
       if (outside && s.dps && !ctx.riding?.()) {
         stormAcc += s.dps * dt;

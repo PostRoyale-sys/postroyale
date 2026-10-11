@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { WEAPONS } from './combat.js';
 import { SKINS } from './skins.js';
+import { WATER_Y } from './map.js';
 
 const COUNT = 20, SPEED = 4.6, GRAVITY = 30, JUMP = 9;
 
@@ -114,8 +115,10 @@ export function createBots(ctx) {
   // Ближайший неоткрытый сундук, за которым не идёт другой бот.
   function pickChest(b) {
     const loot = ctx.loot();
-    let best = null, bd = 150;
+    let best = null, bd = 400;                  // без оружия — к ближайшему сундуку где угодно (в зоне)
+    const rs = ctx.royale(), safe = rs.safeRadius();
     for (const c of loot.chests) {
+      if (Math.hypot(c.pos.x - rs.center.x, c.pos.z - rs.center.z) > safe) continue;
       if (loot.isOpen(c) || !loot.ready(c)) continue;
       if ([...bots.values()].some((o) => o !== b && o.alive && o.chest === c)) continue;
       const d = Math.hypot(c.pos.x - b.pos.x, c.pos.z - b.pos.z);
@@ -241,6 +244,12 @@ export function createBots(ctx) {
       if (b.target && b.gun && b.onGround && Math.random() < dt * 0.7 * b.skill) { b.vy = JUMP; b.onGround = false; }
     }
 
+    // не слипаться в одну точку: соседи ближе 1.6 м расталкивают друг друга
+    if (!b.gliding) for (const o of bots.values()) {
+      if (o === b || !o.alive || o.gliding || o.riding) continue;
+      const sx = b.pos.x - o.pos.x, sz = b.pos.z - o.pos.z, sd = Math.hypot(sx, sz);
+      if (sd < 1.6) { const k = (1.6 - sd) / 1.6, nx0 = sd > 0.01 ? sx / sd : Math.cos(b.id), nz0 = sd > 0.01 ? sz / sd : Math.sin(b.id); ux += nx0 * k * 1.5; uz += nz0 * k * 1.5; }
+    }
     // плавный разгон и поворот (а не рывками)
     const acc = Math.min(1, dt * (b.gliding ? 2 : 9));
     b.vel.x += (ux * speed - b.vel.x) * acc;
@@ -265,8 +274,10 @@ export function createBots(ctx) {
     let ny = b.pos.y + b.vy * dt;
     const g = st.ground(b.pos.x, b.pos.z, Math.max(b.pos.y, ny));
     if (ny <= g || (b.onGround && b.vy <= 0 && b.pos.y - g < 0.6)) { ny = g; b.vy = 0; b.onGround = true; if (b.gliding) b.drop = null; b.gliding = false; b.chute = false; } else b.onGround = false;
+    // в воде — плывёт у поверхности (не уходит на дно, где его не достать) и ищет сушу
+    if (ny < WATER_Y - 1.1) { ny = WATER_Y - 1.1; b.vy = Math.max(b.vy, 0); b.onGround = true; }
     b.pos.y = ny;
-    if (b.pos.y < 0) b.way = null;                     // в воде — искать сушу
+    if (b.pos.y < WATER_Y - 0.5 && (!b.way || ctx.world().height(b.way.x, b.way.z) < 2.5)) b.way = zonePoint();
     // застрял — новая точка
     b.stuckT += dt;
     if (b.stuckT > 2.5) { if (b.pos.distanceTo(b.lastPos) < 1.2) { b.way = zonePoint(); b.vel.set(0, 0, 0); } b.lastPos.copy(b.pos); b.stuckT = 0; }
@@ -290,12 +301,12 @@ export function createBots(ctx) {
   // Цели бота: живые игроки и другие живые боты (кроме себя) — ближайшая видимая.
   // Боты меж собой — как люди, которые сначала лутаются: без оружия друг друга не трогают,
   // с оружием стреляют по ботам только на ближней дистанции (по игрокам — на всю дальность).
+  // Каждый бот играет сам за себя: бьёт и людей, и других ботов (с оружием — издалека, с киркой — вблизи).
   function targetsFor(b) {
     const list = humans();
-    if (!b.gun) return list;
     for (const o of bots.values()) {
       if (o === b || !o.alive || o.gliding || o.riding) continue;
-      if (o.pos.distanceTo(b.pos) > sightOf(b.skill) * 0.55) continue;
+      if (o.pos.distanceTo(b.pos) > (b.gun ? sightOf(b.skill) * 0.8 : 9)) continue;
       list.push({ id: key(o.id), name: o.name, pos: o.pos, bot: o });
     }
     return list;
@@ -412,7 +423,7 @@ export function createBots(ctx) {
 
   // Позиции ботов — себе в others и всем по сети.
   function poseOf(b) {
-    const d = { x: +b.pos.x.toFixed(2), y: +b.pos.y.toFixed(2), z: +b.pos.z.toFixed(2), r: +b.yaw.toFixed(2), n: b.name, a: b.alive, rr: round, k: b.skin, g: b.gun || 'pickaxe', q: b.rarity };
+    const d = { x: +b.pos.x.toFixed(2), y: +b.pos.y.toFixed(2), z: +b.pos.z.toFixed(2), r: +b.yaw.toFixed(2), n: b.name, a: b.alive, rr: round, ep: Math.round(ctx.royale().epoch / 1000), k: b.skin, g: b.gun || 'pickaxe', q: b.rarity };
     if (b.riding) d.rd = 1;
     if (b.gliding) { d.st = b.chute ? 'g' : 'f'; if (b.chute) d.pc = 1; } else if (!b.onGround) d.st = 'a';
     return d;

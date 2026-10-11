@@ -1049,7 +1049,19 @@ function avatar(name, tier = -1, skinId = 'default') {
   return g;
 }
 
+// В комнате по коду могут оказаться два матча (кто-то ещё доигрывает старый, а ты начал новый): позы с чужой
+// точкой отсчёта (ep) не показываем и не считаем живыми, такие игроки не годятся в хосты ботов.
+const sepMatches = () => !isRankedWorld(worldId) && !isDuelWorld(worldId) && !mmMatch;
+const myEp = () => Math.round(royale.epoch / 1000);
+const foreign = new Set();
 function upsertOther(peerId, d) {
+  if (sepMatches() && d.ep !== undefined && d.ep !== myEp()) {
+    foreign.add(peerId);
+    const old = others.get(peerId);
+    if (old && old.target?.ep !== myEp()) { scene.remove(old.group); others.delete(peerId); }
+    return;
+  }
+  foreign.delete(peerId);
   let o = others.get(peerId);
   const tier = d.h ?? -1, skin = d.k || 'default';
   if (!o || o.name !== d.n || o.tier !== tier || o.skin !== skin) {
@@ -1379,7 +1391,7 @@ function sendHit(id, d) {
 // боты бы замерли у всех); все свернули — просто наименьший id. Оффлайн — ты.
 function hostId() {
   if (!net) return 'me';
-  const all = [net.selfId, ...peers];
+  const all = [net.selfId, ...[...peers].filter((id) => !foreign.has(id))];
   const awake = all.filter((id) => (id === net.selfId ? !document.hidden : !others.get(id)?.target?.hd));
   return (awake.length ? awake : all).sort()[0];
 }
@@ -1670,7 +1682,7 @@ let startNet = function () {
     net = (mmMatch ? mmMatch.connect : (h) => connect(worldId, h))({
       join(peerId) {
         peers.add(peerId);
-        if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && !mmMatch) net.match({ e: royale.epoch }, peerId);
+        if (sepMatches()) net.match({ e: royale.epoch, ...(royale.ended ? { x: 1 } : {}) }, peerId);
         net.sync({ s: structures.syncList(), rr: royale.round }, peerId);
         net.pose(poseData(), peerId);
         loot.syncTo(peerId);
@@ -1678,6 +1690,7 @@ let startNet = function () {
       },
       leave(peerId) {
         peers.delete(peerId);
+        foreign.delete(peerId);
         const o = others.get(peerId);
         if (o) { scene.remove(o.group); others.delete(peerId); }
         updateCount();
@@ -1698,7 +1711,7 @@ let startNet = function () {
       bothit(peerId, d) { bots.onBotHit(peerId, d); },
       abil(peerId, d) { abilities.onNet(peerId, d); },
       // друг начал этот матч раньше — переходим на его отсчёт (раунд заново)
-      match(peerId, d) { if (!isRankedWorld(worldId) && !isDuelWorld(worldId) && !mmMatch && royale.adoptEpoch(d.e)) toast('Synced with the match in progress'); },
+      match(peerId, d) { if (sepMatches() && !d.x && royale.adoptEpoch(d.e)) { foreign.clear(); toast('Synced with the match in progress'); } },
       duel(peerId, d) { if (d && d.go > 0 && royale.duel === 'wait') duelCountdown(Math.min(d.go, Date.now() + 6000)); },
       chest(peerId, d) { loot.onChest(peerId, d); },
       loot(peerId, d) { loot.onLoot(peerId, d); },
@@ -1715,7 +1728,7 @@ let startNet = function () {
 
 function poseData() {
   const yaw = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y;
-  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: royale.duel ? `${myTicker()} ${nick}`.slice(0, 28) : nick, a: royale.alive, rr: royale.round };
+  const d = { x: +feet.x.toFixed(2), y: +feet.y.toFixed(2), z: +feet.z.toFixed(2), r: +yaw.toFixed(2), n: royale.duel ? `${myTicker()} ${nick}`.slice(0, 28) : nick, a: royale.alive, rr: royale.round, ep: myEp() };
   const w = holding();
   if (w) { d.g = w.type; d.q = w.rarity; const mk = gunsmith.key(w.type); if (mk) d.wm = mk; const fin = wskins.finishOf(w.type); if (fin) d.ws = fin; }
   if (season.tier >= 0) d.h = season.tier;
