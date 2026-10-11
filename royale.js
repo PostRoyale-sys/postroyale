@@ -267,7 +267,8 @@ export function createRoyale(ctx) {
         // через 2.5 с — конец раунда, победитель — последний выживший
         const n = aliveOthers();
         specMax = Math.max(specMax, n);
-        if (!duel && t > dropMs && ctx.inMatch?.() && specMax >= 2 && n <= 1) {
+        // живых было ≥2 — пока ты играл (maxAliveSeen, считая тебя) или уже как зритель (specMax)
+        if (!duel && t > dropMs && ctx.inMatch?.() && Math.max(specMax, maxAliveSeen) >= 2 && n <= 1) {
           lastFew += dt;
           if (lastFew > 2.5) {
             ended = true;
