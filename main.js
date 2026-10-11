@@ -608,10 +608,10 @@ function applyCine(dt, t) {
   if (cine.mode === 'win') {
     const k = now - cine.t0;
     const ang = (cine.yaw ??= new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y + Math.PI) + k * 0.45;
-    const r = Math.max(3.6, 7 - k * 0.8), h = 1.2 + Math.max(0, 2.6 - k * 0.5);
+    const r = Math.max(3.2, 5.2 - k * 0.6), h = 0.8 + Math.max(0, 1.6 - k * 0.4);
     look = feet.clone().add(new THREE.Vector3(0, 1.1, 0));
     pos = look.clone().add(new THREE.Vector3(Math.sin(ang) * r, h, Math.cos(ang) * r));
-    if (k < 5 && now > cine.burst) { cine.burst = now + 0.7; fx.confetti(feet, 40); }
+    if (k < 6 && now > cine.burst) { cine.burst = now + 0.5; fx.confetti(feet, 70); }
   } else {
     const o = others.get(cine.id);
     if (!o || (cine.mode === 'spec' && !(o.target?.a && o.target.rr === royale.round))) {
