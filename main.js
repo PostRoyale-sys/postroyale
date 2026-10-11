@@ -37,6 +37,7 @@ import { buildHeli, buildParachute, buildCabin, CHUTES, chuteById } from './heli
 import { createFx } from './fx.js';
 import { AOPass, SunRaysPass } from './post.js';
 import { createAudio } from './audio.js';
+import { createEvents, PUMP_MULT } from './events.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -1103,10 +1104,26 @@ const ctx = {
   knock: (v) => { knockVel.add(v); vel.y = Math.max(vel.y, v.y + 4); onGround = false; },
   dropItems: (pos, items) => loot.drop(pos, items),
   recoil: (type) => { vm.kick(type); punch(type); },
+  // события раунда: аирдропы (loot.js) и Pump-зона (events.js)
+  dmgMult: () => (events.inPump(feet) ? PUMP_MULT : 1),
+  dropSmoke: (p) => fx.dust(p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 1, (Math.random() - 0.5) * 0.8)), 0xb08cff, 2.2),
+  onDrop: (what, c) => {
+    if (!playing || royale.ended) return;
+    if (what === 'incoming') { banner('📦 SUPPLY DROP', 'Epic+ loot is falling — follow the purple beam', 3500); audio.play('dropIncoming'); }
+    else if (what === 'landed') { audio.play('dropLand', c.pos); shakeIfNear(c.pos, 40, 0.25); for (let i = 0; i < 6; i++) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.3, (Math.random() - 0.5) * 3)), 0xcbb894, 2.5); }
+    else if (what === 'open') audio.play('dropOpen', c.pos);
+  },
+  onPump: (what) => {
+    if (!playing || royale.ended || !royale.alive) return;
+    if (what === 'start') { banner('📈 PUMP ZONE', `Green circle on the map — +${Math.round((PUMP_MULT - 1) * 100)}% damage inside for 35s`, 3500); audio.play('pump'); }
+    else toast('📉 Pump zone is over');
+  },
 };
+function shakeIfNear(p, r, a) { const d = p.distanceTo(feet); if (d < r) shakeAmt = Math.max(shakeAmt, a * (1 - d / r)); }
 const combat = createCombat(ctx);
 const loot = createLoot(ctx);
 const royale = createRoyale(ctx);
+const events = createEvents(ctx);
 const season = createSeason(ctx);
 const ranked = createRanked({ toast: (t) => pointsToast(t), onChange: () => renderRanked() });
 let rankedMatch = false;           // этот матч — рейтинговый (остров дня и есть допуск): начисляем RP
@@ -1123,6 +1140,7 @@ const minimap = createMinimap({
   yaw: () => new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y,
   flight: () => flight,
   heliPos: () => (flight ? heliPos(new THREE.Vector3()) : null),
+  mapMarks: () => (playing ? [...events.marks(), ...loot.drops().filter((d) => d.state === 1 || d.state === 2).map((d) => ({ kind: 'drop', ...d }))] : []),
 });
 minimap.setWorld(world);
 // руки от первого лица — в цветах скина (рукав — тело скина, кисти — его кожа)
@@ -1247,6 +1265,8 @@ function onRoundStart(r, alive) {
   abilities.reset();
   if (alive) { loadout.equip(abilities.slots); renderAbilities(); }
   loot.resetRound(r, royale.roundStart);
+  events.resetRound(r);
+  stormWarn = -1; aliveMark = 99;
   fx.reset();
   combat.resetAll();
   for (const m of MATS) mats[m] = 0;
@@ -1373,11 +1393,31 @@ function onRoundEnd({ me, winners, early }) {
 }
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, '0')}`;
-let lastStorm = '';
+let lastStorm = '', stormWarn = -1, aliveMark = 99;
 function stormHud({ t, storm, alive, outside, spectating, drop, duel }) {
   const left = storm.left;
   if (duel === 'wait') { const txt = `🥊 ${myTicker()} vs ${oppTicker()} · waiting for opponent…`; if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; } return; }
-  const what = storm.idx === 0 ? 'Storm in' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
+  const what = storm.idx === 0 ? 'Storm in' : storm.moving && storm.final ? 'Final circle moving · round ends in' : storm.moving ? 'Storm closing · zone moving' : storm.final ? 'Final circle · round ends in' : storm.shrinking ? 'Storm closing' : 'Storm shrinks in';
+  // предупреждение: за 10 с до сжатия — сирена и отсчёт по центру, последние 3 — с писком
+  if (playing && alive && !duel && !spectating && storm.warn <= 10) {
+    const n = Math.ceil(storm.warn);
+    if (n !== stormWarn) {
+      stormWarn = n;
+      $('stormwarn').innerHTML = `<b>⚠ Storm shrinking in ${n}</b>`;
+      $('stormwarn').className = 'on';
+      if (n === 10) audio.play('siren');
+      else if (n <= 3) audio.play('beep');
+    }
+  } else if (stormWarn >= 0 && stormWarn <= 1) {
+    stormWarn = -1;
+    $('stormwarn').innerHTML = '<b>🌪 The storm is closing!</b>';
+    $('stormwarn').className = 'on go';
+    setTimeout(() => { $('stormwarn').className = ''; }, 2200);
+  } else if (stormWarn > 1 && storm.warn > 10) { stormWarn = -1; $('stormwarn').className = ''; }
+  // вехи: осталось 10 / 5 / 3 (если ты ещё жив)
+  if (playing && !spectating && !duel && !drop && t / 1000 > 40) {
+    for (const m of [10, 5, 3]) if (alive <= m && aliveMark > m) { aliveMark = m; if (alive > 1) { $('streak').replaceChildren(Object.assign(document.createElement('b'), { textContent: `Top ${m}` }), Object.assign(document.createElement('span'), { textContent: `${alive} players left` })); audio.play('beepGo'); } }
+  }
   const txt = `${spectating ? '👁 Spectating · ' : ''}👥 ${alive} alive · 🌪 ${what} ${mmss(left)}`;
   if (txt !== lastStorm) { $('storm').textContent = txt; lastStorm = txt; }
   $('storm').classList.toggle('danger', outside);
@@ -2523,6 +2563,13 @@ function othersSound(o, dt) {
   o.rlWas = !!o.target.rl; o.hlWas = !!o.target.hl;
 }
 // Окружение: ветер в падении, купол, вертолёт, шторм рядом/снаружи; музыка — в лобби.
+// Лейт: чем меньше живых (с 10) и ближе финал — тем громче пульсирующая «напряжёнка».
+function tensionLevel() {
+  if (!royale.alive || royale.ended || royale.duel || royale.round < 0) return 0;
+  const n = royale.aliveCount(), s = royale.stormNow();
+  if (n > 10 && !s.final) return 0;
+  return Math.min(1, 0.25 + Math.max(0, 10 - n) / 10 * 0.55 + (s.final ? 0.2 : 0));
+}
 function envSound() {
   if (!playing) return { lobby: world && !params.has('shot') && !params.has('rec') };
   let storm = 0;
@@ -2537,6 +2584,7 @@ function envSound() {
     fall: air && !chute, chute: air && chute, speed: Math.abs(vel.y), riding,
     heli: riding ? 1 : Math.max(0, 1 - hd / 260) * 0.8,
     storm, hp: royale.alive ? combat.hp : 100,
+    tension: tensionLevel(),
   };
 }
 
@@ -2581,6 +2629,7 @@ const mainLoop = (now) => {
     bots.update(dt);
     abilities.update(dt);
     royale.update(dt);
+    if (royale.round >= 0) events.update(dt, (Date.now() - royale.roundStart) / 1000);
     minimap.update(dt, playing);
     fx.update(dt);
     runDust(dt);
@@ -2744,7 +2793,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, audio, killfeed, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, killfeed, events, setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),

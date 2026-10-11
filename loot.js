@@ -4,7 +4,7 @@
 // Новый раунд (royale.js) — всё заново: сундуки закрыты, предметы с земли убраны, пакеты прошлого раунда игнорируются.
 
 import * as THREE from 'three';
-import { MAP, rng, seedOf } from './map.js';
+import { MAP, WATER_Y, rng, seedOf } from './map.js';
 import { WEAPONS, AMMO, RARITY, weaponLabel } from './combat.js';
 
 const CHESTS = 90;                     // не больше стольких сундуков за раунд
@@ -12,6 +12,10 @@ const CHEST_CHANCE = 0.95;             // доля мест, где в раун�
 const OPEN_RANGE = 4;
 const PICK_RANGE = 2.4;
 const MAGNET = 6, MAGNET_SPEED = 14;     // то, что игрок может взять, в радиусе MAGNET само летит к нему
+// Аирдропы: ящик на парашюте приземляется в зоне в эти секунды раунда (место — от сида и раунда, у всех одно).
+// За WARN с до начала падения — луч-маяк в небо и объявление; падает FALL с с высоты DROP_H.
+const DROPS = [72, 132, 188];
+const FALL = 14, WARN = 10, DROP_H = 95;
 
 // Таблица выпадения.
 const RARITY_WEIGHTS = [40, 28, 18, 10, 4];       // обычное → легендарное
@@ -48,6 +52,15 @@ export const itemLabel = (it) => {
   if (it.k === 'armor') return it.w === 'heavy' ? 'Heavy armor +100' : 'Light armor +50';
   return 'Medkit +40';
 };
+
+// Аирдроп: эпическое+ оружие и полный «набор выживания».
+function rollDrop() {
+  const items = rollChest(2);
+  items.push({ k: 'armor', w: 'heavy', a: 100 }, { k: 'med', w: 'med', a: 40 }, { k: 'med', w: 'med', a: 40 });
+  const t = weighted({ light: 3, medium: 3, shells: 2, heavy: 1 });
+  items.push({ k: 'ammo', w: t, a: AMMO[t].pack * 2 });
+  return items;
+}
 
 // ---------- Модели ----------
 
@@ -89,6 +102,57 @@ function chestModel() {
   g.userData.glow = glow;
   g.userData.hinge = hinge;
   g.userData.burst = burst;
+  return g;
+}
+
+// Ящик аирдропа: фиолетовый с золотыми рёбрами и эмблемой, купол парашюта со стропами, луч-маяк в небо.
+// userData — как у сундука (hinge/burst/glow), плюс body (едет вниз), chute и beam.
+function dropModel() {
+  const g = new THREE.Group();
+  const body = new THREE.Group();
+  const purple = new THREE.MeshLambertMaterial({ color: 0x7a3cff, emissive: 0x24104a });
+  const gold = new THREE.MeshLambertMaterial({ color: 0xffc83d, emissive: 0x5a3a00 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 1.3), purple);
+  base.position.y = 0.4;
+  body.add(base);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {        // вертикальные рёбра
+    const e = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.12, 0.12), gold);
+    e.position.set(sx * 0.62, 0.56, sz * 0.62);
+    body.add(e);
+  }
+  const band = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.14, 1.36), gold);
+  band.position.y = 0.42;
+  body.add(band);
+  const hinge = new THREE.Group();
+  hinge.position.set(0, 0.8, 0.66);
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(1.36, 0.3, 1.36), purple);
+  lid.position.set(0, 0.15, -0.66);
+  const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.22, 0), gold);
+  star.position.set(0, 0.36, -0.66);
+  hinge.add(lid, star);
+  body.add(hinge);
+  // купол: полусфера в полоску + стропы к углам ящика
+  const chute = new THREE.Group();
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x5cc4ff, emissive: 0x0a2a44, side: THREE.DoubleSide }));
+  dome.scale.y = 0.6;
+  dome.position.y = 4.2;
+  const lines = [];
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) lines.push(new THREE.Vector3(sx * 0.6, 1.1, sz * 0.6), new THREE.Vector3(sx * 1.9, 4.3, sz * 1.9));
+  chute.add(dome, new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(lines), new THREE.LineBasicMaterial({ color: 0x23262d })));
+  body.add(chute);
+  const glow = glowSprite('rgba(170,110,255,0.6)', 3.2);
+  glow.position.y = 0.6;
+  body.add(glow);
+  const burst = glowSprite('rgba(220,190,255,0.95)', 1);
+  burst.position.y = 0.9;
+  burst.visible = false;
+  body.add(burst);
+  // маяк: высокий светящийся столб над точкой посадки
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 160, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xa070ff, transparent: true, opacity: 0.28, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  beam.position.y = 80;
+  g.add(body, beam);
+  g.userData = { glow, hinge, burst, body, chute, beam };
   return g;
 }
 
@@ -140,6 +204,26 @@ export function createLoot(ctx) {
     for (const c of chests) scene.remove(c.group);
     chests.length = 0;
     const w = ctx.world();
+    const addDrops = () => {
+      if (ctx.isDuel?.()) return;
+      const rs = ctx.royale(), st = ctx.structures();
+      const rand = rng(seedOf(w.id) ^ 0xd409 ^ Math.imul(round + 3, 2654435761));
+      for (const T of DROPS) {
+        const z0 = rs.zoneAt(T);
+        let x = z0.x, z = z0.z;
+        for (let i = 0; i < 60; i++) {
+          const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * z0.r * 0.75;
+          const px = z0.x + Math.cos(a) * d, pz = z0.z + Math.sin(a) * d;
+          if (px > 6 && pz > 6 && px < MAP - 6 && pz < MAP - 6 && w.surfaceY(Math.floor(px), Math.floor(pz)) > WATER_Y + 1.5) { x = px; z = pz; break; }
+        }
+        const pos = new THREE.Vector3(x, st.ground(x, z, 999), z);
+        const group = dropModel();
+        group.position.copy(pos);
+        group.visible = false;
+        scene.add(group);
+        chests.push({ i: chests.length, pos, group, openedAt: 0, drop: { T, state: 0 } });
+      }
+    };
     const rand = rng(seedOf(w.id) ^ 0x51ed ^ Math.imul(round + 1, 2246822519));
     for (const s of w.chestSpots) {
       if (rand() > CHEST_CHANCE || chests.length >= CHESTS) continue;
@@ -150,7 +234,11 @@ export function createLoot(ctx) {
       scene.add(group);
       chests.push({ i: chests.length, pos, group, openedAt: 0 });
     }
+    addDrops();
   }
+  // Секунда раунда сейчас; аирдроп уже на земле (можно открыть).
+  const sec = () => (Date.now() - roundStart) / 1000;
+  const ready = (c) => !c.drop || sec() >= c.drop.T;
 
   const isOpen = (c) => c.openedAt >= roundStart && c.openedAt > 0;
 
@@ -213,7 +301,7 @@ export function createLoot(ctx) {
     chestNear(eye, dir) {
       let best = null, bd = OPEN_RANGE;
       for (const c of chests) {
-        if (isOpen(c)) continue;
+        if (isOpen(c) || !ready(c)) continue;
         const to = c.pos.clone().add(new THREE.Vector3(0, 0.4, 0)).sub(eye);
         const d = to.length();
         if (d > bd) continue;
@@ -224,11 +312,12 @@ export function createLoot(ctx) {
     },
 
     open(c, bonus = 0) {
-      if (!c || isOpen(c)) return false;
+      if (!c || isOpen(c) || !ready(c)) return false;
       const t = Date.now();
       setOpened(c.i, t);
       ctx.net()?.chest({ list: [[c.i, t]], rr: round });
-      drop(c.pos, rollChest(bonus));
+      drop(c.pos, c.drop ? rollDrop() : rollChest(bonus));
+      if (c.drop) ctx.onDrop?.('open', c);
       return true;
     },
 
@@ -258,7 +347,9 @@ export function createLoot(ctx) {
     },
 
     // Для ботов: открыт ли сундук; забрать предмет с земли (у всех исчезает).
-    isOpen,
+    isOpen, ready,
+    // Аирдропы раунда (для миникарты): где и в каком состоянии — 0 ещё нет, 1 маяк/падает, 2 на земле, 3 открыт.
+    drops: () => chests.filter((c) => c.drop).map((c) => ({ x: c.pos.x, z: c.pos.z, state: isOpen(c) ? 3 : c.drop.state })),
     takeItem(id) {
       const it = items.get(id);
       if (!it) return null;
@@ -290,9 +381,29 @@ export function createLoot(ctx) {
     onTake(peerId, d) { remove(d.id); },
 
     update(dt, now) {
+      const s = sec();
       for (const c of chests) {
         const open = isOpen(c);
         const u = c.group.userData;
+        if (c.drop && !open) {
+          // маяк за WARN с до падения → падение на парашюте → на земле (купол сдувается)
+          const T = c.drop.T, st = s < T - FALL - WARN ? 0 : s < T ? 1 : 2;
+          if (st !== c.drop.state) { const was = c.drop.state; c.drop.state = st; if (st === 1 || (st === 2 && was === 1)) ctx.onDrop?.(st === 1 ? 'incoming' : 'landed', c); else if (st === 2) ctx.onDrop?.('landed-quiet', c); }
+          c.group.visible = st > 0;
+          if (!st) continue;
+          const left = Math.max(0, T - s), k = Math.min(1, left / FALL);
+          u.body.position.y = k * DROP_H;
+          u.body.position.x = Math.sin(s * 0.9 + c.i) * 0.6 * k;
+          u.body.rotation.z = Math.sin(s * 1.3 + c.i) * 0.08 * k;
+          u.body.rotation.y += dt * 0.25 * k;
+          u.chute.visible = left > 0 || s - T < 1.2;
+          u.chute.scale.setScalar(left > 0 ? 1 : Math.max(0.01, 1 - (s - T) / 1.2));
+          u.beam.material.opacity = (st === 2 ? 0.2 : 0.3) + Math.sin(now / 250) * 0.06;
+          u.glow.material.opacity = 0.6 + Math.sin(now / 300 + c.i) * 0.3;
+          if (st === 2 && Math.random() < dt * 3) ctx.dropSmoke?.(c.pos);
+          continue;
+        }
+        if (c.drop && open && !c.anim) { c.group.visible = false; continue; }
         if (open && c.anim) {
           const k = (performance.now() - c.anim) / 1000 / OPEN_ANIM;
           if (k >= 1) { c.anim = 0; c.group.visible = false; u.burst.visible = false; continue; }

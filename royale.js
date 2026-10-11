@@ -16,6 +16,9 @@ export const ROUND_MS = 4 * 60e3;
 export const DROP_MS = 30e3;
 export const FINAL_R = 8;
 const LATE_CUTOFF = 45e3;
+// Финальный круг не стоит на месте: с MOVE_FROM по MOVE_TO секунду центр плавно уезжает на MOVE_DIST метров
+// (направление — от сида мира и номера раунда, у всех одинаковое; точка назначения — на суше).
+const MOVE_FROM = 176, MOVE_TO = 236, MOVE_DIST = 24;
 
 // Фазы шторма: [начало, конец (с), радиус от → до, урон/с снаружи]. COVER — первый круг, накрывающий
 // весь остров от центра этого раунда (считается в cover()), поэтому в начале раунда безопасна вся суша.
@@ -42,7 +45,7 @@ const PHASE_TABLE = [
 
 export function createRoyale(ctx) {
   const { scene } = ctx;
-  let round = -1, roundStart = 0, center = { x: SX / 2, z: SZ / 2 };
+  let round = -1, roundStart = 0, center = { x: SX / 2, z: SZ / 2 }, base = center, moveTo = center;
   let PHASES = PHASE_TABLE, R0 = Math.hypot(SX, SZ);
   let alive = false, maxAliveSeen = 0, won = false, place = 0, ended = false;
   let surviveAcc = 0, stormAcc = 0;
@@ -95,22 +98,37 @@ export function createRoyale(ctx) {
 
   // Первый круг: до самой дальней точки суши от центра + запас — весь остров внутри.
   function setCenter(r) {
-    center = pickCenter(r);
+    center = base = moveTo = pickCenter(r);
     const w = ctx.world();
     let far = 0;
     for (let x = 0; x <= SX; x += 8) for (let z = 0; z <= SZ; z += 8) {
       if (w.surfaceY(x, z) > WATER_Y) far = Math.max(far, Math.hypot(x - center.x, z - center.z));
     }
     R0 = far + 15;
-    if (duel) { PHASES = DUEL[duel].table; return; }
+    const rand = rng(seedOf(w.id) ^ Math.imul(r + 7, 0x2c1b3c6d));
+    for (let i = 0; i < 40; i++) {
+      const a = rand() * Math.PI * 2, x = base.x + Math.cos(a) * MOVE_DIST, z = base.z + Math.sin(a) * MOVE_DIST;
+      if (w.surfaceY(Math.floor(x), Math.floor(z)) > WATER_Y + 1) { moveTo = { x, z }; break; }
+    }
+    if (duel) { moveTo = base; PHASES = DUEL[duel].table; return; }
     PHASES = PHASE_TABLE.map((p) => p.map((v, i) => (v === COVER && (i === 2 || i === 3) ? R0 : v)));
+  }
+
+  // Центр зоны в момент s (с): до MOVE_FROM — на месте, потом плавно (smoothstep) едет к moveTo.
+  function centerAt(s) {
+    const k = Math.min(1, Math.max(0, (s - MOVE_FROM) / (MOVE_TO - MOVE_FROM))), e = k * k * (3 - 2 * k);
+    return { x: base.x + (moveTo.x - base.x) * e, z: base.z + (moveTo.z - base.z) * e };
   }
 
   function storm(t) {
     const s = t / 1000;
     const ph = PHASES.find((p) => s >= p[0] && s < p[1]) || PHASES[PHASES.length - 1];
     const k = Math.min(1, Math.max(0, (s - ph[0]) / (ph[1] - ph[0])));
-    return { r: ph[2] + (ph[3] - ph[2]) * k, dps: ph[4], shrinking: ph[2] !== ph[3], left: ph[1] - s, idx: PHASES.indexOf(ph), final: ph === PHASES[PHASES.length - 1] };
+    const idx = PHASES.indexOf(ph), next = PHASES[idx + 1];
+    // warn — до начала следующего сжатия (если сейчас круг стоит, а следующая фаза сжимает)
+    const warn = ph[2] === ph[3] && next && next[2] !== next[3] && idx > 0 ? ph[1] - s : Infinity;
+    return { r: ph[2] + (ph[3] - ph[2]) * k, dps: ph[4], shrinking: ph[2] !== ph[3], left: ph[1] - s, idx, final: ph === PHASES[PHASES.length - 1],
+      warn, moving: !duel && s > MOVE_FROM && s < MOVE_TO };
   }
 
   function aliveOthers() {
@@ -158,6 +176,13 @@ export function createRoyale(ctx) {
 
     // Шторм прямо сейчас: текущий радиус r и урон в секунду снаружи dps (для ботов).
     stormNow() { return storm(Date.now() - roundStart); },
+
+    // Зона в момент через sec секунд после начала раунда (для аирдропов и ивентов): центр и радиус после сжатия.
+    zoneAt(sec) {
+      const st = storm(sec * 1000), c = centerAt(sec);
+      return { x: c.x, z: c.z, r: Math.min(st.r, PHASES[st.idx][3]) };
+    },
+    get duelMode() { return duel; },
 
     // Радиус, внутри которого безопасно сейчас и после текущего сжатия.
     safeRadius() {
@@ -223,6 +248,7 @@ export function createRoyale(ctx) {
       }
       const t = now - roundStart;
       const s = storm(t);
+      center = duel ? base : centerAt(t / 1000);
 
       wall.position.set(center.x, 60, center.z);
       wall.scale.set(Math.max(0.01, s.r), 1, Math.max(0.01, s.r));

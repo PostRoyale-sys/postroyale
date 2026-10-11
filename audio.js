@@ -267,6 +267,26 @@ const SFX = {
     for (let i = 0; i < 25; i++) D.add(x, D.burst(0.06, { d: 0.012, type: 'bp', f: D.r(2000, 5000), q: 2, gr: 1, gd: 0.9 }), D.r(0, 5), D.r(0.05, 0.25));
     return D.loopify(x, 0.4);
   },
+  // лейт: пульсирующий бас и тиканье 120 BPM (петля 4 с) — громче, чем меньше живых
+  tension: (D) => {
+    const x = D.arr(4.3), beat = 0.5;
+    for (let k = 0; k < 9; k++) {
+      const b = D.tone(0.45, 82.4, 82.4, { a: 0.01, d: 0.16, shape: 'saw' }); D.filt(b, 'lp', 420); D.add(x, b, k * beat, k % 4 === 3 ? 0.5 : 0.75);
+      D.add(x, D.burst(0.05, { d: 0.012, type: 'hp', f: 7000 }), k * beat + beat / 2, 0.18);
+      D.add(x, D.click(5200, 0.004), k * beat + beat * 0.75, 0.08);
+    }
+    for (let k = 0; k < 2; k++) { const p = D.tone(2.1, 164.8, 164.8, { a: 0.6, d: 0.9, shape: 'tri', vib: 0.004 }); D.filt(p, 'lp', 900); D.add(x, p, k * 2, 0.16); }
+    return D.loopify(x, 0.3);
+  },
+  // дождь: ровный шум + отдельные капли
+  rain: (D) => {
+    const x = D.arr(5.3);
+    for (let i = 0; i < x.length; i++) x[i] = D.rnd();
+    D.filt(x, 'bp', 2400, 0.5); D.filt(x, 'lp', 6000);
+    D.gain(x, 0.5);
+    for (let i = 0; i < 160; i++) D.add(x, D.burst(0.02, { d: 0.004, type: 'bp', f: D.r(2500, 7000), q: 2 }), D.r(0, 5.2), D.r(0.1, 0.45));
+    return D.loopify(x, 0.4);
+  },
   chuteOpen: (D) => {
     const x = D.arr(0.9);
     D.add(x, D.burst(0.8, { a: 0.08, d: 0.12, type: 'bp', f: (t) => 300 + 1600 * Math.exp(-t * 6), q: 0.7 }), 0, 1);
@@ -374,6 +394,35 @@ const SFX = {
   },
   lose: (D) => { const x = D.arr(1.8); [[523, 0], [440, 0.22], [349, 0.44]].forEach(([f, t]) => D.add(x, D.tone(1.2, f, f, { a: 0.01, d: t === 0.44 ? 0.5 : 0.2, shape: 'tri', vib: 0.006 }), t, 0.6)); return x; },
   caseTick: (D) => D.add(D.arr(0.05), D.click(2800, 0.004), 0, 1),
+  // шторм вот-вот сожмётся: сирена — два «воя» вверх-вниз
+  siren: (D) => {
+    const x = D.arr(2.8);
+    for (const sh of ['saw', 'sq']) { const t = D.arr(2.6); let ph = 0; for (let i = 0; i < t.length; i++) { const tt = i / D.SR; const f = 520 + 380 * Math.sin(Math.PI * (tt / 1.3) - Math.PI / 2) ** 2; ph += PI2 * f / D.SR; const p = (ph / PI2) % 1; t[i] = (sh === 'saw' ? 2 * p - 1 : p < 0.5 ? 0.6 : -0.6) * D.env(tt, 0.08, 9) * Math.min(1, (2.6 - tt) / 0.3); } D.filt(t, 'lp', 2600); D.add(x, t, 0, 0.45); }
+    return D.sat(x, 1.4);
+  },
+  // аирдроп: свист падения (используется при появлении), удар о землю, открытие — фанфара
+  dropIncoming: (D) => { const x = D.arr(2.4); D.add(x, D.burst(2.3, { a: 0.8, d: 0.6, type: 'bp', f: (t) => 2600 - 900 * t, q: 3 }), 0, 0.6); D.add(x, D.tone(2.2, 1500, 700, { a: 0.6, d: 0.7, gt: 1.4 }), 0, 0.15); D.bells(x, [784, 1175], 0.12, 0.4, 0.4, 0.05); return x; },
+  dropLand: (D) => { const x = D.arr(1.3); D.add(x, D.thud(0.8, 90, 32, 0.22), 0, 1); D.add(x, D.burst(0.9, { a: 0.005, d: 0.25, type: 'lp', f: 700 }), 0, 0.8); D.add(x, D.modes(0.6, [420, 690, 1130], 0.15), 0.02, 0.4); return D.sat(x, 1.6); },
+  dropOpen: (D) => {
+    const x = D.arr(2.2);
+    D.add(x, D.thud(0.3, 140, 60, 0.08), 0, 0.7);
+    [[659, 0], [784, 0.09], [988, 0.18], [1319, 0.27]].forEach(([f, t]) => { const h = D.tone(1.2, f, f, { a: 0.006, d: 0.45, shape: 'tri' }); D.add(x, h, t, 0.4); });
+    D.bells(x, [1976, 2637, 3136, 3951], 0.06, 0.45, 0.35, 0.3);
+    D.add(x, D.burst(1.4, { a: 0.1, d: 0.4, type: 'hp', f: 6500 }), 0.25, 0.25);
+    return D.sat(x, 1.2);
+  },
+  // «Pump»-зона: синт вверх
+  pump: (D) => { const x = D.arr(1.8); for (const m of [1, 1.5, 2]) { const h = D.tone(1.6, 110 * m, 440 * m, { a: 0.02, d: 0.6, gt: 0.5, shape: 'saw' }); D.filt(h, 'lp', (t) => 600 + 4000 * t); D.add(x, h, 0, 0.3); } D.bells(x, [1760, 2217, 2637], 0.08, 0.3, 0.3, 0.9); return D.sat(x, 1.3); },
+  // скольжение: шорох по земле
+  slide: (D) => D.add(D.arr(0.8), D.burst(0.75, { a: 0.02, d: 0.35, type: 'bp', f: (t) => 1500 - 900 * t, q: 0.8, gr: 4, gd: 0.5 }), 0, 1),
+  // батут: «бойнг»
+  bounce: (D) => { const x = D.arr(0.9); D.add(x, D.tone(0.8, 140, 620, { a: 0.003, d: 0.3, gt: 0.12, vib: 0.03 }), 0, 0.7); D.add(x, D.thud(0.2, 120, 60, 0.05), 0, 0.8); D.add(x, D.burst(0.5, { a: 0.03, d: 0.15, type: 'bp', f: (t) => 600 + 3500 * t, q: 0.9 }), 0.03, 0.5); return D.sat(x, 1.3); },
+  // гром (дождь): далёкий раскат
+  thunder: (D) => { const x = D.arr(4.5); D.add(x, D.burst(0.25, { d: 0.08, type: 'lp', f: 1800 }), 0, 0.5); for (let i = 0; i < 8; i++) D.add(x, D.burst(1.6, { a: 0.15, d: 0.6, type: 'lp', f: D.r(120, 260), steep: true }), D.r(0.05, 1.6), D.r(0.6, 1.4)); return D.sat(D.gain(x, 3), 1.6); },
+  // взрыв бочки — короче и ярче, чем базука
+  barrel: (D) => { const x = D.arr(1.6); D.add(x, D.thud(0.9, 120, 30, 0.25), 0, 1); D.add(x, D.burst(1.2, { a: 0.002, d: 0.3, type: 'lp', f: 2500 }), 0, 1); D.add(x, D.modes(0.6, [380, 640, 1010], 0.12), 0, 0.4); return D.sat(x, 2.2); },
+  // дерево падает: треск и удар
+  treeFall: (D) => { const x = D.arr(2.2); for (let i = 0; i < 16; i++) D.add(x, D.burst(0.04, { d: 0.01, type: 'bp', f: D.r(500, 1600), q: 1.2 }), D.r(0, 0.6) ** 1.5, D.r(0.2, 0.6)); D.add(x, D.burst(0.6, { a: 0.3, d: 0.2, type: 'bp', f: 700, q: 0.6 }), 0.3, 0.4); D.add(x, D.thud(0.8, 80, 35, 0.2), 1.1, 1); D.add(x, D.burst(0.8, { a: 0.01, d: 0.2, type: 'lp', f: 900 }), 1.1, 0.7); return D.sat(x, 1.5); },
 
   // кирка, стройка, попадания по миру
   swing: (D) => D.add(D.arr(0.3), D.burst(0.28, { a: 0.08, d: 0.06, type: 'bp', f: (t) => 600 + 7000 * t, q: 1.1 }), 0, 1),
@@ -410,6 +459,7 @@ const GAIN = {
   wind: 0.6, canopy: 0.35, rotor: 0.7, storm: 0.6, chuteOpen: 0.7, jumpOut: 0.5,
   medOpen: 0.8, bandage: 0.6, spray: 0.44, medTape: 0.6, healDone: 0.8,
   pickAmmo: 0.52, pickWeapon: 0.59, pickArmor: 0.52, pickMed: 0.52, chest: 0.6,
+  tension: 0.5, rain: 0.5, siren: 0.42, dropIncoming: 0.5, dropLand: 0.75, dropOpen: 0.6, pump: 0.5, slide: 0.45, bounce: 0.6, thunder: 0.8, barrel: 0.85, treeFall: 0.6,
   hit: 0.5, hitShield: 0.42, hitBig: 0.6, hitHead: 0.55, streak: 0.55, coins: 0.32, kill: 0.7, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
   uiClick: 0.25, uiHover: 0.08, beep: 0.35, beepGo: 0.4, roundStart: 0.45, victory: 0.55, lose: 0.4, caseTick: 0.25,
   swing: 0.3, chop: 0.55, build_wood: 0.45, build_brick: 0.45, build_metal: 0.4, break_wood: 0.6, break_brick: 0.6, break_metal: 0.55,
@@ -419,6 +469,7 @@ const VARIANTS = { pistol: 3, smg: 4, ar: 4, shotgun: 2, sniper: 2, casing: 4, s
 // Слышимость на расстоянии: [опорная дистанция (м), предел (м), доля в ревербератор]
 const SPACE = {
   pistol: [10, 170, 0.18], smg: [10, 170, 0.18], ar: [12, 230, 0.2], shotgun: [12, 180, 0.22], sniper: [16, 360, 0.25], bazooka: [12, 200, 0.2], boom: [18, 320, 0.3],
+  dropLand: [15, 260, 0.3], barrel: [16, 300, 0.3], treeFall: [10, 150, 0.2], bounce: [6, 90, 0.1], coins: [6, 70, 0.1],
   default: [4, 45, 0.1],
 };
 const GUNS = new Set(['pistol', 'smg', 'ar', 'shotgun', 'sniper', 'bazooka', 'boom']);
@@ -764,7 +815,7 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
   }
 
   // Первый жест пользователя: браузер разрешает звук только после него.
-  const PREWARM = ['pistol', 'smg', 'ar', 'shotgun', 'sniper', 'step_grass', 'step_wood', 'hit', 'kill', 'casing', 'magOut', 'magIn', 'chargeBack', 'chargeFwd', 'pickAmmo', 'pickWeapon', 'uiClick', 'uiHover'];
+  const PREWARM = ['pistol', 'smg', 'ar', 'shotgun', 'sniper', 'step_grass', 'step_wood', 'hit', 'kill', 'casing', 'magOut', 'magIn', 'chargeBack', 'chargeFwd', 'pickAmmo', 'pickWeapon', 'uiClick', 'uiHover', 'hitHead', 'hitBig', 'hitShield', 'coins', 'streak', 'siren', 'tension', 'dropLand', 'slide', 'bounce'];
   function unlock() {
     if (!init()) return;
     if (ac.state !== 'running') ac.resume().then(() => { if (musicWant) { musicWant = false; wantMusic(true); } });
@@ -853,6 +904,8 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
       setLoop('canopy', s.chute ? 1 : 0, 20000, 0.2);
       setLoop('rotor', s.heli || 0, s.riding ? 900 : 4000, 0.3);
       setLoop('storm', s.storm || 0, 1200 + 6000 * (s.storm || 0), 0.5);
+      setLoop('tension', s.tension || 0, 900 + 5000 * (s.tension || 0), 1.2);
+      setLoop('rain', s.rain || 0, 4000, 1);
       // сердце при малом здоровье
       if (s.hp > 0 && s.hp <= 30) {
         heartT -= dt;

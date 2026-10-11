@@ -201,7 +201,7 @@ export function createCombat(ctx) {
   // ---------- Стрельба ----------
 
   function hitscan(w, spec) {
-    const mult = RARITY[w.rarity].mult;
+    const mult = RARITY[w.rarity].mult * (ctx.dmgMult?.() ?? 1);
     const o = camera.getWorldPosition(new THREE.Vector3());
     const base = camera.getWorldDirection(new THREE.Vector3());
     const spread = spreadFor(w.type);
@@ -281,7 +281,7 @@ export function createCombat(ctx) {
     const start = o.clone().addScaledVector(d, 0.9);
     const v = d.clone().multiplyScalar(ROCKET.speed);
     spawnRocket(start, v, true);
-    rockets[rockets.length - 1].mult = RARITY[w.rarity].mult;
+    rockets[rockets.length - 1].mult = RARITY[w.rarity].mult * (ctx.dmgMult?.() ?? 1);
     ctx.net()?.shot({ w: 'bazooka', o: start.toArray().map((x) => +x.toFixed(2)), v: v.toArray().map((x) => +x.toFixed(2)) });
     ctx.recoil('bazooka');
   }

@@ -116,7 +116,7 @@ export function createBots(ctx) {
     const loot = ctx.loot();
     let best = null, bd = 150;
     for (const c of loot.chests) {
-      if (loot.isOpen(c)) continue;
+      if (loot.isOpen(c) || !loot.ready(c)) continue;
       if ([...bots.values()].some((o) => o !== b && o.alive && o.chest === c)) continue;
       const d = Math.hypot(c.pos.x - b.pos.x, c.pos.z - b.pos.z);
       if (d < bd) { bd = d; best = c; }

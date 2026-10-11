@@ -541,6 +541,13 @@
   /* Последнее убийство: замедление — края кадра темнеют, лёгкая желтизна */
   #slowmo { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s; background: radial-gradient(ellipse at center, rgba(255,230,150,0) 45%, rgba(40,10,0,.55) 100%); z-index: 4; }
   #slowmo.on { opacity: 1; }
+  /* Шторм вот-вот сожмётся: крупный отсчёт под таймером */
+  #stormwarn { position: fixed; top: 58px; left: 50%; transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity .3s; z-index: 6; }
+  #stormwarn.on { opacity: 1; }
+  #stormwarn b { display: block; padding: 8px 22px; border-radius: 14px; background: linear-gradient(90deg, #6a2bd9, #b44dff); box-shadow: 0 0 0 2px rgba(255,255,255,.25), 0 8px 30px rgba(140,60,255,.6);
+    font: 400 26px/1 var(--display); letter-spacing: .03em; text-transform: uppercase; color: #fff; animation: swarn 1s ease-in-out infinite; }
+  #stormwarn.go b { background: linear-gradient(90deg, #d0102a, #ff4d6a); box-shadow: 0 0 0 2px rgba(255,255,255,.3), 0 8px 30px rgba(255,40,60,.6); animation: swarn .5s ease-in-out 4; }
+  @keyframes swarn { 50% { transform: scale(1.06); } }
   /* Материалы, стройка, локация */
   #mats { position: fixed; right: 14px; bottom: 16px; padding: 8px 12px; border-radius: 14px; background: rgba(11,13,18,.72); box-shadow: 0 0 0 1px rgba(255,255,255,.1); display: grid; gap: 3px; min-width: 150px; font-size: 13px; }
   #mats div { display: flex; align-items: center; gap: 7px; padding: 1px 4px; border-radius: 6px; }
@@ -571,7 +578,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm', 'fx', 'post', 'fpguns', 'audio'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm', 'fx', 'post', 'fpguns', 'audio', 'events'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -778,6 +785,7 @@
 <div id="elim"></div>
 <div id="streak"></div>
 <div id="slowmo"></div>
+<div id="stormwarn"></div>
 <div id="pts"></div>
 <div id="chatlog"></div>
 <div id="chatbox" hidden><input id="chatin" maxlength="140" placeholder="Say something… (Enter)" autocomplete="off"></div>
