@@ -50,12 +50,15 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 ## Features
 
 **Gameplay**
-- Procedural island per match: six towns with multi-storey houses, roads, forests, beaches, cars that explode when shot.
+- Procedural island per match: six towns with multi-storey houses, roads, forests, beaches, cars and fuel barrels that explode when shot (barrels chain-react), trees that fall when cut.
+- Rounds by day, morning, sunset, night (stars, moonlight) or in the rain with thunderstorms.
 - Helicopter drop with a jump zone, free-fall and parachute; redeploy the chute when falling from a height.
 - Weapons: pistol, SMG, assault rifle, shotgun, sniper, bazooka — five rarities, recoil, spread, reloads.
 - Building: walls, floors, ramps in three materials; everything is destructible.
-- Crouch, prone, sprint, aim down sights.
-- Storm with phases that shrink to a final circle; it damages players and bots alike.
+- Crouch, prone, sprint, slide, aim down sights; mushroom launch pads throw you 17 m up.
+- Storm with phases that shrink to a final circle — a siren warns 10 s before each shrink, and the final circle moves.
+- Three supply drops per round (epic+ loot on a parachute, follow the purple beam) and a Pump zone with +30% damage.
+- Big glowing damage numbers, headshots, kill confetti with PR coins, multi-kill streaks, slow-mo on the last kill, killcam, spectator camera and a victory orbit with confetti.
 - Minimap and full island map (**M**) with the storm, next safe zone and the chopper route.
 - Up to 20 bots that loot, build-break, strafe, flank and parachute to their own landing spots.
 - Full sound: a distinct shot per gun with distance falloff and echo, reload and bolt/pump mechanics, footsteps by surface, wind and parachute, medkits, loot, hits and kills, plus lobby music. All synthesized in the browser, no audio files.
@@ -82,11 +85,12 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 | Medkits (select, then left click to heal) | `5` |
 | Emotes | `J`, then `1`–`4` |
 | Build wall · floor · ramp · switch material | `Z` · `X` · `C` · `V` |
-| Crouch · prone | hold `Alt` · `P` |
+| Crouch · slide · prone | hold `Alt` · `Alt` while sprinting · `P` |
 | Open chest · swap weapon · reload | `E` · `G` · `R` |
 | Abilities · buy menu | `F` `Q` · `B` |
 | Map | `M` |
 | Jump out of the chopper / open parachute | `Space` |
+| Spectate: next · previous · free camera | Left click · Right click · `V` |
 | Menu | `Esc` |
 
 ## Tech
