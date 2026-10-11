@@ -389,14 +389,14 @@ SFX.step_rock = SFX.step_brick;
 
 // Громкость и вариантов на звук (остальные: 1.0 и 1 вариант).
 const GAIN = {
-  pistol: 0.75, smg: 0.62, ar: 0.8, shotgun: 0.95, sniper: 1.0, bazooka: 0.8, boom: 1.0, whiz: 0.5, dry: 0.35,
-  magRelease: 0.3, magOut: 0.4, magIn: 0.5, chargeBack: 0.42, chargeFwd: 0.5, slideBack: 0.42, slideFwd: 0.5, boltUp: 0.4, boltBack: 0.42, boltFwd: 0.5, boltDown: 0.45,
-  shellIn: 0.42, pumpBack: 0.55, pumpFwd: 0.6, rocketSlide: 0.4, rocketLock: 0.5, casing: 0.14, shellDrop: 0.2,
-  equip: 0.35, equipPick: 0.35, equipMed: 0.35, adsIn: 0.22, adsOut: 0.16,
-  step_grass: 0.22, step_dirt: 0.24, step_sand: 0.2, step_wood: 0.3, step_brick: 0.26, step_rock: 0.26, step_metal: 0.22, step_water: 0.3, gear: 0.1, jump: 0.2, land: 0.45,
+  pistol: 0.6, smg: 0.5, ar: 0.64, shotgun: 0.76, sniper: 0.8, bazooka: 0.64, boom: 0.8, whiz: 0.5, dry: 0.63,
+  magRelease: 0.54, magOut: 0.72, magIn: 0.9, chargeBack: 0.76, chargeFwd: 0.9, slideBack: 0.76, slideFwd: 0.9, boltUp: 0.72, boltBack: 0.76, boltFwd: 0.9, boltDown: 0.81,
+  shellIn: 0.76, pumpBack: 0.99, pumpFwd: 1, rocketSlide: 0.72, rocketLock: 0.9, casing: 0.25, shellDrop: 0.36,
+  equip: 0.63, equipPick: 0.63, equipMed: 0.63, adsIn: 0.4, adsOut: 0.29,
+  step_grass: 0.35, step_dirt: 0.38, step_sand: 0.32, step_wood: 0.48, step_brick: 0.42, step_rock: 0.42, step_metal: 0.35, step_water: 0.48, gear: 0.16, jump: 0.32, land: 0.45,
   wind: 0.6, canopy: 0.35, rotor: 0.7, storm: 0.6, chuteOpen: 0.7, jumpOut: 0.5,
-  medOpen: 0.4, bandage: 0.3, spray: 0.22, medTape: 0.3, healDone: 0.4,
-  pickAmmo: 0.4, pickWeapon: 0.45, pickArmor: 0.4, pickMed: 0.4, chest: 0.6,
+  medOpen: 0.8, bandage: 0.6, spray: 0.44, medTape: 0.6, healDone: 0.8,
+  pickAmmo: 0.52, pickWeapon: 0.59, pickArmor: 0.52, pickMed: 0.52, chest: 0.6,
   hit: 0.45, hitShield: 0.38, hitBig: 0.55, kill: 0.6, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
   uiClick: 0.25, uiHover: 0.08, beep: 0.35, beepGo: 0.4, roundStart: 0.45, victory: 0.55, lose: 0.4, caseTick: 0.25,
   swing: 0.3, chop: 0.55, build_wood: 0.45, build_brick: 0.45, build_metal: 0.4, break_wood: 0.6, break_brick: 0.6, break_metal: 0.55,
@@ -601,24 +601,32 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
     if (ac) return ac;
     try { ac = new AudioContext({ latencyHint: 'interactive' }); } catch (e) { return null; }
     D = makeDsp(ac.sampleRate);
-    comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 5; comp.attack.value = 0.002; comp.release.value = 0.15;
-    master = ac.createGain();
-    master.gain.value = volume();
-    comp.connect(master).connect(ac.destination);
-    sfxBus = ac.createGain(); sfxBus.connect(comp);
-    musicBus = ac.createGain(); musicBus.gain.value = 0; musicBus.connect(master);       // музыка — мимо компрессора
-    // общий ревербератор: стерео-шум с экспоненциальным спадом, верх темнее к концу
-    const n = Math.ceil(ac.sampleRate * 2.2), ir = ac.createBuffer(2, n, ac.sampleRate);
-    D.seed(991);
-    for (let c = 0; c < 2; c++) {
-      const d = ir.getChannelData(c);
-      let lp = 0;
-      for (let i = 0; i < n; i++) { const t = i / ac.sampleRate, k = Math.min(0.95, 0.2 + t * 0.5); lp = lp * k + D.rnd() * (1 - k); d[i] = lp * Math.exp(-t * 2.8) * 2.5 * (t < 0.008 ? t / 0.008 : 1); }
-    }
-    const conv = ac.createConvolver(); conv.buffer = ir;
-    revSend = ac.createGain(); revSend.connect(conv).connect(comp);
+    buses(ac, volume());
     return ac;
+  }
+  // Шины: эффекты → компрессор → общая громкость; музыка → громкость; общий ревербератор.
+  let irBuf = null;
+  function buses(cx, vol) {
+    comp = cx.createDynamicsCompressor();
+    comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 5; comp.attack.value = 0.002; comp.release.value = 0.15;
+    master = cx.createGain();
+    master.gain.value = vol;
+    comp.connect(master).connect(cx.destination);
+    sfxBus = cx.createGain(); sfxBus.connect(comp);
+    musicBus = cx.createGain(); musicBus.gain.value = 0; musicBus.connect(master);       // музыка — мимо компрессора
+    // общий ревербератор: стерео-шум с экспоненциальным спадом, верх темнее к концу
+    if (!irBuf) {
+      const n = Math.ceil(cx.sampleRate * 2.2);
+      irBuf = cx.createBuffer(2, n, cx.sampleRate);
+      D.seed(991);
+      for (let c = 0; c < 2; c++) {
+        const d = irBuf.getChannelData(c);
+        let lp = 0;
+        for (let i = 0; i < n; i++) { const t = i / cx.sampleRate, k = Math.min(0.95, 0.2 + t * 0.5); lp = lp * k + D.rnd() * (1 - k); d[i] = lp * Math.exp(-t * 2.8) * 2.5 * (t < 0.008 ? t / 0.008 : 1); }
+      }
+    }
+    const conv = cx.createConvolver(); conv.buffer = irBuf;
+    revSend = cx.createGain(); revSend.connect(conv).connect(comp);
   }
 
   function buffer(name, v) {
@@ -646,7 +654,7 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
 
   // Проиграть звук. pos — точка в мире (нет — «у себя в голове»). o: vol, rate, at (задержка, с), jit (разброс высоты).
   function play(name, pos, o = {}) {
-    if (!ac || ac.state !== 'running' || voices >= MAXV) return null;
+    if (!ac || ac.state !== 'running' || (voices >= MAXV && !rec)) return null;
     const vars = VARIANTS[name] || 1;
     const b = buffer(name, (Math.random() * vars) | 0);
     if (!b) return null;
@@ -693,10 +701,11 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
     stopSeq();
     seq = list.map(([k, n]) => play(n, null, { at: k * total, jit: 0.05 })).filter(Boolean);
   }
-  function stopSeq() { for (const s of seq) try { s.stop(); } catch (e) { /* уже закончился */ } seq = []; }
+  // время — явно: stop() без аргумента = «в момент 0», а при записи ролика это обрывает звуки, ещё не начавшиеся
+  function stopSeq() { for (const s of seq) try { s.stop(ac.currentTime); } catch (e) { /* уже закончился */ } seq = []; }
 
   // ---------- Петли (ветер, купол, вертолёт, шторм) ----------
-  const loops = {};
+  let loops = {};
   function loop(name) {
     if (loops[name]) return loops[name];
     const src = ac.createBufferSource();
@@ -754,6 +763,34 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
   for (const ev of ['pointerdown', 'keydown', 'touchstart']) addEventListener(ev, unlock, { capture: true, passive: true });
 
   let heartT = 0, lastVol = -1, lastMus = -1;
+
+  // ---------- Запись звука для ролика ----------
+  // Всё, что игра проигрывает, пишется в OfflineAudioContext по виртуальным часам ролика (clock() → секунды),
+  // поэтому звук совпадает с кадрами, даже если кадры считаются медленнее реального времени.
+  // music: [[t, уровень], …] — музыка лобби под ролик.
+  let rec = null;
+  async function capture(seconds, clock, music = []) {
+    init();
+    const real = { ac, comp, master, sfxBus, musicBus, revSend, loops, voices };
+    const mb = musicBuf || (musicBuf = await renderMusic());
+    const oc = new OfflineAudioContext(2, Math.ceil(seconds * real.ac.sampleRate), real.ac.sampleRate);
+    Object.defineProperty(oc, 'currentTime', { get: () => Math.max(0, clock()) });
+    Object.defineProperty(oc, 'state', { get: () => 'running' });
+    ac = oc; loops = {}; voices = 0;
+    buses(oc, 1);
+    if (music.length) {
+      const src = oc.createBufferSource(); src.buffer = mb; src.loop = true; src.connect(musicBus); src.start(0);
+      for (const [t, v] of music) musicBus.gain.linearRampToValueAtTime(v, t);
+    }
+    rec = { real, oc };
+    return async () => {
+      seq = [];
+      const out = await oc.startRendering();
+      ({ ac, comp, master, sfxBus, musicBus, revSend, loops, voices } = real);
+      rec = null; lastVol = -1;
+      return out;
+    };
+  }
   const running = () => ac && ac.state === 'running';
 
   return {
@@ -794,9 +831,9 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
     frame(dt, s) {
       if (!ac) return;
       const vol = volume(), mus = music();
-      if (vol !== lastVol) { master.gain.setTargetAtTime(vol, ac.currentTime, 0.05); lastVol = vol; }
-      wantMusic(!!s.lobby);
-      if (musicWant && mus !== lastMus) { musicBus.gain.setTargetAtTime(mus * 0.55, ac.currentTime, 0.3); lastMus = mus; }
+      if (!rec && vol !== lastVol) { master.gain.setTargetAtTime(vol, ac.currentTime, 0.05); lastVol = vol; }
+      if (!rec) wantMusic(!!s.lobby);
+      if (!rec && musicWant && mus !== lastMus) { musicBus.gain.setTargetAtTime(mus * 0.55, ac.currentTime, 0.3); lastMus = mus; }
       if (!running()) return;
       const fall = s.fall ? THREE.MathUtils.clamp(s.speed / 30, 0.25, 1) : 0;
       setLoop('wind', s.chute ? 0.35 : fall, s.chute ? 700 : 500 + 2500 * fall, 0.25);
@@ -810,6 +847,7 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
       } else heartT = 0;
     },
     unlock,
+    capture,
     // для проверки: все имена звуков и их буферы
     names: () => Object.keys(SFX),
     buffer: (n, v = 0) => (init() ? buffer(n, v) : null),
