@@ -2876,7 +2876,8 @@ const mainLoop = (now) => {
       shakeAmt *= Math.max(0, 1 - 6 * dt);
     }
     for (const o of others.values()) {
-      o.group.visible = performance.now() - (o.seen ?? 0) < 6000;      // замолчал (ушёл без «leave») — не показываем
+      // убитых, наблюдателей, сидящих в вертолёте и замолчавших (ушёл без «leave») не показываем
+      o.group.visible = o.target.a !== false && !o.target.rd && performance.now() - (o.seen ?? 0) < 6000;
       const prev = o.group.position.clone();
       o.group.position.lerp(new THREE.Vector3(o.target.x, o.target.y + (o.target.pr ? 0.32 : 0), o.target.z), 0.25);
       o.group.rotation.y = o.target.r;
