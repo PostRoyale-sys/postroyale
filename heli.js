@@ -52,10 +52,10 @@ export function buildHeli() {
   g.add(body, glass, stripe);
 
   // эмблемы PR по бокам
-  const coin = new THREE.MeshBasicMaterial({ map: coinTex(), transparent: true });
+  const coin = new THREE.MeshBasicMaterial({ map: coinTex(), transparent: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   for (const sx of [-1, 1]) {
     const p = new THREE.Mesh(new THREE.CircleGeometry(0.85, 32), coin);
-    p.position.set(sx * 1.66, 0.1, 0.2);
+    p.position.set(sx * 1.74, 0.1, 0.2);   // борт эллипсоида здесь на x≈1.69 — эмблема снаружи, иначе корпус протыкает её центр
     p.rotation.y = sx * Math.PI / 2;
     g.add(p);
   }
