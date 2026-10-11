@@ -247,8 +247,8 @@ export function buildCharacter(skinId, fallbackColor) {
   switch (s.hat) {
     case 'cap':
       // купол до бровей (сзади ниже), козырёк над глазами
-      headParts.push(part(SPH(HR * 1.08, 22, 10, 0, Math.PI * 0.42), hc, [0, HC + 0.03, 0.01], [1, 1.05, 1.05], [0.3, 0, 0]),
-        part(CYL(0.1, 0.1, 0.02, 20, false), shade(hc, 0.85), [0, HC + 0.125, -0.2], [1, 1, 0.85], [-0.3, 0, 0]),
+      headParts.push(part(SPH(HR * 1.08, 22, 10, 0, Math.PI * 0.4), hc, [0, HC + 0.045, 0.01], [1, 1.05, 1.05], [0.15, 0, 0]),
+        part(CYL(0.095, 0.095, 0.02, 20, false), shade(hc, 0.85), [0, HC + 0.15, -0.19], [1, 1, 0.7], [-0.35, 0, 0]),
         part(SPH(0.025, 8, 6), L.accent, [0, HC + 0.25, 0.02]));
       break;
     case 'beanie':
