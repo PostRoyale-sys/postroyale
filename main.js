@@ -1775,8 +1775,7 @@ function makeHero() {
   hero.remove(hero.children.find((c) => c.isSprite));        // ник — в карточке игрока, над головой не нужен
   const pk = weaponModel('pickaxe', 0, '', wskins.finishOf('pickaxe'));
   pk.rotation.x = 1.15;                                  // кирка в правой руке, навершие вверх-вперёд
-  pk.position.set(0, -0.5, 0);
-  hero.userData.rig.a2.add(pk);
+  hero.userData.rig.grip.add(pk);
   // круглая платформа под ногами, как в лобби
   const ps = SHOP.find((x) => x.id === ranked.pad);
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.0, 0.06, 32), toon(ps ? ps.color : 0x4fb4ff, { emissive: ps ? new THREE.Color(ps.color).multiplyScalar(0.25) : 0x0b3a7a }));
