@@ -1,4 +1,4 @@
-// Вертолёт высадки в криптостиле: золотой корпус с эмблемой ₿, фиолетовые хвост и полосы, неоновые огни,
+// Вертолёт высадки в криптостиле: золотой корпус с эмблемой PR, фиолетовые хвост и полосы, неоновые огни,
 // крутящиеся винты и баннер «WAGMI 🚀» на тросе. Нос смотрит в −Z (как и всё в игре).
 
 import * as THREE from 'three';
@@ -8,9 +8,12 @@ import { toon } from './art.js';
 function label(draw, w = 256, h = 256) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  draw(c.getContext('2d'), w, h);
+  const g = c.getContext('2d');
+  draw(g, w, h);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
+  // фирменный шрифт мог ещё не загрузиться — перерисовать, когда будет готов
+  document.fonts?.load('40px "Lilita One"').then(() => { g.clearRect(0, 0, w, h); draw(g, w, h); t.needsUpdate = true; }).catch(() => {});
   return t;
 }
 
@@ -20,8 +23,9 @@ const coinTex = () => label((g, w, h) => {
   grd.addColorStop(0, '#fff2a8'); grd.addColorStop(0.6, '#ffc21a'); grd.addColorStop(1, '#c97a00');
   g.fillStyle = grd; g.beginPath(); g.arc(w / 2, h / 2, r, 0, 7); g.fill();
   g.lineWidth = 10; g.strokeStyle = '#8a4a00'; g.stroke();
-  g.fillStyle = '#7a3a00'; g.font = '900 150px Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('₿', w / 2 + 4, h / 2 + 8);
+  g.lineWidth = 4; g.strokeStyle = 'rgba(138,74,0,.55)'; g.beginPath(); g.arc(w / 2, h / 2, r - 18, 0, 7); g.stroke();   // внутренний ободок
+  g.fillStyle = '#7a3a00'; g.font = 'italic 400 118px "Lilita One", "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('PR', w / 2 + 2, h / 2 + 8);
 });
 
 const bannerTex = () => label((g, w, h) => {
@@ -47,7 +51,7 @@ export function buildHeli() {
   stripe.scale.set(1, 0.9, 1.65);
   g.add(body, glass, stripe);
 
-  // эмблемы ₿ по бокам
+  // эмблемы PR по бокам
   const coin = new THREE.MeshBasicMaterial({ map: coinTex(), transparent: true });
   for (const sx of [-1, 1]) {
     const p = new THREE.Mesh(new THREE.CircleGeometry(0.85, 32), coin);
@@ -124,7 +128,7 @@ export function buildHeli() {
   return g;
 }
 
-// Парашют в фирменных цветах: купол из золотых и фиолетовых клиньев, ₿ на макушке, стропы к плечам.
+// Парашют в фирменных цветах: купол из золотых и фиолетовых клиньев, PR на макушке, стропы к плечам.
 // Начало координат — ноги персонажа; купол висит над головой.
 // Скины парашюта (вкладка Locker, за монеты): цвета клиньев купола. Первый — бесплатный.
 export const CHUTES = [

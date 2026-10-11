@@ -5,7 +5,7 @@
 // и разобрать на материалы (structures.js).
 
 import * as THREE from 'three';
-import { toon } from './art.js';
+import { toon, terrainMaterial } from './art.js';
 
 export const MAP = 320;               // сторона острова (м)
 export const G = 4;                   // шаг сетки построек: стена G×G
@@ -154,6 +154,7 @@ export class GameMap {
     geo.translate(MAP / 2, 0, MAP / 2);
     const pos = geo.attributes.position;
     const col = new Float32Array(pos.count * 3);
+    const surf = new Float32Array(pos.count * 4);  // веса узора детали: трава, песок/снег, скала, дорога/площадь
     // «Запечённое» затенение (AO): тени во впадинах, у стволов, камней, машин и стен домов.
     // Считается один раз здесь, в игре ничего не стоит.
     const occ = new Map();                       // клетка 8 м → [x, z, радиус, сила]
@@ -198,10 +199,18 @@ export class GameMap {
       for (const p of this.pois) { const d = Math.hypot(x - p.x, z - p.z); if (d < POI_R) c.lerp(PLAZA, 1 - smooth(POI_R - 5, POI_R, d)); }
       if (h > -1) c.multiplyScalar(aoAt(x, z, h));
       col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+      // веса узоров — теми же переходами, что и цвет
+      let wS = h < 2.2 ? 1 : h < 3 ? 1 - (h - 2.2) / 0.8 : 0, wR = smooth(0.75, 1.1, sl), wD = 0;
+      wS = Math.max(wS, smooth(30, 34, h));
+      if (h > 2.2 && rd < 3) wD = 1 - smooth(1.8, 3, rd);
+      for (const p of this.pois) { const d = Math.hypot(x - p.x, z - p.z); if (d < POI_R) wD = Math.max(wD, 1 - smooth(POI_R - 5, POI_R, d)); }
+      const wG = Math.max(0, 1 - wS - wR - wD);
+      surf.set([wG, wS, wR, wD], k * 4);
     }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('surf', new THREE.BufferAttribute(surf, 4));
     geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, toon(0xffffff, { vertexColors: true }));
+    const m = new THREE.Mesh(geo, terrainMaterial());
     m.receiveShadow = true;
     return m;
   }
