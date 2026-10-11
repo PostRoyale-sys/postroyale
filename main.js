@@ -39,6 +39,7 @@ import { AOPass, SunRaysPass } from './post.js';
 import { createAudio } from './audio.js';
 import { createEvents, PUMP_MULT } from './events.js';
 import { createPads, PAD_VY, PAD_PUSH } from './pads.js';
+import { createWeather } from './weather.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -224,6 +225,7 @@ const grass = createGrass(scene);
 let playing = false;                       // false — лобби (остров на фоне), true — в матче
 const structures = createStructures({ scene });
 const pads = createPads(scene);
+const weather = createWeather(scene);
 
 // ---------- Физика игрока ----------
 
@@ -748,19 +750,25 @@ function swingPickaxe(now) {
 // Урон постройке: локально + всем. harvest — удар киркой: материалы себе.
 // Машины: от выстрелов и взрывов получают ×3 урона и, разбитые, взрываются (как ракета, чуть сильнее) —
 // урон наносит тот, кто взорвал; у остальных — только эффект (edit.cb). Киркой — обычная добыча металла.
-const isCarKey = (k) => k.startsWith('o:') && structures.objects[+k.slice(2)]?.type === 'car';
+const objType = (k) => (k.startsWith('o:') ? structures.objects[+k.slice(2)]?.type : null);
+const isCarKey = (k) => objType(k) === 'car';
+// Машина — большой взрыв; бочка — поменьше, но рвётся от всего (и от кирки) и поджигает соседние бочки.
 function carBoom(e, own) {
-  const p = new THREE.Vector3(e.x, (e.y ?? world.height(e.x, e.z)) + 0.9, e.z);
-  combat.explodeAt(p, own, 1.25);
+  const barrel = e.type === 'barrel';
+  const p = new THREE.Vector3(e.x, (e.y ?? world.height(e.x, e.z)) + (barrel ? 0.6 : 0.9), e.z);
+  if (barrel) { audio.play('barrel', p); shakeIfNear(p, 25, 0.35); }
+  // бочки рядом детонируют чуть позже — цепочка
+  setTimeout(() => combat.explodeAt(p, own, barrel ? 1.05 : 1.25), barrel && own ? 60 : 0);
   shadowDirty = true;
 }
 function damageStructure(k, dmg, harvest) {
-  const car = !harvest && isCarKey(k);
+  const type = objType(k);
+  const car = !harvest && type === 'car';
   if (car) dmg *= 3;
   const res = structures.damage(k, dmg);
   if (!res) return;
   if (res.destroyed) { shadowDirty = true; onDestroyed(res.e); }
-  const boom = car && res.destroyed;
+  const boom = (car || type === 'barrel') && res.destroyed;
   net?.edit({ k, x: dmg, rr: royale.round, ...(boom ? { cb: 1 } : {}) });
   if (boom) carBoom(res.e, true);
   if (harvest) {
@@ -773,7 +781,7 @@ function damageStructure(k, dmg, harvest) {
 }
 
 // Эффекты попаданий (fx.js): материал детали/объекта — для щепок, искр и обломков.
-const fxKind = (e) => (!e ? 'dirt' : e.kind === 'piece' ? e.m : e.type === 'rock' ? 'rock' : e.type === 'car' ? 'metal' : 'wood');
+const fxKind = (e) => (!e ? 'dirt' : e.kind === 'piece' ? e.m : e.type === 'rock' ? 'rock' : e.type === 'car' || e.type === 'barrel' ? 'metal' : 'wood');
 function chips(p, e) { fx.chips(p, fxKind(e)); }
 function entryBox(e) {
   const b = new THREE.Box3();
@@ -783,7 +791,16 @@ function entryBox(e) {
 }
 // Разрушили деталь/объект (у себя или пришло по сети): обломки и пыль, следы от пуль на ней — убрать.
 function onDestroyed(e) {
-  if (e.kind === 'piece' || e.type !== 'car') fx.debris(entryBox(e), fxKind(e), e.kind === 'piece' ? 14 : 10);
+  const tree = e.type === 'oak' || e.type === 'pine';
+  if (tree) {
+    // дерево падает от тебя (если рубил/стрелял не ты — всё равно в сторону от камеры)
+    structures.fell(e, new THREE.Vector3(e.x - feet.x, 0, e.z - feet.z));
+    audio.play('treeFall', new THREE.Vector3(e.x, e.y + 1, e.z));
+    fx.debris(new THREE.Box3(new THREE.Vector3(e.x - 0.6, e.y, e.z - 0.6), new THREE.Vector3(e.x + 0.6, e.y + 1.2, e.z + 0.6)), 'wood', 6);
+    fx.clearHoles(e.k);
+    return;
+  }
+  if (e.kind === 'piece' || (e.type !== 'car' && e.type !== 'barrel')) fx.debris(entryBox(e), fxKind(e), e.kind === 'piece' ? 14 : 10);
   fx.clearHoles(e.k);
   const k = fxKind(e);
   audio.play(k === 'wood' || k === 'metal' ? `break_${k}` : 'break_brick', entryBox(e).getCenter(new THREE.Vector3()));
@@ -1398,7 +1415,7 @@ function banner(title, sub = '', ms = 3500) {
 function roundMood(r) {
   if (isDuelWorld(worldId)) return 'game';
   const x = rng(seedOf(worldId || 'x') ^ Math.imul((r | 0) + 11, 2246822519))();
-  return x < 0.5 ? 'game' : x < 0.75 ? 'morning' : 'golden';
+  return x < 0.4 ? 'game' : x < 0.58 ? 'morning' : x < 0.74 ? 'golden' : x < 0.87 ? 'night' : 'rain';
 }
 
 function onRoundStart(r, alive) {
@@ -2054,8 +2071,25 @@ const MOODS = {
   // время суток раунда (roundMood): утро — низкое тёплое солнце с востока, закат — золотой свет и длинные тени
   morning: { top: 0x5f9cff, bottom: 0xffe4c8, sun: 0xffe2bc, sunI: 1.75, sky: 0xe6eeff, ground: 0x7a6a58, hemiI: 1.15, dir: [0.75, 0.5, -0.35], near: 130, far: 400, rim: 0xffe8cc },
   golden: { top: 0x4656d0, bottom: 0xffb47e, sun: 0xffa95e, sunI: 2.05, sky: 0xffd6b4, ground: 0x6a4a3a, hemiI: 1.0, dir: [-0.8, 0.32, 0.45], near: 120, far: 380, rim: 0xffb070 },
+  // ночь: лунный голубой свет, тёмно-синее небо — неоновые лучи лута, аирдропов и батутов видно издалека
+  night: { top: 0x070d33, bottom: 0x27346e, sun: 0x9fb2ff, sunI: 1.0, sky: 0x5b6cc0, ground: 0x1c2036, hemiI: 0.95, dir: [0.35, 0.85, -0.4], near: 80, far: 300, rim: 0x9fb4ff },
+  // дождь: серое небо, близкий туман, мягкий свет; струи и гроза — weather.js
+  rain: { top: 0x56607a, bottom: 0x99a3b3, sun: 0xd8dde6, sunI: 0.95, sky: 0xbac3d2, ground: 0x4a4f58, hemiI: 1.15, dir: [-0.3, 1, 0.25], near: 55, far: 230, rim: 0xd0d8e8 },
   lobby: { top: 0x3b2a9e, bottom: 0xffb08a, sun: 0xffc08a, sunI: 2.2, sky: 0xcdbbff, ground: 0x8a5a48, hemiI: 1.15, dir: [0.55, 0.42, -0.72], near: 180, far: 950 },
 };
+// Звёзды (ночь): точки на большой сфере вокруг камеры, едут вместе с небом.
+const stars = (() => {
+  const n = 900, p = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const u = Math.random() * 2 - 1, a = Math.random() * Math.PI * 2, r = Math.sqrt(1 - u * u);
+    p.set([Math.cos(a) * r * 700, Math.abs(u) * 700 + 40, Math.sin(a) * r * 700], i * 3);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 2.2, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.85, depthWrite: false }));
+  pts.visible = false; pts.frustumCulled = false; pts.renderOrder = -1;
+  scene.add(pts);
+  return pts;
+})();
 const rimLight = new THREE.PointLight(0xff9a5a, 40, 14, 1.6);      // тёплый контур сзади
 const fillLight = new THREE.PointLight(0x8b6bff, 18, 12, 1.6);     // фиолетовая подсветка спереди-слева
 scene.add(rimLight, fillLight);
@@ -2112,6 +2146,8 @@ function setMood(name) {
   rimUniform.color.value.set(m.rim ?? 0xfff2d8);
   rays.mat.uniforms.uTint.value.set(m.sun).lerp(new THREE.Color(1, 1, 1), 0.35);
   rimLight.visible = fillLight.visible = name === 'lobby';
+  weather.set(name === 'rain' ? 'rain' : 'clear');
+  stars.visible = name === 'night';
   if (name === 'lobby') applyColors(moodNow);
 }
 
@@ -2737,6 +2773,7 @@ function envSound() {
     heli: riding ? 1 : Math.max(0, 1 - hd / 260) * 0.8,
     storm, hp: royale.alive ? combat.hp : 100,
     tension: tensionLevel(),
+    rain: weather.kind === 'rain' ? 1 : 0,
   };
 }
 
@@ -2783,6 +2820,11 @@ const mainLoop = (now) => {
     royale.update(dt);
     if (royale.round >= 0) events.update(dt, (Date.now() - royale.roundStart) / 1000);
     pads.update(dt, t);
+    for (const p of structures.updateFalling(dt)) {               // дерево ударилось о землю: пыль, листья, тряска рядом
+      for (let i = 0; i < 5; i++) fx.dust(p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 0.3, (Math.random() - 0.5) * 4)), 0xa8c070, 2.2);
+      shakeIfNear(p, 20, 0.18);
+      shadowDirty = true;
+    }
     minimap.update(dt, playing);
     fx.update(dt);
     runDust(dt);
@@ -2861,6 +2903,13 @@ const mainLoop = (now) => {
   sun.target.position.set(Math.round(c.x), Math.round(c.y), Math.round(c.z));
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 180);
   sky.position.copy(c);
+  stars.position.copy(c);
+  // дождь и гроза: молния — белая вспышка неба и света, раскат с задержкой «как от далёкой тучи»
+  if (playing && weather.update(dt, c) === 'bolt') {
+    const f = $('lightning'); f.className = ''; void f.offsetWidth; f.className = 'on';
+    hemi.intensity *= 2.2; setTimeout(() => { hemi.intensity = MOODS.rain.hemiI; }, 160);
+    audio.play('thunder', null, { at: 0.6 + Math.random() * 1.2 });
+  }
   for (const cl of clouds.children) { cl.position.x += dt * 1.5; if (cl.position.x > MAP / 2 + 420) cl.position.x -= 840; }
   structures.lod(renderer, c);                    // дальние деревья — карточками
   if (playing) grass.update(cineOn ? camera.position : feet, t);             // в лобби камера высоко — траву не видно, не считаем

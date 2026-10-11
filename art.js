@@ -304,6 +304,21 @@ export function bushGeometry() {
   ]);
 }
 // Машина вдоль оси X: длина 4.2, ширина 2, высота ~1.8.
+// Бочка с горючим: красная, тёмные обручи, жёлто-чёрная полоса «опасно», крышка с пробкой.
+export function barrelGeometry() {
+  const body = new THREE.CylinderGeometry(0.4, 0.4, 1.1, 14);
+  const ring = new THREE.CylinderGeometry(0.425, 0.425, 0.07, 14);
+  const parts = [
+    part(body, 0xd8322a, { y: 0.55 }),
+    part(ring, 0x5a1410, { y: 0.12 }), part(ring, 0x5a1410, { y: 0.98 }),
+    part(new THREE.CylinderGeometry(0.415, 0.415, 0.2, 14), 0xffc21a, { y: 0.55 }),
+    part(new THREE.CylinderGeometry(0.36, 0.38, 0.04, 14), 0x8a1c16, { y: 1.12 }),
+    part(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 8), 0x2a2d33, { x: 0.18, y: 1.15 }),
+  ];
+  for (let i = 0; i < 4; i++) parts.push(part(new THREE.BoxGeometry(0.06, 0.2, 0.05), 0x23262d, { x: Math.cos(i * 1.57 + 0.4) * 0.41, y: 0.55, z: Math.sin(i * 1.57 + 0.4) * 0.41, ry: -(i * 1.57 + 0.4) }));
+  return merged(parts);
+}
+
 export function carGeometry(body) {
   const wheel = new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12);
   const parts = [

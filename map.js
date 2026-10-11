@@ -120,6 +120,33 @@ export class GameMap {
     const occupied = new Set();      // занятые клетки сетки (дома, машины)
     for (const p of this.pois) this.buildTown(p, rand, occupied);
     this.scatter(rand, occupied);
+    this.barrels(occupied);
+  }
+
+  // Бочки с горючим — у домов на площадях и вдоль дорог. Свой генератор случайных чисел и в конце списка
+  // объектов: остальной мир (и ключи объектов o:N) от бочек не меняются.
+  barrels(occupied) {
+    const rand = rng(this.seed ^ 0xba44e1);
+    const placed = [];
+    const free = (x, z) => !occupied.has(`${Math.floor(x / G)},${Math.floor(z / G)}`) && !placed.some((p) => Math.hypot(p.x - x, p.z - z) < 0.95)
+      && !this.objects.some((o) => o.kind !== 'barrel' && Math.hypot(o.x - x, o.z - z) < (o.kind === 'car' ? 3 : 1.6));
+    const put = (x, z) => { const o = { kind: 'barrel', x, y: this.height(x, z) - 0.02, z, s: 1, rot: rand() * Math.PI * 2 }; this.objects.push(o); placed.push(o); };
+    for (const poi of this.pois) {
+      for (let t = 0, groups = 0; t < 60 && groups < 2; t++) {
+        const a = rand() * Math.PI * 2, d = 6 + rand() * (POI_R - 10);
+        const x = poi.x + Math.cos(a) * d, z = poi.z + Math.sin(a) * d;
+        if (!free(x, z)) continue;
+        put(x, z);
+        const n = 1 + Math.floor(rand() * 2);
+        for (let k = 0; k < n; k++) { const b = rand() * Math.PI * 2, bx = x + Math.cos(b) * 0.95, bz = z + Math.sin(b) * 0.95; if (free(bx, bz)) put(bx, bz); }
+        groups++;
+      }
+    }
+    for (let t = 0, n = 0; t < 400 && n < 14; t++) {
+      const x = 10 + rand() * (MAP - 20), z = 10 + rand() * (MAP - 20), rd = this.roadDist(x, z);
+      if (rd < 3.5 || rd > 5.5 || this.height(x, z) < WATER_Y + 1.5 || this.slope(x, z) > 0.5 || this.poiAt(x, z, 4) || !free(x, z)) continue;
+      put(x, z); n++;
+    }
   }
 
   // ---------- Рельеф ----------

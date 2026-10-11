@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { G, WATER_Y, pieceKey, CAR_COLORS } from './map.js';
 import { rayBox } from './combat.js';
-import { toon, buildTexture, oakGeometry, pineGeometry, rockGeometry, bushGeometry, carGeometry, vcMaterial, swayMaterial, instancedOutline } from './art.js';
+import { toon, buildTexture, oakGeometry, pineGeometry, rockGeometry, bushGeometry, carGeometry, barrelGeometry, vcMaterial, swayMaterial, instancedOutline } from './art.js';
 
 export const MATS = ['wood', 'brick', 'metal'];
 export const MAT_INFO = {
@@ -26,6 +26,7 @@ const OBJ = {
   pine: { hp: 120, mat: 'wood', per: 10, bonus: 15 },
   rock: { hp: 220, mat: 'brick', per: 10, bonus: 20 },
   car: { hp: 300, mat: 'metal', per: 12, bonus: 20 },
+  barrel: { hp: 45, mat: 'metal', per: 4, bonus: 8 },
 };
 const PIECE_HARVEST = 5;              // материалов за удар киркой по детали
 const T = 0.3;                        // толщина стен и полов
@@ -114,6 +115,7 @@ function objectBoxes(o) {
   if (o.kind === 'oak') return { solid: [b(o.x, o.y, o.z, 0.45 * s, 3.4 * s, 0.45 * s)], soft: [b(o.x, o.y + 2.8 * s, o.z, 2.3 * s, 3.6 * s, 2.3 * s)] };
   if (o.kind === 'pine') return { solid: [b(o.x, o.y, o.z, 0.4 * s, 2.2 * s, 0.4 * s)], soft: [b(o.x, o.y + 1.9 * s, o.z, 1.9 * s, 5.8 * s, 1.9 * s)] };
   if (o.kind === 'rock') return { solid: [b(o.x, o.y, o.z, 1.0 * s, 1.15 * s, 1.0 * s)], soft: [] };
+  if (o.kind === 'barrel') return { solid: [b(o.x, o.y, o.z, 0.4, 1.15, 0.4)], soft: [] };
   const along = Math.abs(Math.sin(o.rot)) < 0.5;
   return { solid: [b(o.x, o.y, o.z, along ? 2.1 : 1.0, 1.9, along ? 1.0 : 2.1)], soft: [] };
 }
@@ -170,7 +172,7 @@ export function createStructures({ scene }) {
   }
 
   function objMesh(kind, count) {
-    const geo = kind === 'oak' ? oakGeometry() : kind === 'pine' ? pineGeometry() : kind === 'rock' ? rockGeometry() : kind === 'bush' ? bushGeometry() : carGeometry(CAR_COLORS[+kind.slice(3)]);
+    const geo = kind === 'oak' ? oakGeometry() : kind === 'pine' ? pineGeometry() : kind === 'rock' ? rockGeometry() : kind === 'bush' ? bushGeometry() : kind === 'barrel' ? barrelGeometry() : carGeometry(CAR_COLORS[+kind.slice(3)]);
     // кроны деревьев и кусты качаются на ветру (с высоты from), у остального — контур без качания
     const from = kind === 'oak' ? 2.6 : kind === 'pine' ? 1.8 : kind === 'bush' ? 0.15 : null;
     const mesh = new THREE.InstancedMesh(geo, from != null ? swayMaterial(vcMaterial(), from) : vcMaterial(), Math.max(1, count));
@@ -232,6 +234,43 @@ export function createStructures({ scene }) {
   }
   const entryOf = (k) => (k.startsWith('o:') ? objects[+k.slice(2)] : pieces.get(k));
 
+  // Срубленное дерево падает: копия его модели поворачивается вокруг основания в сторону away,
+  // ударяется о землю (точка удара — в update), лежит и уходит в землю.
+  const falling = [];
+  let fallMat = null;
+  function fell(e, away) {
+    const src = objMeshes.get(e.type);
+    if (!src) return;
+    fallMat ||= vcMaterial();
+    const m = new THREE.Mesh(src.geometry, fallMat);
+    m.castShadow = true;
+    m.rotation.y = e.rot;
+    m.scale.setScalar(e.s);
+    const pivot = new THREE.Group();
+    pivot.position.set(e.x, e.y, e.z);
+    pivot.add(m);
+    scene.add(pivot);
+    const a = away.clone().setY(0);
+    if (a.lengthSq() < 1e-4) a.set(1, 0, 0);
+    a.normalize();
+    falling.push({ pivot, axis: new THREE.Vector3(a.z, 0, -a.x), away: a, h: (e.type === 'pine' ? 6.5 : 5) * e.s, t: 0, landed: false });
+  }
+  function updateFalling(dt) {
+    const hits = [];
+    for (let i = falling.length - 1; i >= 0; i--) {
+      const f = falling[i];
+      f.t += dt;
+      const ang = Math.min(Math.PI / 2 - 0.08, 0.15 * f.t + 1.6 * f.t * f.t);       // медленно кренится, потом всё быстрее
+      const bounce = f.landed ? Math.sin(Math.min(1, (f.t - f.landT) * 5) * Math.PI) * 0.06 * Math.max(0, 1 - (f.t - f.landT) * 2) : 0;
+      f.pivot.quaternion.setFromAxisAngle(f.axis, ang - bounce);
+      if (!f.landed && ang >= Math.PI / 2 - 0.08) { f.landed = true; f.landT = f.t; hits.push(f.pivot.position.clone().addScaledVector(f.away, f.h * 0.6)); }
+      if (f.landed && f.t - f.landT > 1.8) f.pivot.position.y -= dt * 1.2;              // лежит, потом уходит в землю
+      if (f.landed && f.t - f.landT > 3.2) { scene.remove(f.pivot); falling.splice(i, 1); }
+    }
+    return hits;
+  }
+  function clearFalling() { for (const f of falling) scene.remove(f.pivot); falling.length = 0; }
+
   // Урон по детали/объекту. Возвращает { e, destroyed } или null.
   function damage(k, dmg) {
     const e = entryOf(k);
@@ -244,6 +283,7 @@ export function createStructures({ scene }) {
   // ---------- Загрузка / раунд ----------
 
   function reset() {
+    clearFalling();
     for (const e of [...pieces.values()]) { hide(e); unindex(e); }
     pieces.clear();
     for (const b of batches.values()) { b.mesh.count = 0; b.outline.count = 0; b.free.length = 0; }
@@ -545,6 +585,7 @@ export function createStructures({ scene }) {
       const o = OBJ[e.type];
       return { mat: o.mat, n: o.per + (destroyed ? o.bonus : 0) };
     },
+    fell, updateFalling,
     ground, blocked, ceiling, solidAt, raycast, blast, plan, ghost,
     syncList, applySync,
   };

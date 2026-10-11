@@ -553,6 +553,9 @@
   #spec b { display: block; font: 400 24px/1.1 var(--display); letter-spacing: .03em; color: #fff; text-transform: uppercase; }
   #spec span { display: block; margin-top: 3px; font-size: 13px; font-weight: 700; color: #c9ccd3; }
   #spec.kc { background: rgba(208,16,42,.78); }
+  #lightning { position: fixed; inset: 0; pointer-events: none; background: #eef3ff; opacity: 0; z-index: 3; }
+  #lightning.on { animation: bolt .7s ease-out; }
+  @keyframes bolt { 0% { opacity: .55; } 8% { opacity: .1; } 16% { opacity: .45; } 100% { opacity: 0; } }
   #letterbox { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
   #letterbox::before, #letterbox::after { content: ""; position: absolute; left: 0; right: 0; height: 0; background: #000; transition: height .35s ease; }
   #letterbox::before { top: 0; } #letterbox::after { bottom: 0; }
@@ -588,7 +591,7 @@
   // чтобы браузер никогда не подставил старые копии из кэша и не смешал их с новыми.
   (() => {
     const v = Date.now().toString(36);
-    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm', 'fx', 'post', 'fpguns', 'audio', 'events'];
+    const own = ['main', 'map', 'structures', 'art', 'combat', 'loot', 'royale', 'season', 'viewmodel', 'net', 'skins', 'grass', 'heli', 'water', 'bots', 'ranked', 'lobby', 'abilities', 'loadout', 'gunsmith', 'wskins', 'minimap', 'mm', 'fx', 'post', 'fpguns', 'audio', 'events', 'pads', 'weather'];
     const imports = {
       three: 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js',
       'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/',
@@ -798,6 +801,7 @@
 <div id="stormwarn"></div>
 <div id="spec" hidden></div>
 <div id="letterbox"></div>
+<div id="lightning"></div>
 <div id="pts"></div>
 <div id="chatlog"></div>
 <div id="chatbox" hidden><input id="chatin" maxlength="140" placeholder="Say something… (Enter)" autocomplete="off"></div>
