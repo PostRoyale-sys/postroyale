@@ -1666,7 +1666,7 @@ function renderSeason() {
   }
   $('season').appendChild(row);
   const note = document.createElement('p');
-  note.textContent = 'Points are for fun and the leaderboard — no cash value. Holders get cosmetics + a golden key (+1 rarity on one chest per match).';
+  note.textContent = 'Points have no cash value yet — the $PR token launch is in the works and player rewards are coming. Keep playing and stacking RP. Holders get cosmetics + a golden key (+1 rarity on one chest per match).';
   $('season').appendChild(note);
 }
 

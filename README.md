@@ -73,7 +73,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 - **Gunsmith**: optics (red dot, holo, ACOG 3x), double mags, grips, fast reloads — visible on the gun.
 - **Cases**: weapon skins from 77 finish × weapon combos, CS-style roll, inventory.
 - **Skins**: 16 character skins.
-- **Season** levels, coins and RP. RP and coins have no cash value.
+- **Season** levels, coins and RP. RP and coins have no cash value yet — the $PR token launch is in the works.
 
 ## Controls
 
@@ -128,4 +128,4 @@ Developer notes and the full changelog (in Russian) live in [`docs/DEV.md`](docs
 
 ---
 
-<p align="center"><sub>PostRoyale is an independent project and is not affiliated with any game studio. RP and coins are in-game points with no cash value. Nothing here is financial advice.</sub></p>
+<p align="center"><sub>PostRoyale is an independent project and is not affiliated with any game studio. RP and coins are in-game points with no cash value for now; the $PR token is in development. Nothing here is financial advice.</sub></p>
