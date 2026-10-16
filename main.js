@@ -40,6 +40,7 @@ import { createAudio } from './audio.js';
 import { createEvents, PUMP_MULT } from './events.js';
 import { createPads, PAD_VY, PAD_PUSH } from './pads.js';
 import { createWeather } from './weather.js';
+import { createRoadsters, CAR } from './roadster.js';
 
 const NAME = 'PostRoyale';                     // название — менять здесь (и в <title> index.html)
 const EYE = 1.62, HEIGHT = 1.8, HALF = 0.3, CROUCH_H = 1.25, CROUCH_EYE = 1.08, PRONE_H = 0.62, PRONE_EYE = 0.42;
@@ -226,6 +227,12 @@ let playing = false;                       // false — лобби (остров
 const structures = createStructures({ scene });
 const pads = createPads(scene);
 const weather = createWeather(scene);
+const roadsters = createRoadsters(scene);
+// Своя машина (roadster.js): myCar — в какой сидишь; carSt — её физика; launch — замер 0–100 км/ч.
+let myCar = null, carBanner = -1;
+const carSt = { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, flipDir: 1, hopCd: 0, spaceWas: false };
+let launch = null;
+const rammed = new Map();
 
 // ---------- Физика игрока ----------
 
@@ -484,6 +491,110 @@ function step(dt) {
   player.position.set(feet.x, feet.y + eyeH, feet.z);
 }
 
+// ---------- Roadster: сесть, ехать, выйти ----------
+
+function enterCar(c) {
+  if (myCar || !playing || !royale.alive || riding || gliding) return;
+  if (buildType) exitBuild();
+  stopEmote(); combat.cancelReload(); combat.cancelHeal(); scopeHeld = false; prone = false; crouching = false;
+  myCar = c; c.driver = 'me';
+  Object.assign(carSt, { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, hopCd: 0, spaceWas: keys.has('Space') });
+  launch = null;
+  audio.play('carStart', c.pos);
+  $('carhud').hidden = false;
+  if (!localStorage.getItem('pr:carTip')) { banner('⚡ ROADSTER', 'SHIFT launch · SPACE thrusters · SPACE+A/D kickflip · hold SPACE to hover', 4500); try { localStorage.setItem('pr:carTip', '1'); } catch (e) { /* нет */ } }
+}
+// Выйти: рядом с машиной (слева); out=false — просто бросить (смерть, новый раунд).
+function exitCar(out = true) {
+  if (!myCar) return;
+  const c = myCar;
+  myCar = null; c.driver = null; c.thrust = 0; c.boost = 0; c.spin = 0;
+  $('carhud').hidden = true;
+  if (!out) return;
+  const side = new THREE.Vector3(-Math.cos(c.yaw), 0, Math.sin(c.yaw));
+  for (const k of [2.2, -2.2, 3.5, -3.5]) {
+    const x = c.pos.x + side.x * k, z = c.pos.z + side.z * k, y = structures.ground(x, z, c.pos.y + 1.5, HALF);
+    if (!structures.blocked(x, y, z, HEIGHT, HALF)) { feet.set(x, y, z); break; }
+    feet.set(c.pos.x, c.pos.y + 1.4, c.pos.z);
+  }
+  vel.set(0, carSt.ground ? 0 : carSt.vy, 0); onGround = carSt.ground;
+  knockVel.set(-Math.sin(c.yaw), 0, -Math.cos(c.yaw)).multiplyScalar(carSt.speed * 0.3);
+  audio.play('gear');
+}
+
+function carStep(dt, locked) {
+  const c = myCar;
+  const k = (a, b) => (locked && (keys.has(a) || keys.has(b)) ? 1 : 0);
+  const space = locked && keys.has('Space');
+  const input = {
+    thr: k('KeyW', 'ArrowUp') - k('KeyS', 'ArrowDown'),
+    steer: k('KeyA', 'ArrowLeft') - k('KeyD', 'ArrowRight'),
+    boost: locked && (keys.has('ShiftLeft') || keys.has('ShiftRight')),
+    hop: space && !carSt.spaceWas, hold: space,
+  };
+  carSt.spaceWas = space;
+  const before = carSt.speed;
+  const ev = roadsters.drive(c, dt, input, carSt);
+  // 0–100 км/ч: с места до 27.8 м/с — время на экран (как на презентации)
+  if (input.thr > 0 && Math.abs(before) < 1 && carSt.ground && !launch) launch = { t: 0, boost: input.boost };
+  if (launch) {
+    launch.t += dt;
+    if (input.thr <= 0) launch = null;
+    else if (carSt.speed >= 27.78) { banner(`0–100 km/h: ${launch.t.toFixed(2)} s`, launch.boost ? '⚡ LAUNCH MODE' : 'hold SHIFT for launch mode', 2600); audio.play('boost'); shakeAmt = Math.max(shakeAmt, 0.15); launch = null; }
+  }
+  if (ev.hop) { audio.play('thrust', c.pos); for (let i = 0; i < 6; i++) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2, (Math.random() - 0.5) * 3)), 0xbff8ff, 2.2); }
+  if (ev.flip) toast('🛹 KICKFLIP');
+  if (ev.crash) { shakeAmt = Math.max(shakeAmt, Math.min(0.5, ev.crash / 60)); audio.play('carCrash', c.pos, { vol: Math.min(1, ev.crash / 30) }); fx.dust(c.pos.clone().add(new THREE.Vector3(0, 0.6, 0)), 0x9a9a9a, 1.6); }
+  if (ev.land) { shakeAmt = Math.max(shakeAmt, Math.min(0.35, ev.land / 60)); audio.play('land', null, { vol: 0.8 }); }
+  if (ev.water && Math.abs(carSt.speed) > 6 && Math.random() < dt * 30) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 0.3, 2.2)), 0xd8f2ff, 1.8);
+  else if (carSt.ground && Math.abs(carSt.speed) > 20 && Math.random() < dt * 12) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 0.15, 0)), 0xcbb894, 1.2);
+  if (c.thrust > 0.5 && Math.random() < dt * 20) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.6, -0.2, (Math.random() - 0.5) * 3)), 0x9ff4ff, 1.4);
+  // таран: на скорости сбиваешь игроков и ботов
+  const sp = Math.abs(carSt.speed), now = performance.now();
+  if (sp > 10) for (const [id, o] of others) {
+    if (!o.group.visible || o.target.a === false || Array.isArray(o.target.cv)) continue;
+    const p = o.group.position;
+    if (Math.hypot(p.x - c.pos.x, p.z - c.pos.z) > 2.6 || Math.abs(p.y - c.pos.y) > 2.2 || (rammed.get(id) || 0) > now) continue;
+    rammed.set(id, now + 1000);
+    sendHit(id, { dmg: sp >= 28 ? 100 : Math.round(sp * 2.6), by: nick, w: 'car' });     // от 100 км/ч — насмерть
+    hitmarker(sp > 35 ? 'head' : '');
+    audio.play('carCrash', p, { vol: 0.9 }); shakeAmt = Math.max(shakeAmt, 0.25);
+    fx.dust(p.clone().add(new THREE.Vector3(0, 1, 0)), 0xffffff, 1.5);
+    carSt.speed *= 0.85;
+  }
+  // ты — там, где машина (шторм, зона, позиция для других); камера сзади-сверху, крутится мышью
+  feet.copy(c.pos); vel.set(0, carSt.vy, 0); onGround = carSt.ground; gliding = false; moving = sp > 1;
+  const back = camera.getWorldDirection(new THREE.Vector3()).negate();
+  const head = c.pos.clone().add(new THREE.Vector3(0, 2.2, 0));
+  const hit = structures.raycast(head, back, 8);
+  player.position.copy(head).addScaledVector(back, hit ? Math.max(1.2, hit.t - 0.4) : 8);
+  player.position.y = Math.max(player.position.y, world.height(player.position.x, player.position.z) + 0.6, WATER_Y + 0.6);
+  // HUD: спидометр и топливо двигателей
+  $('carspd').textContent = Math.round(sp * 3.6);
+  $('carfuel').style.width = `${(carSt.fuel / CAR.FUEL) * 100}%`;
+  $('carhud').classList.toggle('boost', c.boost > 0.5);
+}
+
+// Чужие машины — из поз водителей; свою занял кто-то с меньшим id — уступаем. Объявление в начале раунда.
+function updateCars(dt) {
+  const drivers = new Map();
+  for (const [id, o] of others) if (Array.isArray(o.target.cv) && o.target.a !== false && performance.now() - (o.seen ?? 0) < 3000) drivers.set(id, o.target.cv);
+  const taken = roadsters.sync(drivers, myCar);
+  if (myCar && taken.has(myCar.id) && net && taken.get(myCar.id)[0] < net.selfId) { exitCar(true); toast('Someone else took this Roadster'); }
+  if (myCar && !royale.alive) exitCar(false);
+  roadsters.update(dt);
+  if (royale.round >= 0 && carBanner !== royale.round && roadsters.list.length && Date.now() - royale.roundStart > 34000 && royale.alive && !royale.duel) {
+    carBanner = royale.round;
+    banner('⚡ ROADSTERS ON THE ISLAND', '0–100 in under a second · thrusters · kickflips — follow the cyan beams', 4000);
+  }
+}
+// Гул чужих машин рядом (своя — громче, её считает envSound).
+function carsNearLevel() {
+  let best = 0;
+  for (const c of roadsters.list) if (c.driver && c.driver !== 'me') best = Math.max(best, Math.max(0, 1 - c.pos.distanceTo(player.position) / 60) * 0.7);
+  return best;
+}
+
 // ---------- Парашют и вид от третьего лица в полёте ----------
 
 // Падаешь с большой высоты (с горы, с постройки, после Moon Jump) — можно раскрыть парашют снова.
@@ -647,7 +758,7 @@ function updateSelfFigure(t) {
   const fpv = !!abilities.drone;
   if (emote && (!royale.alive || !onGround || gliding || riding)) stopEmote();
   const winCam = cine?.mode === 'win';
-  const show = playing && (gliding || fpv || !!emote || winCam) && !riding && (royale.alive || winCam);
+  const show = playing && (gliding || fpv || !!emote || winCam || !!myCar) && !riding && (royale.alive || winCam);
   if (selfChute.userData.skin !== myChute()) {
     selfFig?.remove(selfChute);
     selfChute = buildParachute(myChute());
@@ -674,6 +785,12 @@ function updateSelfFigure(t) {
     const head = feet.clone().add(new THREE.Vector3(0, 1.4, 0));
     const hit = structures.raycast(head, back, 4.2);
     player.position.copy(head).addScaledVector(back, hit ? Math.max(0.6, hit.t - 0.3) : 4.2);
+    return;
+  }
+  if (myCar) {
+    selfFig.position.set(myCar.pos.x, myCar.pos.y - 0.25, myCar.pos.z);
+    selfFig.rotation.set(myCar.pitch, myCar.yaw, myCar.roll, 'YXZ'); selfChute.visible = false;
+    animateCharacter(selfFig, t, 'idle', 0, false);
     return;
   }
   if (winCam && !gliding) {
@@ -892,6 +1009,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || !playing) return;
   if (!royale.alive) { if (!specNext(e.button === 2 ? -1 : 1)) spectatorNotice(); return; }
   if (riding) { if (e.button === 0) jumpOut(); return; }
+  if (myCar) return;                                   // за рулём не стреляем
   if (abilities.drone) { if (e.button === 0) abilities.detonate(); return; }
   if (emote) { stopEmote(); return; }
   if (emotePick) toggleEmotes(false);
@@ -1111,7 +1229,7 @@ function say(name, text) {
   while ($('chatlog').children.length > 8) $('chatlog').firstChild.remove();
 }
 
-const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏' };
+const KILL_ICON = { pistol: '🔫', smg: '🔫', ar: '🔫', shotgun: '💥', sniper: '🎯', bazooka: '🚀', rocket: '🚀', storm: '🌪', pickaxe: '⛏', car: '🏎' };
 // В дуэли в позе ник с тикером («$BONK nick»), а в ленте убийств — просто ник.
 const sameNick = (poseName, nickName) => poseName === nickName || (!!royale.duel && poseName.endsWith(` ${nickName}`));
 // Где сейчас персонаж с таким ником (для эффекта убийства): ты сам или кто-то из others.
@@ -1319,7 +1437,7 @@ const minimap = createMinimap({
   yaw: () => new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ').y,
   flight: () => flight,
   heliPos: () => (flight ? heliPos(new THREE.Vector3()) : null),
-  mapMarks: () => (playing ? [...pads.list.map((p) => ({ kind: 'pad', x: p.x, z: p.z })), ...events.marks(), ...loot.drops().filter((d) => d.state === 1 || d.state === 2).map((d) => ({ kind: 'drop', ...d }))] : []),
+  mapMarks: () => (playing ? [...pads.list.map((p) => ({ kind: 'pad', x: p.x, z: p.z })), ...events.marks(), ...roadsters.marks(), ...loot.drops().filter((d) => d.state === 1 || d.state === 2).map((d) => ({ kind: 'drop', ...d }))] : []),
 });
 minimap.setWorld(world);
 // руки от первого лица — в цветах скина (рукав — тело скина, кисти — его кожа)
@@ -1443,6 +1561,8 @@ function onRoundStart(r, alive) {
   stopEmote(); toggleEmotes(false);
   structures.reset();             // дома и деревья — заново, постройки игроков исчезают
   shadowDirty = true;
+  exitCar(false);
+  if (world && !isDuelWorld(worldId)) roadsters.place(world, structures, r); else roadsters.clear();
   bots.roundStart(r);
   loadout.giveBack(abilities.slots);          // раунд перезапустился (дуэль, синхронизация) — заряды прошлого раунда вернуть на склад
   abilities.reset();
@@ -1758,6 +1878,7 @@ function poseData() {
   if (riding) d.rd = 1;
   if (document.hidden) d.hd = 1;          // вкладка свёрнута — не годимся в хосты ботов
   if (prone) d.pr = 1; else if (crouching) d.cr = 1;
+  if (myCar) { const c = myCar; d.cv = [+c.pos.x.toFixed(2), +c.pos.y.toFixed(2), +c.pos.z.toFixed(2), +c.yaw.toFixed(3), +c.pitch.toFixed(3), +c.roll.toFixed(3), c.id, +c.thrust.toFixed(2), +c.boost.toFixed(2)]; delete d.cr; delete d.pr; }
   if (combat.shield > 0) d.sd = 1;           // у цели щит — числа урона у стрелка синие
   if (combat.healing) d.hl = 1;              // лечится — другим видна поза и зелёные искры
   if (combat.reloading) d.rl = 1;            // перезаряжается — оружие опущено
@@ -1791,6 +1912,11 @@ addEventListener('keydown', (e) => {
   if (!playing || !controls.isLocked) return;
   if (e.code === 'KeyT') { e.preventDefault(); openChat(); }
   if (riding) { if (e.code === 'Space') jumpOut(); return; }
+  if (myCar) {                                         // за рулём: E — выйти, M — карта, остальное — управление машиной
+    if (e.code === 'KeyE') exitCar(true);
+    if (e.code === 'KeyM') minimap.toggle();
+    return;
+  }
   // P — лечь / встать; Space лёжа — встать (а не прыжок). Встать нельзя, если над тобой постройка.
   if ((e.code === 'KeyP' || (prone && e.code === 'Space')) && playing && royale.alive && !gliding) {
     if (prone) { if (!structures.blocked(feet.x, feet.y, feet.z, CROUCH_H, HALF)) { prone = false; keys.delete('Space'); } }
@@ -1809,9 +1935,11 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyB') { openBuy(); return; }
   if (!royale.alive && playing && e.code === 'KeyV') { if (cine) stopCine(); else if (!startSpectate()) spectatorNotice(); return; }
   if (!royale.alive && ['KeyE', 'KeyZ', 'KeyX', 'KeyC', 'KeyQ', 'KeyG'].includes(e.code)) spectatorNotice();
-  if (e.code === 'KeyE') {
+  if (e.code === 'KeyE' && royale.alive) {
     const chest = loot.chestNear(eye(), look());
+    const car = !chest && !riding && !gliding ? roadsters.near(feet) : null;
     if (chest) openChest(chest);
+    else if (car) enterCar(car);
   }
   if (royale.alive) {
     if (e.code === 'KeyZ') enterBuild('w');
@@ -2826,6 +2954,8 @@ function envSound() {
     storm, hp: royale.alive ? combat.hp : 100,
     tension: tensionLevel(),
     rain: weather.kind === 'rain' ? 1 : 0,
+    motor: myCar ? 0.35 + Math.min(1, Math.abs(carSt.speed) / CAR.MAX) * 0.65 : carsNearLevel(),
+    motorRate: myCar ? 0.6 + Math.min(1.6, Math.abs(carSt.speed) / CAR.MAX * 1.4) : 1,
   };
 }
 
@@ -2854,6 +2984,7 @@ const mainLoop = (now) => {
       for (const k of held) keys.add(k);
       player.position.copy(abilities.drone.pos);
     }
+    else if (myCar) carStep(dt, controls.isLocked);
     else if (controls.isLocked) step(dt);
     else player.position.set(feet.x, feet.y + eyeH, feet.z);
     updateSelfFigure(t);
@@ -2872,6 +3003,7 @@ const mainLoop = (now) => {
     royale.update(dt);
     if (royale.round >= 0) events.update(dt, (Date.now() - royale.roundStart) / 1000);
     pads.update(dt, t);
+    updateCars(dt);
     for (const p of structures.updateFalling(dt)) {               // дерево ударилось о землю: пыль, листья, тряска рядом
       for (let i = 0; i < 5; i++) fx.dust(p.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 0.3, (Math.random() - 0.5) * 4)), 0xa8c070, 2.2);
       shakeIfNear(p, 20, 0.18);
@@ -2886,7 +3018,8 @@ const mainLoop = (now) => {
     // Подбор лута и подсказки.
     swapCandidate = royale.alive && !riding ? loot.pickupNear(feet, combat, dt) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
-    const prompt = royale.ended ? $('prompt').textContent : abilities.drone ? '' : riding ? ridePrompt() : chest ? 'E — open chest' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
+    const carNear = !myCar && royale.alive && !riding && !gliding ? roadsters.near(feet) : null;
+    const prompt = royale.ended ? $('prompt').textContent : abilities.drone ? '' : riding ? ridePrompt() : myCar ? 'SHIFT boost · SPACE thrusters (+A/D kickflip, hold to hover) · E exit' : chest ? 'E — open chest' : carNear ? 'E — drive the Roadster ⚡' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());
@@ -2896,7 +3029,7 @@ const mainLoop = (now) => {
 
     // Прицел снайперки.
     const opt = isScoped() ? opticOf() : null;
-    const fov = isScoped() ? (opt ? opt.fov : SCOPE_FOV) : FOV;
+    const fov = isScoped() ? (opt ? opt.fov : SCOPE_FOV) : FOV + (myCar ? Math.min(1, Math.abs(carSt.speed) / CAR.BOOST_MAX) * 22 : 0);
     if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, dt * 14); camera.updateProjectionMatrix(); }
     $('scope').hidden = !isScoped() || !!opt;
     $('ads').hidden = !opt;
@@ -2943,6 +3076,14 @@ const mainLoop = (now) => {
       if (o.target.pc && (!o.chute || o.chute.userData.skin !== chSkin)) { if (o.chute) o.group.remove(o.chute); o.chute = buildParachute(chSkin); o.group.add(o.chute); }
       if (o.chute) o.chute.visible = !!o.target.pc;
       o.group.rotation.x += ((o.target.st === 'f' ? -1.1 : o.target.pr ? -1.5 : 0) - o.group.rotation.x) * 0.2;   // падение / лёжа
+      const cv = Array.isArray(o.target.cv) ? o.target.cv : null;
+      if (cv) {                                       // за рулём: сидит в машине (торс над бортом), повёрнут как машина
+        o.group.position.set(cv[0], cv[1] - 0.25, cv[2]);
+        o.group.rotation.set(cv[4], cv[3], cv[5], 'YXZ');
+        if (o.gun) o.gun.visible = false;
+        animateCharacter(o.group, t, 'idle', 0, false);
+        continue;
+      }
       animateCharacter(o.group, t, st, Math.min(1, o.spd / RUN), !!o.target.g && o.target.g !== 'pickaxe' && st !== 'heal' && !em);
     }
     sendPose(now);
@@ -2980,7 +3121,7 @@ const mainLoop = (now) => {
   if (cineOn) { camera.position.copy(camSave.p); camera.quaternion.copy(camSave.q); }
   autoQuality(dt, now);
   countFps(now);
-  if (playing && !cineOn && !riding && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
+  if (playing && !cineOn && !riding && !myCar && !gliding && !emote && !abilities.drone && (controls.isLocked || debugView)) {
     const h = holding();
     const inHand = h || (ENTRIES[slot].med && !buildType && combat.meds ? { type: 'medkit', rarity: 0 } : null);   // слот 5 — аптечка в руке
     const run = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && moving && onGround;
@@ -3052,7 +3193,7 @@ function updateCrosshair(w, en) {
 // Для отладки и тестов.
 window.__pc = {
   get world() { return world; }, get net() { return net; }, get others() { return others; }, peers,
-  combat, loot, pick, royale, fx, vm, audio, killfeed, events, pads, winCam: () => startWinCam(), setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
+  combat, loot, pick, royale, fx, vm, audio, killfeed, events, pads, roadsters, enterCar: (c) => enterCar(c), exitCar: () => exitCar(true), get myCar() { return myCar; }, carSt, winCam: () => startWinCam(), setMood: (n) => setMood(n), emote: (id) => startEmote(id), get emoting() { return emote; }, season, structures, mats, bots, sendHit, abilities, openBuy, closeBuy, damageStructure, get crouching() { return crouching; }, get eyeH() { return eyeH; }, get vel() { return vel; }, scene, camera, renderer, composer, grass, settings,
   build: (t) => enterBuild(t), place: () => { updatePlan(); nextBuild = 0; placePiece(performance.now() / 1000); }, swing: () => { nextSwing = 0; swingPickaxe(performance.now() / 1000); },
   get plan() { return plan; },
   get feet() { return feet; }, step: (dt) => step(dt), keys, controls, ride: () => startRide(true), get riding() { return riding; }, heliTick: () => updateHeli(performance.now() / 1000), ridePrompt: () => flight && ridePrompt(), jump: (forced) => jumpOut(forced),

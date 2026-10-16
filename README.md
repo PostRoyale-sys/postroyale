@@ -56,6 +56,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 - Weapons: pistol, SMG, assault rifle, shotgun, sniper, bazooka — five rarities, recoil, spread, reloads.
 - Building: walls, floors, ramps in three materials; everything is destructible.
 - Crouch, prone, sprint, slide, aim down sights; mushroom launch pads throw you 17 m up.
+- **The Roadster**: three electric hypercars per round (follow the cyan beams) — 0–100 km/h in under a second with launch mode, air thrusters to jump, kickflip and hover, ram players and bots, drives on water.
 - Storm with phases that shrink to a final circle — a siren warns 10 s before each shrink, and the final circle moves.
 - Three supply drops per round (epic+ loot on a parachute, follow the purple beam) and a Pump zone with +30% damage.
 - Big glowing damage numbers, headshots, kill confetti with PR coins, multi-kill streaks, slow-mo on the last kill, killcam, spectator camera and a victory orbit with confetti.
@@ -87,6 +88,7 @@ Hit **Play** and you get a fresh island and a link. Post the link on X — every
 | Build wall · floor · ramp · switch material | `Z` · `X` · `C` · `V` |
 | Crouch · slide · prone | hold `Alt` · `Alt` while sprinting · `P` |
 | Open chest · swap weapon · reload | `E` · `G` · `R` |
+| Roadster: get in/out · drive · launch · thrusters (+`A`/`D` kickflip, hold to hover) | `E` · `W A S D` · `Shift` · `Space` |
 | Abilities · buy menu | `F` `Q` · `B` |
 | Map | `M` |
 | Jump out of the chopper / open parachute | `Space` |

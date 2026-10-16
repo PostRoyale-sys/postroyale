@@ -278,6 +278,41 @@ const SFX = {
     for (let k = 0; k < 2; k++) { const p = D.tone(2.1, 164.8, 164.8, { a: 0.6, d: 0.9, shape: 'tri', vib: 0.004 }); D.filt(p, 'lp', 900); D.add(x, p, k * 2, 0.16); }
     return D.loopify(x, 0.3);
   },
+  // Roadster: электромотор — вой с гармониками (высоту меняет playbackRate по скорости)
+  motor: (D) => {
+    const x = D.arr(2.2);
+    D.add(x, D.gain(D.tone(2.2, 220, 220, { d: 99, shape: 'saw', vib: 0.003 }), 0.25));
+    D.add(x, D.gain(D.tone(2.2, 440, 440, { d: 99, shape: 'tri', vib: 0.002 }), 0.35));
+    D.add(x, D.gain(D.tone(2.2, 1320, 1320, { d: 99, vib: 0.004 }), 0.08));
+    D.filt(x, 'lp', 2600);
+    const n = D.arr(2.2); for (let i = 0; i < n.length; i++) n[i] = D.rnd(); D.filt(n, 'bp', 900, 0.6); D.add(x, n, 0, 0.12);
+    return D.loopify(x, 0.3);
+  },
+  thrust: (D) => {
+    const x = D.arr(0.9);
+    D.add(x, D.burst(0.85, { a: 0.01, d: 0.25, type: 'bp', f: (t) => 2600 - 1800 * t, q: 0.6 }), 0, 1);
+    D.add(x, D.thud(0.35, 90, 40, 0.06), 0, 0.8);
+    return D.sat(x, 1.4);
+  },
+  boost: (D) => {
+    const x = D.arr(1.2);
+    D.add(x, D.burst(1.1, { a: 0.4, d: 0.3, type: 'bp', f: (t) => 500 + 3000 * t, q: 0.9 }), 0, 0.9);
+    D.add(x, D.gain(D.tone(1.1, 300, 1400, { a: 0.3, d: 0.4, shape: 'saw' }), 0.18));
+    return x;
+  },
+  carStart: (D) => {
+    const x = D.arr(0.9);
+    D.add(x, D.gain(D.tone(0.85, 180, 660, { a: 0.05, d: 0.4, shape: 'tri' }), 0.5));
+    D.add(x, D.click(3200, 0.004), 0, 0.5); D.add(x, D.click(2400, 0.004), 0.08, 0.4);
+    return x;
+  },
+  carCrash: (D) => {
+    const x = D.arr(0.7);
+    D.add(x, D.thud(0.4, 110, 40, 0.06), 0, 1);
+    D.add(x, D.burst(0.5, { a: 0.002, d: 0.12, type: 'bp', f: 1800, q: 0.8 }), 0, 0.8);
+    for (let i = 0; i < 6; i++) D.add(x, D.click(D.r(2500, 6000), 0.006), D.r(0.02, 0.3), D.r(0.2, 0.5));
+    return D.sat(x, 1.8);
+  },
   // дождь: ровный шум + отдельные капли
   rain: (D) => {
     const x = D.arr(5.3);
@@ -459,7 +494,7 @@ const GAIN = {
   wind: 0.6, canopy: 0.35, rotor: 0.7, storm: 0.6, chuteOpen: 0.7, jumpOut: 0.5,
   medOpen: 0.8, bandage: 0.6, spray: 0.44, medTape: 0.6, healDone: 0.8,
   pickAmmo: 0.52, pickWeapon: 0.59, pickArmor: 0.52, pickMed: 0.52, chest: 0.6,
-  tension: 0.5, rain: 0.5, siren: 0.42, dropIncoming: 0.5, dropLand: 0.75, dropOpen: 0.6, pump: 0.5, slide: 0.45, bounce: 0.6, thunder: 0.8, barrel: 0.85, treeFall: 0.6,
+  tension: 0.5, rain: 0.5, siren: 0.42, dropIncoming: 0.5, dropLand: 0.75, dropOpen: 0.6, pump: 0.5, slide: 0.45, bounce: 0.6, thunder: 0.8, barrel: 0.85, treeFall: 0.6, motor: 0.32, thrust: 0.7, boost: 0.55, carStart: 0.5, carCrash: 0.8,
   hit: 0.5, hitShield: 0.42, hitBig: 0.6, hitHead: 0.55, streak: 0.55, coins: 0.32, kill: 0.7, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
   uiClick: 0.25, uiHover: 0.08, beep: 0.35, beepGo: 0.4, roundStart: 0.45, victory: 0.55, lose: 0.4, caseTick: 0.25,
   swing: 0.3, chop: 0.55, build_wood: 0.45, build_brick: 0.45, build_metal: 0.4, break_wood: 0.6, break_brick: 0.6, break_metal: 0.55,
@@ -779,13 +814,14 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
     const g = ac.createGain(); g.gain.value = 0;
     src.connect(f).connect(g).connect(sfxBus);
     src.start(ac.currentTime, Math.random() * src.buffer.duration);
-    return (loops[name] = { g, f, level: 0 });
+    return (loops[name] = { g, f, src, level: 0 });
   }
-  function setLoop(name, level, cutoff = 20000, tc = 0.15) {
+  function setLoop(name, level, cutoff = 20000, tc = 0.15, rate = 1) {
     if (!loops[name] && level < 0.003) return;
     const l = loop(name);
     if (Math.abs(l.level - level) > 0.002) { l.g.gain.setTargetAtTime(level * (GAIN[name] ?? 1), ac.currentTime, tc); l.level = level; }
     l.f.frequency.setTargetAtTime(cutoff, ac.currentTime, 0.1);
+    if (rate !== 1 || l.src.playbackRate.value !== 1) l.src.playbackRate.setTargetAtTime(rate, ac.currentTime, 0.08);
   }
 
   // ---------- Музыка ----------
@@ -906,6 +942,7 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
       setLoop('storm', s.storm || 0, 1200 + 6000 * (s.storm || 0), 0.5);
       setLoop('tension', s.tension || 0, 900 + 5000 * (s.tension || 0), 1.2);
       setLoop('rain', s.rain || 0, 4000, 1);
+      setLoop('motor', s.motor || 0, 1500 + 6000 * (s.motor || 0), 0.15, s.motorRate || 1);
       // сердце при малом здоровье
       if (s.hp > 0 && s.hp <= 30) {
         heartT -= dt;
