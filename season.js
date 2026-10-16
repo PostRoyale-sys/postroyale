@@ -91,21 +91,23 @@ export function createSeason(ctx) {
   return {
     get stats() { return st; },
     get wallet() { return wallet; },
-    get tier() { return wallet?.tier ?? -1; },
+    // Плюшки держателя — только для кошелька, подпись которого проверил сервер (а не вписанного в localStorage).
+    get tier() { return wallet && ctx.walletVerified?.(wallet.pubkey) ? wallet.tier ?? -1 : -1; },
     tierInfo: (t) => TIERS[t] || null,
     add,
 
-    // Привязка Phantom: подпись сообщения доказывает, что кошелёк твой. Ключи и деньги не трогаем.
-    async connect(nick) {
+    // Привязка Phantom: подпись одноразового сообщения от сервера доказывает, что кошелёк твой (проверяет сервер,
+    // ctx.linkWallet). Тот же кошелёк на другом устройстве — тот же аккаунт с RP и покупками. Ключи и деньги не трогаем.
+    async connect() {
       const p = window.phantom?.solana || window.solana;
       if (!p?.isPhantom) { ctx.toast('Phantom wallet not found — install it or open in a browser with Phantom'); return; }
       try {
         const { publicKey } = await p.connect();
-        const msg = `PostRoyale: link this wallet to "${nick}" (season ${SEASON}). No transaction, no fees. ${new Date().toISOString()}`;
-        await p.signMessage(new TextEncoder().encode(msg), 'utf8');
-        wallet = { pubkey: publicKey.toBase58(), balance: 0, tier: -1, linkedAt: Date.now() };
+        const pubkey = publicKey.toBase58();
+        await ctx.linkWallet(p, pubkey);
+        wallet = { pubkey, balance: 0, tier: -1, linkedAt: Date.now() };
         localStorage.setItem(WKEY, JSON.stringify(wallet));
-        ctx.toast(TOKEN_MINT ? 'Wallet linked — checking holder perks…' : 'Wallet linked ✓');
+        ctx.toast(TOKEN_MINT ? 'Wallet linked — checking holder perks…' : 'Wallet linked ✓ — your RP and items now follow this wallet');
         await refresh();
       } catch (e) {
         ctx.toast(`Wallet: ${e.message || 'cancelled'}`);

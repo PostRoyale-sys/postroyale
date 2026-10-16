@@ -1255,7 +1255,7 @@ const ctx = {
   removeBots, isHost, hostId,
   botCount: () => mmMatch?.bots,
   isDuel: () => isDuelWorld(worldId),
-  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); if (rankedMatch) ranked.add('botkill'); } },
+  onBotKilled: (by) => { if (by === nick && royale.alive) { season.add('kill'); abilities.earn('botkill'); loadout.earn('botkill'); } },
   blocksSight: (a, b) => abilities.blocksSight(a, b),
   route: () => sharedRoute(),
   isRanked: () => isRankedWorld(worldId),
@@ -1272,6 +1272,8 @@ const ctx = {
   points: (k) => award(k),
   // Сезон (season.js)
   pointsToast, onSeason: renderSeason,
+  linkWallet: (p, pubkey) => ranked.linkWallet(p, pubkey),
+  walletVerified: (pubkey) => { try { return ranked.wallet === pubkey; } catch (e) { return false; } },   // ranked ещё не создан — нет
   volume: () => settings.vol,
   onInventory: () => renderStatus(),
   flash: (kind) => { const f = $('flash'); f.className = ''; void f.offsetWidth; f.className = kind === 'shield' ? 'shield' : 'on'; },
@@ -1303,15 +1305,14 @@ const loot = createLoot(ctx);
 const royale = createRoyale(ctx);
 const events = createEvents(ctx);
 const season = createSeason(ctx);
-const ranked = createRanked({ toast: (t) => pointsToast(t), onChange: () => renderRanked() });
-let rankedMatch = false;           // этот матч — рейтинговый (остров дня и есть допуск): начисляем RP
+const ranked = createRanked({ toast: (t) => pointsToast(t), onChange: () => { renderRanked(); renderSeason(); } });
+let rankedMatch = false;           // этот матч — рейтинговый (через сервер матчей; RP считает сервер)
 
-// Очки за событие: сезонные — всегда, RP — только в рейтинговом матче.
+// Очки за событие: сезонные, монеты. RP в рейтинговом матче начисляет сервер ({t:'rp'} → ranked.onServer).
 function award(kind) {
   season.add(kind);
   abilities.earn(kind);
   loadout.earn(kind);
-  if (rankedMatch) ranked.add(kind);
 }
 const minimap = createMinimap({
   world: () => world, royale: () => royale, feet: () => feet,
@@ -1328,7 +1329,7 @@ const bots = createBots(ctx);
 const loadout = createLoadout({ onChange: () => { renderLoadout(); renderGunsmith(); } });
 const gunsmith = createGunsmith({ spend: (n) => loadout.spend(n), onChange: () => renderGunsmith() });
 const wskins = createWeaponSkins({
-  pay: (cur, n) => (cur === 'rp' ? ranked.spend(n) : loadout.spend(n)),
+  pay: (cur, n, caseId) => (cur === 'rp' ? ranked.spend(caseId) : loadout.spend(n)),
   refund: (n) => loadout.give(n),
   onChange: () => { renderCases(); makeHero(); },
 });
@@ -1532,7 +1533,6 @@ function onEliminated(place, by) {
   season.placed(place);
   audio.play('lose', null, { at: 1.2 });
   if (place === 2 || place === 3) loadout.earn(place === 2 ? 'top2' : 'top3');
-  if (rankedMatch && (place === 2 || place === 3)) ranked.add(place === 2 ? 'top2' : 'top3');
   banner(place > 1 ? `#${place}` : 'Eliminated', by === 'Storm' ? 'Caught in the storm · spectating until next drop' : by === nick ? 'You blew yourself up' : `Eliminated by ${by} · spectating until next drop`, 5000);
 }
 
@@ -1885,7 +1885,7 @@ function start() {
   nick = ($('nick').value.trim() || nick).slice(0, 16);
   localStorage.setItem('pc:nick', nick);
   worldId = lobbyId();
-  rankedMatch = isRankedWorld(worldId) && ranked.hasAccess();
+  rankedMatch = isRankedWorld(worldId) && !!mmMatch;
   duelSide = isDuelWorld(worldId) && worldId === linkDuel && params.get('s') === 'b' ? 'b' : 'a';
   duelGoAt = 0;
   history.replaceState(null, '', `?w=${worldId}${isDuelWorld(worldId) ? `&s=${duelSide}` : ''}`);
@@ -1911,7 +1911,7 @@ function start() {
     }
     else { royale.setDuel(null); royale.init(Date.now(), rankedMatch || isRankedWorld(worldId) ? 0 : Date.now() - 500); }
     pick(0);
-    $('wname').textContent = mmMatch ? `🌐 Online · ${mmMatch.ids.length + mmMatch.bots} players` : rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
+    $('wname').textContent = rankedMatch ? `🏆 Ranked · ${mmMatch.ids.length + mmMatch.bots} players` : mmMatch ? `🌐 Online · ${mmMatch.ids.length + mmMatch.bots} players` : rankedMatch ? `🏆 Ranked · ${worldId.slice(7)}` : isDuelWorld(worldId) ? `🥊 ${myTicker()} vs ${oppTicker()}` : `🌍 ${worldId}`;
     $('lobby').hidden = true;
     for (const id of ['top', 'hotbar', 'hint', 'bars', 'ammo', 'storm', 'mats', 'abil', 'credits']) $(id).hidden = false;
     renderAbilities();
@@ -1927,10 +1927,15 @@ $('go').addEventListener('click', () => {
   if (playing || $('go').disabled) return;
   // Online: Play — встать в очередь, ещё раз — отменить поиск; матч найден — старт (findMatch → go)
   if (gameMode === 'casual' && mode === 'online' && !mmMatch) { if (mmSearch) stopSearch('Search cancelled'); else beginSearch(); return; }
-  if (gameMode === 'ranked' && !ranked.hasAccess()) {
-    $('rk-msg').className = 'sub err';
-    $('rk-msg').textContent = 'Unlock Ranked first: post on X and paste the link';
-    $('rk-url').focus();
+  if (gameMode === 'ranked' && !mmMatch) {
+    if (mmSearch) { stopSearch('Search cancelled'); return; }
+    if (!ranked.hasAccess()) {
+      $('rk-msg').className = 'sub err';
+      $('rk-msg').textContent = 'Unlock Ranked first: post on X and paste the link';
+      $('rk-url').focus();
+      return;
+    }
+    beginSearch(true);            // Ranked — только через сервер матчей: он и считает RP
     return;
   }
   $('go').disabled = true;
@@ -1948,7 +1953,7 @@ $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('go').cl
 // Очередь на сервере: сразу 13 ботов, дальше по одному каждые 3 с до полного лобби (живые занимают их места).
 // В интерфейсе онлайна ботов не упоминаем — показываем общее число игроков. Сервер недоступен — предлагаем Private.
 const setGoLabel = (t) => { $('go').lastChild.textContent = t; };
-function beginSearch() {
+function beginSearch(rk = false) {
   nick = ($('nick').value.trim() || nick).slice(0, 16);
   localStorage.setItem('pc:nick', nick);
   $('go').classList.add('searching');
@@ -1962,9 +1967,11 @@ function beginSearch() {
       $('roundinfo').innerHTML = `<b class="live">● Searching ${mmss(s.s)}</b>👥 ${filled}/${s.cap} players`;
       $('status').textContent = filled < s.cap ? '🔎 Finding players…' : '✓ Lobby full — starting';
     },
+    rp: (m) => ranked.onServer(m),
     go(m) {
       mmSearch = null;
       mmMatch = m;
+      if (m.nick) nick = m.nick;                   // рейтинг: ник, под которым тебя знает сервер (уникальный в матче)
       $('go').classList.remove('searching');
       setGoLabel('Play');
       $('status').textContent = `✓ Match found — ${m.ids.length + m.bots} players`;
@@ -1978,11 +1985,20 @@ function beginSearch() {
       mmSearch = null;
       $('go').classList.remove('searching');
       setGoLabel('Play');
+      if (rk) {
+        if (why === 'access') ranked.load();
+        $('status').textContent = why === 'access' ? '⚠ Ranked access is gone (post deleted or expired) — post again to unlock'
+          : why === 'busy' ? '⚠ You are already in a Ranked match in another tab'
+          : why === 'auth' ? '⚠ Session expired — reload the page'
+          : '⚠ Ranked servers are unavailable right now — try again in a minute';
+        updateRoundInfo();
+        return;
+      }
       if (why === 'offline') setMode('new');      // сервер недоступен — следующий Play сразу запустит матч с ботами
       $('status').textContent = why === 'offline' ? '⚠ Online servers are unavailable right now — switched to Private: hit Play to fight bots' : '⚠ Lost connection to the match server — hit Play to search again';
       updateRoundInfo();
     },
-  });
+  }, rk ? { ranked: true, tok: ranked.tok } : {});
 }
 function stopSearch(msg) {
   if (!mmSearch) return;
@@ -2435,10 +2451,12 @@ function renderCases() {
 for (const b of document.querySelectorAll('#csseg button')) b.addEventListener('click', () => { casesView = b.dataset.v; renderCases(); });
 
 // Открытие: лента карточек прокручивается и тормозит на выпавшем скине (как в CS).
-function openCase(cid) {
+async function openCase(cid) {
   if (opening) return;
   const c = CASES[cid];
-  const res = wskins.open(cid);
+  opening = true;
+  const res = await wskins.open(cid);
+  opening = false;
   if (!res) { $('cshint').textContent = c.cur === 'rp' ? `Need ${c.price - ranked.rp} more RP — play Ranked` : `Need ${c.price - loadout.coins} more 🪙 — coins drop in every match`; return; }
   opening = true;
   const WIN = 34, N = 40;
@@ -2516,7 +2534,10 @@ function renderRanked() {
   const a = ranked.access;
   $('rk-locked').hidden = !!a;
   $('rk-ok').hidden = !a;
+  $('rk-code').textContent = ranked.code || '…';
   if (a) {
+    const d = ranked.today;
+    $('rk-today').textContent = d ? `Today: ${d.earned}/${d.cap} RP` : '';
     $('rk-handle').textContent = `@${a.handle}`;
     $('rk-left').textContent = `${Math.max(1, Math.ceil((a.until - Date.now()) / 864e5))} days left`;
     $('rk-world').textContent = rankedWorld().slice(7);
@@ -2556,11 +2577,11 @@ function renderShop() {
     c.style.setProperty('--sc', `#${(it.color ?? 0x8b5cff).toString(16).padStart(6, '0')}`);
     const price = own ? (it.kind === 'skin' ? 'In Locker' : equipped ? 'Equipped' : 'Equip') : `${it.price} RP`;
     c.innerHTML = `<i>${it.icon}</i><b>${it.name}</b><small>${it.kind === 'skin' ? 'Skin' : 'Lobby pad'}</small><span class="price${own ? ' own' : ''}">${price}</span>`;
-    c.addEventListener('click', () => {
+    c.addEventListener('click', async () => {
       if (own) {
-        if (it.kind === 'pad') { ranked.setPad(equipped ? null : it.id); makeHero(); }
+        if (it.kind === 'pad') { await ranked.setPad(equipped ? null : it.id); makeHero(); }
         $('shophint').textContent = it.kind === 'skin' ? 'Equip it in the Locker' : equipped ? 'Pad removed' : `${it.name} equipped`;
-      } else if (ranked.buy(it.id)) {
+      } else if (await ranked.buy(it.id)) {
         $('shophint').textContent = `✓ Bought ${it.name}${it.kind === 'skin' ? ' — equip it in the Locker' : ''}`;
         if (it.kind === 'pad') makeHero();
       } else $('shophint').textContent = `Need ${it.price - ranked.rp} more RP — play Ranked`;

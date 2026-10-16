@@ -14,11 +14,17 @@
 #            {t:'go', w, e, now, b, ids}  старт: id мира, точка отсчёта раунда e (часы сервера now), ботов b, игроки
 #            {t:'j', p} / {t:'l', p}     игрок вошёл / вышел
 #            {t:'a', a, d, f}            действие от игрока f
+#            {t:'q', n, r:1, tok}       встать в рейтинговую очередь (нужен аккаунт с допуском — rp.py)
+#   сервер → {t:'go', …, n}             в рейтинге ещё и ник, под которым тебя знает сервер (уникальный в матче)
+#            {t:'rp', k, n, rp, today, cap}   начислено RP (k — за что, n — сколько, rp — баланс)
+#            {t:'err', e}                в очередь не пустили (e: 'access' | 'busy')
 #   GET /health → {"ok":true, "queue":…, "matches":…, "players":…}
+#   POST /api/<me|verify|buy|spend|pad|nonce|link> — аккаунты и RP (rp.py)
 #
 # Запуск: python3 mm.py  (переменные: PORT=8770, HOST=127.0.0.1, MM_CAP=20, MM_BOTS0=13, MM_STEP=3)
 
 import asyncio, base64, hashlib, json, os, secrets, struct, time
+import rp
 
 HOST = os.environ.get('HOST', '127.0.0.1')
 PORT = int(os.environ.get('PORT', '8770'))
@@ -38,6 +44,8 @@ class Client:
         self.id = secrets.token_hex(4)
         self.nick = 'Player'
         self.match = None
+        self.account = None        # id аккаунта (только рейтинг)
+        self.ranked = False
         self.out = asyncio.Queue()
         self.closed = False
 
@@ -66,87 +74,133 @@ class Lobby:
 
 
 class Match:
-    def __init__(self, players, bots):
+    def __init__(self, players, bots, ranked=False):
         self.id = 'mm-' + secrets.token_hex(3)
         self.players = {c.id: c for c in players}
         self.bots = bots
         self.born = time.monotonic()
+        self.rm = None
+        if ranked:
+            # ники в рейтинговом матче уникальны — по ним сервер узнаёт убийцу в сообщениях игры
+            taken = set()
+            for c in players:
+                base, n, i = c.nick, c.nick, 2
+                while n in taken: n = f'{base[:13]}#{i}'; i += 1
+                taken.add(n); c.nick = n
+            self.rm = rp.RankedMatch(players, bots)
+            self.rm.ref = self.id
 
 
-lobby = Lobby()
+# две очереди: обычная (Online) и рейтинговая
+lobbies = {False: Lobby(), True: Lobby()}
 matches = {}
 
 
-def broadcast_lobby():
+def broadcast_lobby(lobby):
     st = lobby.status()
     for c in lobby.players: c.send(st)
 
 
-def start_match():
-    global lobby
-    m = Match(lobby.players, lobby.bots)
-    lobby = Lobby()
+def start_match(ranked):
+    lobby = lobbies[ranked]
+    m = Match(lobby.players, lobby.bots, ranked)
+    lobbies[ranked] = Lobby()
     matches[m.id] = m
     now = int(time.time() * 1000)
     ids = list(m.players)
+    world = time.strftime('ranked-%Y%m%d', time.gmtime()) if ranked else m.id
     for c in m.players.values():
         c.match = m
-        c.send({'t': 'go', 'w': m.id, 'e': now, 'now': now, 'b': m.bots, 'ids': ids})
+        c.send({'t': 'go', 'w': world, 'e': now, 'now': now, 'b': m.bots, 'ids': ids, **({'n': c.nick} if ranked else {})})
     # знакомим всех со всеми — клиент на join шлёт новичку позу, постройки, лут
     for c in m.players.values():
         for o in ids:
             if o != c.id: c.send({'t': 'j', 'p': o})
-    print(f'[mm] start {m.id}: {len(ids)} players + {m.bots} bots', flush=True)
+    print(f'[mm] start {m.id}{" ranked" if ranked else ""}: {len(ids)} players + {m.bots} bots', flush=True)
 
 
 async def ticker():
     """10 раз в секунду: подмешать ботов, при полном лобби — старт; раз в секунду — статус очереди; чистка старых матчей."""
-    last_status = 0.0
+    last_status, last_rp = {False: 0.0, True: 0.0}, 0.0
     while True:
         await asyncio.sleep(0.1)
         now = time.monotonic()
         for mid in [k for k, m in matches.items() if not m.players or now - m.born > MATCH_TTL]:
             for c in matches[mid].players.values(): c.match = None
+            if matches[mid].rm: matches[mid].rm.ended = True
             del matches[mid]
-        if not lobby.players: continue
-        e = now - lobby.t0
-        room = CAP - len(lobby.players)
-        before = lobby.bots
-        want = BOTS0 + int(e / STEP)                            # сразу BOTS0, потом +1 каждые STEP с
-        lobby.bots = max(0, min(room, max(lobby.bots, want)))
-        if len(lobby.players) + lobby.bots >= CAP:
-            broadcast_lobby()
-            start_match()
-            continue
-        if lobby.bots != before or now - last_status > 1:
-            last_status = now
-            broadcast_lobby()
+        if now - last_rp >= 1:
+            last_rp = now
+            for m in matches.values():
+                if m.rm:
+                    try: m.rm.tick()
+                    except Exception as e: print('[rp] tick', e, flush=True)
+        for ranked, lobby in list(lobbies.items()):
+            if not lobby.players: continue
+            e = now - lobby.t0
+            room = CAP - len(lobby.players)
+            before = lobby.bots
+            want = BOTS0 + int(e / STEP)                            # сразу BOTS0, потом +1 каждые STEP с
+            lobby.bots = max(0, min(room, max(lobby.bots, want)))
+            if len(lobby.players) + lobby.bots >= CAP:
+                broadcast_lobby(lobby)
+                start_match(ranked)
+                continue
+            if lobby.bots != before or now - last_status[ranked] > 1:
+                last_status[ranked] = now
+                broadcast_lobby(lobby)
 
 
 def leave(c):
-    global lobby
-    if c in lobby.players:
-        lobby.players.remove(c)
-        if not lobby.players: lobby = Lobby()
-        else: broadcast_lobby()
+    for ranked, lobby in lobbies.items():
+        if c in lobby.players:
+            lobby.players.remove(c)
+            if not lobby.players: lobbies[ranked] = Lobby()
+            else: broadcast_lobby(lobby)
     m = c.match
     if m and c.id in m.players:
+        if m.rm:
+            try: m.rm.leave(c.id)
+            except Exception as e: print('[rp] leave', e, flush=True)
         del m.players[c.id]
         for o in m.players.values(): o.send({'t': 'l', 'p': c.id})
         if not m.players: matches.pop(m.id, None)
     c.match = None
 
 
+def queued(c): return any(c in l.players for l in lobbies.values())
+
+
+def join_queue(c, ranked):
+    if c.closed or c.match or queued(c): return
+    lobby = lobbies[ranked]
+    c.ranked = ranked
+    if not lobby.players: lobby.t0 = time.monotonic()
+    lobby.players.append(c)
+    # живой игрок занимает место бота, если лобби уже почти полное
+    lobby.bots = min(lobby.bots, CAP - len(lobby.players))
+    broadcast_lobby(lobby)
+    if len(lobby.players) >= CAP: start_match(ranked)
+
+
+async def join_ranked(c, tok):
+    row = rp.auth(tok)
+    if not row: c.send({'t': 'err', 'e': 'auth'}); return
+    # один аккаунт — одно место в рейтинге (вторая вкладка не удвоит RP)
+    busy = any(o.account == row['id'] for l in lobbies.values() for o in l.players) or \
+        any(o.account == row['id'] for m in matches.values() if m.rm for o in m.players.values())
+    if busy: c.send({'t': 'err', 'e': 'busy'}); return
+    c.account = row['id']
+    if not await asyncio.to_thread(rp.recheck, row['id']): c.send({'t': 'err', 'e': 'access'}); return
+    join_queue(c, True)
+
+
 def on_message(c, msg):
     t = msg.get('t')
-    if t == 'q' and not c.match and c not in lobby.players:
+    if t == 'q' and not c.match and not queued(c):
         c.nick = str(msg.get('n') or 'Player')[:16]
-        if not lobby.players: lobby.t0 = time.monotonic()
-        lobby.players.append(c)
-        # живой игрок занимает место бота, если лобби уже почти полное
-        lobby.bots = min(lobby.bots, CAP - len(lobby.players))
-        broadcast_lobby()
-        if len(lobby.players) >= CAP: start_match()
+        if msg.get('r'): asyncio.create_task(join_ranked(c, msg.get('tok')))
+        else: join_queue(c, False)
     elif t == 'x':
         leave(c)
     elif t == 'a' and c.match:
@@ -160,6 +214,26 @@ def on_message(c, msg):
         else:
             for o in c.match.players.values():
                 if o is not c: o.send(out)
+        if c.match.rm:
+            try: c.match.rm.on_action(c.id, a, msg.get('d'), to)
+            except Exception as e: print('[rp] action', e, flush=True)
+
+
+# Простой лимит запросов к API с одного адреса: в минуту — 60 всего, 6 проверок поста, 3 новых аккаунта.
+_hits = {}
+
+
+def limited(ip, path):
+    now = time.monotonic()
+    kind = 'verify' if path.startswith('/api/verify') else 'me' if path.startswith('/api/me') else 'any'
+    ok = True
+    for k, cap in (('any', 60), (kind, {'verify': 6, 'me': 20, 'any': 60}[kind])):
+        lst = [t for t in _hits.get((ip, k), []) if now - t < 60]
+        if len(lst) >= cap: ok = False
+        lst.append(now)
+        _hits[(ip, k)] = lst
+    if len(_hits) > 20000: _hits.clear()
+    return ok
 
 
 # ---------- WebSocket (RFC 6455) поверх asyncio ----------
@@ -214,11 +288,31 @@ async def handle(reader, writer):
     path = lines[0].split(' ')[1] if len(lines[0].split(' ')) > 1 else '/'
     hdr = {k.strip().lower(): v.strip() for k, _, v in (l.partition(':') for l in lines[1:] if ':' in l)}
     if hdr.get('upgrade', '').lower() != 'websocket':
+        method = lines[0].split(' ')[0]
+        def reply(code, obj):
+            body = json.dumps(obj).encode()
+            writer.write(f'HTTP/1.1 {code} {"OK" if code == 200 else "Error"}\r\nContent-Type: application/json\r\n'
+                         'Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\n'
+                         f'Content-Length: {len(body)}\r\nConnection: close\r\n\r\n'.encode() + body)
         if path.startswith('/health'):
-            body = json.dumps({'ok': True, 'queue': len(lobby.players), 'bots': lobby.bots, 'matches': len(matches),
-                               'players': sum(len(m.players) for m in matches.values()) + len(lobby.players)}).encode()
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: '
-                         + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
+            q = sum(len(l.players) for l in lobbies.values())
+            reply(200, {'ok': True, 'queue': q, 'bots': lobbies[False].bots, 'matches': len(matches),
+                        'ranked': sum(1 for m in matches.values() if m.rm),
+                        'players': sum(len(m.players) for m in matches.values()) + q})
+        elif path.startswith('/api/') and method == 'OPTIONS':
+            reply(200, {})
+        elif path.startswith('/api/') and method == 'POST':
+            ip = hdr.get('x-forwarded-for', '').split(',')[0].strip() or (writer.get_extra_info('peername') or ['?'])[0]
+            try:
+                n = int(hdr.get('content-length', '0'))
+                if n > 16384: raise ValueError('too big')
+                body = json.loads(await asyncio.wait_for(reader.readexactly(n), 10) or b'{}')
+                if not isinstance(body, dict): raise ValueError('bad body')
+                if not limited(ip, path): reply(429, {'error': 'Too many requests — wait a minute'})
+                else: reply(*await asyncio.to_thread(rp.api, path, body))
+            except Exception as e:
+                print('[api]', path, repr(e), flush=True)
+                reply(400, {'error': 'Bad request'})
         else:
             writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
         await writer.drain(); writer.close(); return

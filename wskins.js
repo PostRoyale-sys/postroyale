@@ -124,10 +124,10 @@ export function createWeaponSkins(ctx) {
       save();
       ctx.onChange?.();
     },
-    // Открыть кейс: списать цену (ctx.pay), выбросить скин. → { id, dup, refund } или null (не хватает)
-    open(caseId) {
+    // Открыть кейс: списать цену (ctx.pay; RP списывает сервер), выбросить скин. → { id, dup, refund } или null (не хватает)
+    async open(caseId) {
       const c = CASES[caseId];
-      if (!c || !ctx.pay(c.cur, c.price)) return null;
+      if (!c || !(await ctx.pay(c.cur, c.price, caseId))) return null;
       const id = rollSkin(caseId);
       const dup = !!st.owned[id];
       st.owned[id] = (st.owned[id] || 0) + 1;

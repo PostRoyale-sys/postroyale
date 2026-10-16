@@ -1,15 +1,15 @@
-// Рейтинговый режим: отдельные очки RP (только в рейтинговых матчах), магазин за RP и допуск через пост в X.
+// Рейтинговый режим: RP, магазин за RP и допуск через пост в X — всё на сервере (server/rp.py).
 //
-// Допуск: игрок постит про проект (готовый текст с #PostRoyale и ссылкой) и вставляет ссылку на пост. Проверяем
-// через официальный oEmbed X (publish.x.com/oembed — отвечает браузеру, без ключей): пост существует, в тексте есть
-// #PostRoyale, опубликован не раньше POST_FRESH дней назад. Допуск — на ACCESS_DAYS дней.
-//
-// ВАЖНО: без сервера RP и допуск хранятся в браузере игрока (localStorage) и подделываются из консоли —
-// RP «без денежной стоимости»; обмен на токены возможен только после переноса подсчёта на сервер.
+// Аккаунт создаётся сам (гость, токен в localStorage); привязка кошелька переносит его на другие устройства.
+// Допуск: пост в X с #PostRoyale и личным кодом аккаунта — проверяет сервер (один пост и один X-аккаунт — на одного
+// игрока; удалённый пост снимает допуск). Ranked идёт только через сервер матчей: RP начисляет сервер по событиям
+// матча и присылает их ({t:'rp'}), клиент только показывает. Здесь — копия профиля для отрисовки лобби.
 
-const KEY = 'pr:ranked';
+import { mmUrls } from './mm.js';
+
+const KEY = 'pr:acct';
+const OLD = 'pr:ranked';                       // старое хранилище (до сервера): переносим только купленную косметику
 export const TAG = '#PostRoyale';
-const POST_FRESH = 7, ACCESS_DAYS = 7;
 
 // RP за события рейтингового матча.
 export const RP = { kill: 10, botkill: 3, chest: 1, survive: 2, top3: 15, top2: 25, win: 60 };
@@ -30,67 +30,74 @@ export const SHOP = [
 export const rankedWorld = () => `ranked-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
 export const isRankedWorld = (id) => /^ranked-\d{8}$/.test(id || '');
 
+// Адрес API — тот же сервер, что и матчи: wss://host → https://host.
+const apiBase = () => mmUrls()[0].replace(/^ws/, 'http');
+
 export function createRanked(ctx) {
-  let st = { rp: 0, owned: [], pad: null, access: null };      // access: { url, handle, until }
-  try { st = { ...st, ...JSON.parse(localStorage.getItem(KEY) || '{}') }; } catch (e) { /* пусто */ }
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* квота */ } };
+  let tok = null, me = null;                   // me — профиль с сервера: { rp, owned, pad, code, access, wallet, today, cap }
+  try { ({ tok, me } = JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { /* пусто */ }
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({ tok, me })); } catch (e) { /* квота */ } };
+  const set = (p) => {
+    if (p.tok) tok = p.tok;
+    const { tok: _t, error: _e, ...rest } = p;
+    if (rest.id) { me = rest; save(); ctx.onChange?.(); }
+  };
 
-  const hasAccess = () => !!st.access && st.access.until > Date.now();
-
-  // Проверка поста: ссылка → oEmbed → текст, автор, дата.
-  async function verify(url) {
-    const m = url.trim().match(/^https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/);
-    if (!m) throw new Error('Paste a link like https://x.com/you/status/123…');
-    const res = await fetch(`https://publish.x.com/oembed?url=${encodeURIComponent(`https://x.com/${m[1]}/status/${m[2]}`)}&omit_script=1&dnt=1`);
-    if (!res.ok) throw new Error('Post not found — is it public?');
-    const j = await res.json();
-    const doc = new DOMParser().parseFromString(j.html || '', 'text/html');
-    const text = doc.querySelector('p')?.textContent || '';
-    if (!text.toLowerCase().includes(TAG.toLowerCase())) throw new Error(`The post must include ${TAG}`);
-    const links = [...doc.querySelectorAll('a')];
-    const date = new Date(links[links.length - 1]?.textContent || '');
-    if (!isNaN(date) && Date.now() - date.getTime() > POST_FRESH * 864e5) throw new Error(`Post is older than ${POST_FRESH} days — make a fresh one`);
-    const handle = (j.author_url || '').split('/').pop() || m[1];
-    st.access = { url: j.url || url, handle, until: Date.now() + ACCESS_DAYS * 864e5 };
-    save();
-    return st.access;
+  async function call(what, body = {}) {
+    let res;
+    try {
+      res = await fetch(`${apiBase()}/api/${what}`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ tok, ...body }) });
+    } catch (e) { throw new Error('Server is unreachable — try again in a minute'); }
+    const j = await res.json().catch(() => ({}));
+    if (res.status === 401 && what !== 'me') { tok = null; await load(); throw new Error('Session expired — try again'); }
+    set(j);
+    if (!res.ok) throw new Error(j.error || 'Something went wrong');
+    return j;
   }
+  // Профиль с сервера (нет токена — сервер заведёт гостевой аккаунт).
+  let loading = null;
+  function load() {
+    if (loading) return loading;
+    let legacy;
+    if (!tok) try { legacy = JSON.parse(localStorage.getItem(OLD) || '{}').owned; } catch (e) { /* нет */ }
+    loading = call('me', legacy ? { legacy } : {}).catch((e) => { console.warn('[ranked]', e.message); }).finally(() => { loading = null; });
+    return loading;
+  }
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 5 * 60e3);
 
+  const hasAccess = () => !!me?.access && me.access.until > Date.now();
   return {
-    get rp() { return st.rp; },
-    get access() { return hasAccess() ? st.access : null; },
-    get pad() { return st.pad; },
-    hasAccess, verify,
-    owns: (id) => st.owned.includes(id),
-    // Начислить RP (вызывать только в рейтинговом матче).
-    add(kind) {
-      const n = RP[kind] || 0;
-      if (!n) return;
-      st.rp += n;
-      save();
-      ctx.toast?.(`+${n} RP ${LABEL[kind] || ''}`);
+    get tok() { return tok; },
+    get rp() { return me?.rp ?? 0; },
+    get code() { return me?.code || ''; },
+    get wallet() { return me?.wallet || null; },
+    get today() { return me ? { earned: me.today, cap: me.cap } : null; },
+    get access() { return hasAccess() ? me.access : null; },
+    get pad() { return me?.pad || null; },
+    ready: () => !!me,
+    hasAccess, load,
+    owns: (id) => !!me?.owned?.includes(id),
+    async verify(url) { await call('verify', { url }); return me.access; },
+    // Начисление от сервера во время рейтингового матча ({t:'rp'}).
+    onServer(m) {
+      if (me) { me.rp = m.rp; me.today = m.today; me.cap = m.cap; save(); }
+      if (m.n > 0) ctx.toast?.(`+${m.n} RP ${LABEL[m.k] || ''}`);
+      else if (m.n === 0) ctx.toast?.(`Daily RP cap reached (${m.cap})`);
       ctx.onChange?.();
     },
-    buy(id) {
-      const it = SHOP.find((s) => s.id === id);
-      if (!it || st.owned.includes(id)) return false;
-      if (st.rp < it.price) return false;
-      st.rp -= it.price;
-      st.owned.push(id);
-      if (it.kind === 'pad') st.pad = id;
-      save();
-      ctx.onChange?.();
-      return true;
+    async buy(id) { try { await call('buy', { id }); return true; } catch (e) { return false; } },
+    // Потратить RP (золотые кейсы) — списывает сервер.
+    async spend(what) { try { await call('spend', { what }); return true; } catch (e) { return false; } },
+    async setPad(id) { try { await call('pad', { id }); } catch (e) { /* не наш */ } },
+    // Кошелёк: сервер выдаёт сообщение с nonce, Phantom подписывает, сервер проверяет подпись.
+    async linkWallet(provider, pubkey) {
+      const { message } = await call('nonce', { pubkey });
+      const { signature } = await provider.signMessage(new TextEncoder().encode(message), 'utf8');
+      const sig = btoa(String.fromCharCode(...signature));
+      await call('link', { pubkey, sig });
+      return me;
     },
-    // Потратить RP (золотые кейсы).
-    spend(n) {
-      if (st.rp < n) return false;
-      st.rp -= n;
-      save();
-      ctx.onChange?.();
-      return true;
-    },
-    setPad(id) { if (!id || st.owned.includes(id)) { st.pad = id; save(); ctx.onChange?.(); } },
-    postText: (link) => `I'm dropping into ${TAG} 🪂⛏🌪 — a battle royale that lives inside a post. Loot, build, last one standing wins. Play: ${link}`,
+    postText: (link) => `I'm dropping into ${TAG} 🪂⛏🌪 — a battle royale that lives inside a post. Loot, build, last one standing wins. My code: ${me?.code || ''} Play: ${link}`,
   };
 }

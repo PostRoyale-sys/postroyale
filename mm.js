@@ -17,8 +17,9 @@ export function mmUrls() {
 }
 
 // Встать в очередь. on.status({ h, b, cap, s, wait }) — состояние лобби; on.go(match) — матч найден;
-// on.fail(reason) — сервер недоступен или соединение оборвалось до старта. Возвращает { cancel }.
-export function findMatch(nick, on) {
+// on.fail(reason) — сервер недоступен ('offline'), оборвалось ('closed') или не пустили в рейтинг ('access' | 'busy' | 'auth');
+// on.rp(msg) — сервер начислил RP (рейтинг). opts.ranked + opts.tok — рейтинговая очередь. Возвращает { cancel }.
+export function findMatch(nick, on, opts = {}) {
   let ws, self = null, done = false, ping = 0, opened = false;
   const urls = mmUrls();
   const buffer = [];                       // события матча, пришедшие до подключения игры (connectServer)
@@ -28,7 +29,7 @@ export function findMatch(nick, on) {
     try { ws = new WebSocket(urls[i]); } catch (e) { if (i + 1 < urls.length) open(i + 1); else setTimeout(() => on.fail?.('offline'), 0); return; }
     const sock = ws;
     setTimeout(() => { if (!opened && sock.readyState === 0) sock.close(); }, 4000);   // повис на подключении — дальше
-    ws.onopen = () => { opened = true; send({ t: 'q', n: nick }); ping = setInterval(() => send({ t: 'p' }), 15e3); };
+    ws.onopen = () => { opened = true; send(opts.ranked ? { t: 'q', n: nick, r: 1, tok: opts.tok } : { t: 'q', n: nick }); ping = setInterval(() => send({ t: 'p' }), 15e3); };
     ws.onmessage = onMessage;
     ws.onclose = () => {
       clearInterval(ping);
@@ -39,11 +40,13 @@ export function findMatch(nick, on) {
   function onMessage(ev) {
     let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.t === 'hi') self = m.id;
+    else if (m.t === 'rp') on.rp?.(m);
+    else if (m.t === 'err' && !done) { done = true; clearInterval(ping); on.fail?.(m.e); try { ws.close(); } catch (e) { /* уже */ } }
     else if (m.t === 'w') on.status?.(m);
     else if (m.t === 'go') {
       done = true;
       const offset = Date.now() - m.now;                     // часы сервера → наши (задержку сети не учитываем)
-      on.go?.({ w: m.w, epoch: m.e + offset, bots: m.b, ids: m.ids, self,
+      on.go?.({ w: m.w, epoch: m.e + offset, bots: m.b, ids: m.ids, self, nick: m.n,
         // подключить игру к каналу матча: события, пришедшие раньше, отдадим сразу после
         connect: (handlers) => connectServer(handlers) });
     } else if (done) (sink ? sink(m) : buffer.push(m));
