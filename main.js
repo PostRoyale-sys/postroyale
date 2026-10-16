@@ -230,7 +230,7 @@ const weather = createWeather(scene);
 const roadsters = createRoadsters(scene);
 // Своя машина (roadster.js): myCar — в какой сидишь; carSt — её физика; launch — замер 0–100 км/ч.
 let myCar = null, carBanner = -1;
-const carSt = { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, flipDir: 1, hopCd: 0, spaceWas: false };
+const carSt = { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, flipDir: 1, hopCd: 0, spaceWas: false, fWas: false, fly: false };
 let launch = null;
 const rammed = new Map();
 
@@ -498,17 +498,18 @@ function enterCar(c) {
   if (buildType) exitBuild();
   stopEmote(); combat.cancelReload(); combat.cancelHeal(); scopeHeld = false; prone = false; crouching = false;
   myCar = c; c.driver = 'me';
-  Object.assign(carSt, { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, hopCd: 0, spaceWas: keys.has('Space') });
+  Object.assign(carSt, { speed: 0, vy: 0, ground: true, fuel: CAR.FUEL, flip: 0, hopCd: 0, spaceWas: keys.has('Space'), fWas: keys.has('KeyF'), fly: false });
   launch = null;
   audio.play('carStart', c.pos);
   $('carhud').hidden = false;
-  if (!localStorage.getItem('pr:carTip')) { banner('⚡ ROADSTER', 'SHIFT launch · SPACE thrusters · SPACE+A/D kickflip · hold SPACE to hover', 4500); try { localStorage.setItem('pr:carTip', '1'); } catch (e) { /* нет */ } }
+  if (!localStorage.getItem('pr:carTip2')) { banner('⚡ ROADSTER', 'SHIFT launch · SPACE jump (+A/D kickflip) · F — wheels to jets: FLY', 4500); try { localStorage.setItem('pr:carTip2', '1'); } catch (e) { /* нет */ } }
 }
 // Выйти: рядом с машиной (слева); out=false — просто бросить (смерть, новый раунд).
 function exitCar(out = true) {
   if (!myCar) return;
   const c = myCar;
-  myCar = null; c.driver = null; c.thrust = 0; c.boost = 0; c.spin = 0;
+  myCar = null; c.driver = null; c.thrust = 0; c.boost = 0; c.spin = 0; c.jet = 0;
+  carSt.fly = false; c.fold = 0;
   $('carhud').hidden = true;
   if (!out) return;
   const side = new THREE.Vector3(-Math.cos(c.yaw), 0, Math.sin(c.yaw));
@@ -530,9 +531,11 @@ function carStep(dt, locked) {
     thr: k('KeyW', 'ArrowUp') - k('KeyS', 'ArrowDown'),
     steer: k('KeyA', 'ArrowLeft') - k('KeyD', 'ArrowRight'),
     boost: locked && (keys.has('ShiftLeft') || keys.has('ShiftRight')),
-    hop: space && !carSt.spaceWas, hold: space,
+    hop: space && !carSt.spaceWas, up: space,
+    down: locked && (keys.has('AltLeft') || keys.has('AltRight') || keys.has('KeyC')),
+    fly: locked && keys.has('KeyF') && !carSt.fWas,
   };
-  carSt.spaceWas = space;
+  carSt.spaceWas = space; carSt.fWas = locked && keys.has('KeyF');
   const before = carSt.speed;
   const ev = roadsters.drive(c, dt, input, carSt);
   // 0–100 км/ч: с места до 27.8 м/с — время на экран (как на презентации)
@@ -543,7 +546,15 @@ function carStep(dt, locked) {
     else if (carSt.speed >= 27.78) { banner(`0–100 km/h: ${launch.t.toFixed(2)} s`, launch.boost ? '⚡ LAUNCH MODE' : 'hold SHIFT for launch mode', 2600); audio.play('boost'); shakeAmt = Math.max(shakeAmt, 0.15); launch = null; }
   }
   if (ev.hop) { audio.play('thrust', c.pos); for (let i = 0; i < 6; i++) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 0.2, (Math.random() - 0.5) * 3)), 0xbff8ff, 2.2); }
-  if (ev.flip) toast('🛹 KICKFLIP');
+  if (ev.flip) toast(carSt.fly ? '🌀 BARREL ROLL' : '🛹 KICKFLIP');
+  if (ev.flyOn) { audio.play('jetOn', c.pos); shakeAmt = Math.max(shakeAmt, 0.2); for (let i = 0; i < 10; i++) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 4, 0.2, (Math.random() - 0.5) * 4)), 0xbff8ff, 2.6); }
+  if (ev.flyOff) audio.play('gear');
+  if (ev.flameout) { toast('⛽ Jets out of fuel'); audio.play('carCrash', c.pos, { vol: 0.4 }); }
+  // турбины низко над землёй/водой: брызги или пыль из-под колёс
+  if (ev.low && Math.random() < dt * 30) {
+    const wy = Math.max(world.height(c.pos.x, c.pos.z), WATER_Y);
+    fx.dust(new THREE.Vector3(c.pos.x + (Math.random() - 0.5) * 3, wy + 0.2, c.pos.z + (Math.random() - 0.5) * 4), wy <= WATER_Y + 0.01 ? 0xd8f2ff : 0xcbb894, 2);
+  }
   if (ev.crash) { shakeAmt = Math.max(shakeAmt, Math.min(0.5, ev.crash / 60)); audio.play('carCrash', c.pos, { vol: Math.min(1, ev.crash / 30) }); fx.dust(c.pos.clone().add(new THREE.Vector3(0, 0.6, 0)), 0x9a9a9a, 1.6); }
   if (ev.land) { shakeAmt = Math.max(shakeAmt, Math.min(0.35, ev.land / 60)); audio.play('land', null, { vol: 0.8 }); }
   if (ev.water && Math.abs(carSt.speed) > 6 && Math.random() < dt * 30) fx.dust(c.pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 2, 0.3, 2.2)), 0xd8f2ff, 1.8);
@@ -565,14 +576,16 @@ function carStep(dt, locked) {
   // ты — там, где машина (шторм, зона, позиция для других); камера сзади-сверху, крутится мышью
   feet.copy(c.pos); vel.set(0, carSt.vy, 0); onGround = carSt.ground; gliding = false; moving = sp > 1;
   const back = camera.getWorldDirection(new THREE.Vector3()).negate();
-  const head = c.pos.clone().add(new THREE.Vector3(0, 2.2, 0));
-  const hit = structures.raycast(head, back, 8);
-  player.position.copy(head).addScaledVector(back, hit ? Math.max(1.2, hit.t - 0.4) : 8);
+  const head = c.pos.clone().add(new THREE.Vector3(0, 2.2 + c.fold * 0.8, 0)), dist = 8 + c.fold * 3;   // в полёте — дальше и выше
+  const hit = structures.raycast(head, back, dist);
+  player.position.copy(head).addScaledVector(back, hit ? Math.max(1.2, hit.t - 0.4) : dist);
   player.position.y = Math.max(player.position.y, world.height(player.position.x, player.position.z) + 0.6, WATER_Y + 0.6);
   // HUD: спидометр и топливо двигателей
   $('carspd').textContent = Math.round(sp * 3.6);
   $('carfuel').style.width = `${(carSt.fuel / CAR.FUEL) * 100}%`;
   $('carhud').classList.toggle('boost', c.boost > 0.5);
+  $('carhud').classList.toggle('fly', carSt.fly);
+  $('carmode').textContent = carSt.fly ? `✈ FLYING · ALT ${Math.max(0, Math.round(c.pos.y - Math.max(world.height(c.pos.x, c.pos.z), WATER_Y)))} m` : 'F — FLY';
 }
 
 // Чужие машины — из поз водителей; свою занял кто-то с меньшим id — уступаем. Объявление в начале раунда.
@@ -587,6 +600,11 @@ function updateCars(dt) {
     carBanner = royale.round;
     banner('⚡ ROADSTERS ON THE ISLAND', '0–100 in under a second · thrusters · kickflips — follow the cyan beams', 4000);
   }
+}
+function carsJetLevel() {
+  let best = 0;
+  for (const c of roadsters.list) if (c.driver && c.driver !== 'me' && c.fold > 0.5) best = Math.max(best, Math.max(0, 1 - c.pos.distanceTo(player.position) / 90) * c.jet);
+  return best;
 }
 // Гул чужих машин рядом (своя — громче, её считает envSound).
 function carsNearLevel() {
@@ -1878,7 +1896,7 @@ function poseData() {
   if (riding) d.rd = 1;
   if (document.hidden) d.hd = 1;          // вкладка свёрнута — не годимся в хосты ботов
   if (prone) d.pr = 1; else if (crouching) d.cr = 1;
-  if (myCar) { const c = myCar; d.cv = [+c.pos.x.toFixed(2), +c.pos.y.toFixed(2), +c.pos.z.toFixed(2), +c.yaw.toFixed(3), +c.pitch.toFixed(3), +c.roll.toFixed(3), c.id, +c.thrust.toFixed(2), +c.boost.toFixed(2)]; delete d.cr; delete d.pr; }
+  if (myCar) { const c = myCar; d.cv = [+c.pos.x.toFixed(2), +c.pos.y.toFixed(2), +c.pos.z.toFixed(2), +c.yaw.toFixed(3), +c.pitch.toFixed(3), +c.roll.toFixed(3), c.id, +c.thrust.toFixed(2), +c.boost.toFixed(2), +c.fold.toFixed(2), +c.jet.toFixed(2)]; delete d.cr; delete d.pr; }
   if (combat.shield > 0) d.sd = 1;           // у цели щит — числа урона у стрелка синие
   if (combat.healing) d.hl = 1;              // лечится — другим видна поза и зелёные искры
   if (combat.reloading) d.rl = 1;            // перезаряжается — оружие опущено
@@ -2956,6 +2974,7 @@ function envSound() {
     rain: weather.kind === 'rain' ? 1 : 0,
     motor: myCar ? 0.35 + Math.min(1, Math.abs(carSt.speed) / CAR.MAX) * 0.65 : carsNearLevel(),
     motorRate: myCar ? 0.6 + Math.min(1.6, Math.abs(carSt.speed) / CAR.MAX * 1.4) : 1,
+    jet: myCar ? myCar.jet : carsJetLevel(),
   };
 }
 
@@ -3019,7 +3038,7 @@ const mainLoop = (now) => {
     swapCandidate = royale.alive && !riding ? loot.pickupNear(feet, combat, dt) : null;
     const chest = controls.isLocked && royale.alive ? loot.chestNear(eye(), look()) : null;
     const carNear = !myCar && royale.alive && !riding && !gliding ? roadsters.near(feet) : null;
-    const prompt = royale.ended ? $('prompt').textContent : abilities.drone ? '' : riding ? ridePrompt() : myCar ? 'SHIFT boost · SPACE thrusters (+A/D kickflip, hold to hover) · E exit' : chest ? 'E — open chest' : carNear ? 'E — drive the Roadster ⚡' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
+    const prompt = royale.ended ? $('prompt').textContent : abilities.drone ? '' : riding ? ridePrompt() : myCar ? (carSt.fly ? 'SPACE up · ALT down · W/S thrust · SHIFT afterburner · F land mode · E exit' : 'SHIFT launch · SPACE jump (+A/D kickflip) · F fly · E exit') : chest ? 'E — open chest' : carNear ? 'E — drive the Roadster ⚡' : swapCandidate ? `G — swap for ${itemLabel(swapCandidate)}` : gliding ? (chute ? 'Parachute — steer with WASD' : 'SPACE — open parachute') : canRedeploy() ? 'SPACE — open parachute' : '';
     if ($('prompt').textContent !== prompt) { $('prompt').textContent = prompt; $('prompt').hidden = !prompt; }
     $('prompt').classList.toggle('ride', riding && inJumpZone());
     $('prompt').classList.toggle('wait', riding && !inJumpZone());

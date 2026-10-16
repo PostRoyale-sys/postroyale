@@ -300,6 +300,24 @@ const SFX = {
     D.add(x, D.gain(D.tone(1.1, 300, 1400, { a: 0.3, d: 0.4, shape: 'saw' }), 0.18));
     return x;
   },
+  // турбины в колёсах: рёв (петля) и запуск
+  jet: (D) => {
+    const x = D.arr(3.2);
+    for (let i = 0; i < x.length; i++) x[i] = D.rnd();
+    D.filt(x, 'lp', 1400); D.gain(x, 1.6);
+    const hi = D.arr(3.2); for (let i = 0; i < hi.length; i++) hi[i] = D.rnd(); D.filt(hi, 'bp', 3800, 1.2); D.add(x, hi, 0, 0.25);
+    D.add(x, D.gain(D.tone(3.2, 1800, 1800, { d: 99, vib: 0.006 }), 0.05));
+    D.add(x, D.gain(D.tone(3.2, 95, 95, { d: 99, shape: 'saw', vib: 0.01 }), 0.12));
+    return D.loopify(x, 0.4);
+  },
+  jetOn: (D) => {
+    const x = D.arr(1.4);
+    D.add(x, D.burst(1.3, { a: 0.25, d: 0.5, type: 'bp', f: (t) => 300 + 2600 * Math.min(1, t * 1.5), q: 0.7 }), 0, 1);
+    D.add(x, D.gain(D.tone(1.2, 200, 2200, { a: 0.4, d: 0.5, shape: 'saw', gt: 0.4 }), 0.15));
+    for (let i = 0; i < 4; i++) D.add(x, D.click(D.r(1500, 3000), 0.006), i * 0.06, 0.5);
+    D.add(x, D.thud(0.4, 80, 40, 0.08), 0.25, 0.8);
+    return D.sat(x, 1.5);
+  },
   carStart: (D) => {
     const x = D.arr(0.9);
     D.add(x, D.gain(D.tone(0.85, 180, 660, { a: 0.05, d: 0.4, shape: 'tri' }), 0.5));
@@ -494,7 +512,7 @@ const GAIN = {
   wind: 0.6, canopy: 0.35, rotor: 0.7, storm: 0.6, chuteOpen: 0.7, jumpOut: 0.5,
   medOpen: 0.8, bandage: 0.6, spray: 0.44, medTape: 0.6, healDone: 0.8,
   pickAmmo: 0.52, pickWeapon: 0.59, pickArmor: 0.52, pickMed: 0.52, chest: 0.6,
-  tension: 0.5, rain: 0.5, siren: 0.42, dropIncoming: 0.5, dropLand: 0.75, dropOpen: 0.6, pump: 0.5, slide: 0.45, bounce: 0.6, thunder: 0.8, barrel: 0.85, treeFall: 0.6, motor: 0.32, thrust: 0.7, boost: 0.55, carStart: 0.5, carCrash: 0.8,
+  tension: 0.5, rain: 0.5, siren: 0.42, dropIncoming: 0.5, dropLand: 0.75, dropOpen: 0.6, pump: 0.5, slide: 0.45, bounce: 0.6, thunder: 0.8, barrel: 0.85, treeFall: 0.6, motor: 0.32, jet: 0.55, jetOn: 0.75, thrust: 0.7, boost: 0.55, carStart: 0.5, carCrash: 0.8,
   hit: 0.5, hitShield: 0.42, hitBig: 0.6, hitHead: 0.55, streak: 0.55, coins: 0.32, kill: 0.7, hurt: 0.6, shieldHurt: 0.5, shieldBreak: 0.6, stormZap: 0.3, heart: 0.6, death: 0.6,
   uiClick: 0.25, uiHover: 0.08, beep: 0.35, beepGo: 0.4, roundStart: 0.45, victory: 0.55, lose: 0.4, caseTick: 0.25,
   swing: 0.3, chop: 0.55, build_wood: 0.45, build_brick: 0.45, build_metal: 0.4, break_wood: 0.6, break_brick: 0.6, break_metal: 0.55,
@@ -943,6 +961,7 @@ export function createAudio({ camera, volume = () => 1, music = () => 0.5 }) {
       setLoop('tension', s.tension || 0, 900 + 5000 * (s.tension || 0), 1.2);
       setLoop('rain', s.rain || 0, 4000, 1);
       setLoop('motor', s.motor || 0, 1500 + 6000 * (s.motor || 0), 0.15, s.motorRate || 1);
+      setLoop('jet', s.jet || 0, 1200 + 7000 * (s.jet || 0), 0.15, 0.8 + (s.jet || 0) * 0.5);
       // сердце при малом здоровье
       if (s.hp > 0 && s.hp <= 30) {
         heartT -= dt;

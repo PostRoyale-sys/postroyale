@@ -1,9 +1,12 @@
-// Roadster: электрический гиперкар на газовых двигателях. В каждом раунде на острове CARS_PER_ROUND машин (места —
-// от сида мира и номера раунда, у всех одинаковые), над стоящей — маяк. E — сесть/выйти.
-//   W/S — газ/тормоз, A/D — руль, Shift — буст (0–100 км/ч меньше чем за секунду — время показываем),
-//   Space — прыжок на двигателях (с A/D — кикфлип), зажать Space в воздухе — зависание, пока есть топливо.
-// Едет и по воде (двигатели держат над волнами). Сеть: водитель шлёт в позе cv = [x, y, z, yaw, pitch, roll, id] —
-// остальные ставят машину туда; вышел — машина остаётся там, где её видели последней.
+// Roadster: белый электрический гиперкар; колёса складываются в реактивные двигатели — машина летает.
+// В каждом раунде на острове CARS_PER_ROUND машин (места — от сида мира и номера раунда, у всех одинаковые),
+// над стоящей — маяк. E — сесть/выйти.
+//   Земля: W/S — газ/тормоз, A/D — руль, Shift — буст (0–100 км/ч меньше чем за секунду — время показываем),
+//          Space — прыжок на двигателях (с A/D — кикфлип). Едет и по воде (двигатели держат над волнами).
+//   F — режим полёта: колёса поворачиваются плашмя и становятся турбинами. Space — вверх, Alt/C — вниз,
+//          W/S — вперёд/назад, A/D — поворот, Shift — форсаж, Space+A/D — бочка. Топливо FUEL с, на земле копится.
+// Сеть: водитель шлёт в позе cv = [x, y, z, yaw, pitch, roll, id, thrust, boost, fold, jet] — остальные ставят машину
+// туда; вышел — машина остаётся там, где её видели последней.
 
 import * as THREE from 'three';
 import { MAP, WATER_Y, rng, seedOf } from './map.js';
@@ -14,18 +17,20 @@ export const CAR = {
   MAX: 44, BOOST_MAX: 62, REVERSE: 14,   // м/с (44 ≈ 160 км/ч, 62 ≈ 220 км/ч)
   ACC: 16, BOOST_ACC: 34,                 // м/с² — с бустом 0–100 км/ч ≈ 0.82 с
   BRAKE: 55, DRAG: 0.5, STEER: 2.3,
-  HOP: 15, HOP_CD: 0.9, GRAV: 30, HOVER_G: 4, FUEL: 2.4, FLIP: 0.75,
+  HOP: 15, HOP_CD: 0.9, GRAV: 30, FLIP: 0.75,
+  FUEL: 15, REFUEL: 1.5,                  // с полёта; на земле копится REFUEL с за секунду
+  FLY_MAX: 52, FLY_BOOST_MAX: 78, FLY_ACC: 24, FLY_BOOST_ACC: 42, FLY_TURN: 1.8, CLIMB: 15, CEIL: 120,
   R: 1.0, H: 1.15,                        // полуширина и высота для столкновений
   ENTER: 3.4,                             // с какого расстояния можно сесть
 };
 
 // ---------- Модель ----------
-// Низкий клин, красный с белой полосой, тёмное стекло, крыло; бирюзовые сопла сзади и по углам днища.
+// Низкий клин, белый перламутр, чёрное стекло и крыло, бирюзовая подсветка; колёса — турбины (в полёте плашмя).
 function carModel() {
   const g = new THREE.Group();
   const body = new THREE.Group();
   g.add(body);
-  const red = toon(0xe8202a, { emissive: 0x2a0004 }), white = toon(0xf4f4f4), black = toon(0x16181d), glass = toon(0x0d1622, { emissive: 0x040a14 });
+  const paint = toon(0xf4f6f9, { emissive: 0x15171b }), black = toon(0x15171c), glass = toon(0x0b0f16, { emissive: 0x03060c });
   // кузов — профиль сбоку (z — вдоль, y — вверх), выдавленный по ширине: низкий нос, длинный капот, покатая крыша
   const profile = (pts, width, mat, y0 = 0) => {
     const sh = new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(-z, y)));   // −z: после поворота нос — к −Z
@@ -33,34 +38,43 @@ function carModel() {
     geo.rotateY(Math.PI / 2); geo.translate(-width / 2, y0, 0);
     const m = new THREE.Mesh(geo, mat); m.castShadow = true; body.add(m); return m;
   };
-  profile([[-2.25, 0.3], [-2.25, 0.55], [-1.2, 0.78], [-0.35, 0.86], [0.3, 0.92], [1.5, 0.9], [2.2, 0.82], [2.25, 0.3]], 1.96, red);
+  profile([[-2.25, 0.3], [-2.25, 0.55], [-1.2, 0.78], [-0.35, 0.86], [0.3, 0.92], [1.5, 0.9], [2.2, 0.82], [2.25, 0.3]], 1.96, paint);
   // стеклянный «пузырь» кабины: лобовое, крыша, заднее стекло — одним куском, уже кузова
   profile([[-0.55, 0.82], [0.05, 1.22], [0.75, 1.24], [1.55, 0.9]], 1.36, glass);
   const box = (w, h, d, m, x, y, z, rx = 0) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, y, z); b.rotation.x = rx; b.castShadow = true; body.add(b); return b; };
-  box(0.36, 0.03, 1.4, white, 0, 0.85, -1.0, -0.14);       // полоса по капоту
-  box(0.36, 0.03, 0.7, white, 0, 0.93, 1.85, 0.08);        // и по корме
   box(2.08, 0.06, 0.42, black, 0, 1.12, 2.0);              // крыло
   box(0.07, 0.26, 0.16, black, -0.7, 0.98, 2.0); box(0.07, 0.26, 0.16, black, 0.7, 0.98, 2.0);
   box(2.04, 0.1, 0.3, black, 0, 0.32, -2.2);               // сплиттер
   box(2.0, 0.14, 0.3, black, 0, 0.36, 2.25);               // диффузор
   box(0.06, 0.16, 2.6, black, -1.02, 0.42, 0); box(0.06, 0.16, 2.6, black, 1.02, 0.42, 0);   // пороги
-  // фары и стопы — светящиеся полоски
+  // фары, стопы и бирюзовая линия по борту — светятся
   const glow = (c) => new THREE.MeshBasicMaterial({ color: c });
   const strip = (w, c, z) => { const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.06, 0.04), glow(c)); s.position.set(0, z < 0 ? 0.52 : 0.72, z); body.add(s); };
   strip(1.6, 0xeaf6ff, -2.3); strip(1.8, 0xff2a3a, 2.3);
-  // колёса
-  const wheels = [];
-  const wGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.34, 18); wGeo.rotateZ(Math.PI / 2);
-  const rimGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.36, 10); rimGeo.rotateZ(Math.PI / 2);
-  const tire = toon(0x1a1a1e), rim = toon(0xcfd6e0, { emissive: 0x202830 });
-  for (const [x, z] of [[-0.98, -1.4], [0.98, -1.4], [-0.98, 1.45], [0.98, 1.45]]) {
-    const w = new THREE.Group();
-    w.add(new THREE.Mesh(wGeo, tire), new THREE.Mesh(rimGeo, rim));
-    w.position.set(x, 0.42, z);
-    body.add(w); wheels.push(w);
-  }
+  for (const x of [-1.05, 1.05]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 2.2), glow(0x40e8ff)); l.position.set(x, 0.56, 0); body.add(l); }
   outlineGroup(body, 0.03);
-  // сопла двигателей и их пламя (видны при прыжке/зависании/бусте)
+  // колёса-турбины: fold — поворачивает колесо плашмя (ось вверх), spin — вращение; пламя — вниз из ступицы
+  const wGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.34, 18); wGeo.rotateZ(Math.PI / 2);
+  const rimGeo = new THREE.CylinderGeometry(0.26, 0.26, 0.36, 10); rimGeo.rotateZ(Math.PI / 2);
+  const tire = toon(0x18191d), rim = toon(0x2a2f38, { emissive: 0x000000 });
+  const jetMat = new THREE.MeshBasicMaterial({ color: 0x4ff0ff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+  const jetGeo = new THREE.ConeGeometry(0.38, 1, 12); jetGeo.translate(0, -0.5, 0); jetGeo.rotateZ(-Math.PI / 2);   // вдоль −X
+  const coreGeo = new THREE.ConeGeometry(0.2, 1, 8); coreGeo.translate(0, -0.5, 0); coreGeo.rotateZ(-Math.PI / 2);
+  const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false });
+  const wheels = [];
+  for (const [x, z] of [[-0.98, -1.4], [0.98, -1.4], [-0.98, 1.45], [0.98, 1.45]]) {
+    const fold = new THREE.Group(), spin = new THREE.Group();
+    const t = new THREE.Mesh(wGeo, tire), r = new THREE.Mesh(rimGeo, rim);
+    t.castShadow = true;
+    spin.add(t, r);
+    const jet = new THREE.Mesh(jetGeo, jetMat), core = new THREE.Mesh(coreGeo, coreMat);
+    jet.visible = core.visible = false;
+    fold.add(spin, jet, core);
+    fold.position.set(x, 0.42, z);
+    body.add(fold);
+    wheels.push({ fold, spin, jet, core, x });
+  }
+  // задние сопла (буст) и маленькие сопла под днищем (прыжок)
   const nozzle = toon(0x2a2f38), plumeMat = new THREE.MeshBasicMaterial({ color: 0x6ff7ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
   const plumeGeo = new THREE.ConeGeometry(0.2, 1, 10); plumeGeo.translate(0, -0.5, 0);
   const plumes = [];
@@ -77,7 +91,7 @@ function carModel() {
     body.add(p); plumes.push(p);
   };
   thruster(-0.5, 0.55, 2.36, 'back'); thruster(0.5, 0.55, 2.36, 'back');
-  for (const [x, z] of [[-0.75, -1.9], [0.75, -1.9], [-0.75, 1.95], [0.75, 1.95]]) thruster(x, 0.3, z, 'down');
+  for (const [x, z] of [[-0.6, -0.5], [0.6, -0.5], [-0.6, 0.6], [0.6, 0.6]]) thruster(x, 0.28, z, 'down');
   // подсветка днища
   const under = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 4.2), new THREE.MeshBasicMaterial({ color: 0x40e8ff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
   under.rotation.x = -Math.PI / 2; under.position.y = 0.05;
@@ -86,7 +100,7 @@ function carModel() {
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 60, 12, 1, true), new THREE.MeshBasicMaterial({ color: 0x40e8ff, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
   beam.position.y = 31;
   g.add(beam);
-  g.userData = { body, wheels, plumes, beam, under };
+  g.userData = { body, wheels, plumes, beam, under, rim };
   return g;
 }
 
@@ -125,7 +139,7 @@ export function createRoadsters(scene) {
       if (y === null) continue;
       const group = carModel();
       root.add(group);
-      cars.push({ id: n, group, pos: new THREE.Vector3(x, y, z), yaw: rand() * Math.PI * 2, pitch: 0, roll: 0, driver: null, seen: 0, spin: 0, thrust: 0, boost: 0 });
+      cars.push({ id: n, group, pos: new THREE.Vector3(x, y, z), yaw: rand() * Math.PI * 2, pitch: 0, roll: 0, driver: null, seen: 0, spin: 0, thrust: 0, boost: 0, fold: 0, jet: 0 });
       n++;
     }
     for (const c of cars) draw(c, 0);
@@ -136,14 +150,28 @@ export function createRoadsters(scene) {
     c.group.position.copy(c.pos);
     c.group.rotation.set(0, c.yaw, 0, 'YXZ');
     u.body.rotation.set(c.pitch, 0, c.roll, 'YXZ');
-    for (const w of u.wheels) w.rotation.x -= c.spin * dt / 0.42;
+    // колёса-турбины: плашмя по fold, в полёте крутятся как турбина, пламя — по тяге jet
+    const f = c.fold, e = f * f * (3 - 2 * f);
+    for (const w of u.wheels) {
+      w.fold.rotation.z = (Math.PI / 2) * e;
+      w.fold.position.x = w.x + Math.sign(w.x) * 0.3 * e;
+      w.fold.position.y = 0.42 + 0.14 * e;
+      w.spin.rotation.x -= (f > 0.5 ? 40 : c.spin / 0.42) * dt;
+      const on = f > 0.6;
+      w.jet.visible = w.core.visible = on;
+      if (on) {
+        const len = (0.8 + c.jet * 2.4) * (0.85 + Math.random() * 0.3);
+        w.jet.scale.set(len, 1 + c.jet * 0.3, 1 + c.jet * 0.3); w.core.scale.set(len * 0.7, 1, 1);
+      }
+    }
+    u.rim.emissive.setHex(f > 0.5 ? 0x1aa8c8 : 0x000000);
     for (const p of u.plumes) {
       const on = p.userData.dir === 'down' ? c.thrust : c.boost;
       p.visible = on > 0.05;
       if (p.visible) p.scale.set(1, (0.6 + Math.random() * 0.5) * (0.6 + on), 1);
     }
     u.beam.visible = !c.driver;
-    u.under.material.opacity = 0.2 + c.thrust * 0.5;
+    u.under.material.opacity = 0.2 + Math.max(c.thrust, c.fold * 0.6) * 0.5;
   }
 
   return {
@@ -174,8 +202,8 @@ export function createRoadsters(scene) {
           c.spin = c.spin * 0.8 + (d / 0.016) * 0.2;
           c.pos.lerp(to, d > 20 ? 1 : 0.35);
           c.yaw = cv[3]; c.pitch = cv[4]; c.roll = cv[5];
-          c.thrust = cv[7] || 0; c.boost = cv[8] || 0;
-        } else if (c.driver && c.driver !== 'me') { c.driver = null; c.spin = 0; c.thrust = 0; c.boost = 0; }
+          c.thrust = cv[7] || 0; c.boost = cv[8] || 0; c.fold = cv[9] || 0; c.jet = cv[10] || 0;
+        } else if (c.driver && c.driver !== 'me') { c.driver = null; c.spin = 0; c.thrust = 0; c.boost = 0; c.fold = 0; c.jet = 0; }
       }
       return taken;
     },
@@ -183,36 +211,59 @@ export function createRoadsters(scene) {
     marks() { return cars.filter((c) => !c.driver).map((c) => ({ kind: 'car', x: c.pos.x, z: c.pos.z })); },
 
     // ---------- Своя машина: физика ----------
-    // input: { thr: -1..1, steer: -1..1, boost, hop (нажал Space), hold (держит Space) } → события для звука/эффектов.
+    // input: { thr: -1..1, steer: -1..1, boost, hop (нажал Space), up (держит Space), down (Alt/C), fly (нажал F) }
+    // → события для звука/эффектов.
     drive(c, dt, input, st) {
       const ev = {};
       const fwd = new THREE.Vector3(-Math.sin(c.yaw), 0, -Math.cos(c.yaw));
-      const air = !st.ground;
       st.hopCd = Math.max(0, (st.hopCd || 0) - dt);
-      // газ, тормоз, руль
-      const max = input.boost ? CAR.BOOST_MAX : CAR.MAX;
-      if (!air) {
-        if (input.thr > 0) st.speed += (st.speed < 0 ? CAR.BRAKE : input.boost ? CAR.BOOST_ACC : CAR.ACC) * dt;
-        else if (input.thr < 0) st.speed -= (st.speed > 0 ? CAR.BRAKE : CAR.ACC * 0.6) * dt;
-        else st.speed *= Math.max(0, 1 - CAR.DRAG * dt);
+      // F — включить/выключить полёт (нужно хоть немного топлива)
+      if (input.fly) {
+        if (!st.fly && st.fuel > 1) { st.fly = true; st.vy = Math.max(st.vy, 7); st.ground = false; ev.flyOn = true; }
+        else if (st.fly) { st.fly = false; ev.flyOff = true; }
+      }
+      c.fold += ((st.fly ? 1 : 0) - c.fold) * Math.min(1, dt * 5);
+      if (st.fly) {
+        // полёт: тяга вперёд/назад, поворот, вверх/вниз; топливо тратится (форсаж — быстрее)
+        const max = input.boost ? CAR.FLY_BOOST_MAX : CAR.FLY_MAX;
+        if (input.thr > 0) st.speed += (input.boost ? CAR.FLY_BOOST_ACC : CAR.FLY_ACC) * dt;
+        else if (input.thr < 0) st.speed -= CAR.FLY_ACC * 0.8 * dt;
+        else st.speed *= Math.max(0, 1 - 0.7 * dt);
         if (st.speed > max) st.speed += (max - st.speed) * Math.min(1, dt * 2);
         st.speed = Math.max(-CAR.REVERSE, st.speed);
-      } else st.speed *= Math.max(0, 1 - 0.08 * dt);
-      const grip = air ? 0.5 : Math.min(1, Math.abs(st.speed) / 6) * (1 - 0.45 * Math.min(1, Math.abs(st.speed) / CAR.BOOST_MAX));
-      c.yaw += input.steer * CAR.STEER * grip * dt * (st.speed < -0.5 ? -1 : 1);
-      // прыжок на двигателях; с рулём — кикфлип
-      if (input.hop && !air && st.hopCd <= 0) {
-        st.vy = CAR.HOP; st.ground = false; st.hopCd = CAR.HOP_CD;
-        if (input.steer) { st.flip = CAR.FLIP; st.flipDir = input.steer > 0 ? 1 : -1; ev.flip = true; }
-        ev.hop = true;
+        c.yaw += input.steer * CAR.FLY_TURN * dt;
+        const target = input.up ? CAR.CLIMB : input.down ? -CAR.CLIMB : Math.sin(performance.now() / 400) * 0.6;
+        st.vy += (target - st.vy) * Math.min(1, dt * 3);
+        if (c.pos.y > CAR.CEIL) st.vy = Math.min(st.vy, 0);
+        st.fuel -= dt * (input.boost && input.thr > 0 ? 1.6 : 1);
+        if (st.fuel <= 0) { st.fuel = 0; st.fly = false; ev.flameout = true; }
+        if (input.hop && input.steer && !st.flip) { st.flip = CAR.FLIP; st.flipDir = input.steer > 0 ? 1 : -1; ev.flip = true; }   // бочка
+        c.jet += ((0.45 + (input.up ? 0.55 : 0) + (input.thr > 0 ? 0.3 : 0) + (input.boost ? 0.3 : 0)) - c.jet) * Math.min(1, dt * 8);
+      } else {
+        const air = !st.ground;
+        const max = input.boost ? CAR.BOOST_MAX : CAR.MAX;
+        if (!air) {
+          if (input.thr > 0) st.speed += (st.speed < 0 ? CAR.BRAKE : input.boost ? CAR.BOOST_ACC : CAR.ACC) * dt;
+          else if (input.thr < 0) st.speed -= (st.speed > 0 ? CAR.BRAKE : CAR.ACC * 0.6) * dt;
+          else st.speed *= Math.max(0, 1 - CAR.DRAG * dt);
+          if (st.speed > max) st.speed += (max - st.speed) * Math.min(1, dt * 2);
+          st.speed = Math.max(-CAR.REVERSE, st.speed);
+          st.fuel = Math.min(CAR.FUEL, st.fuel + dt * CAR.REFUEL);
+        } else st.speed *= Math.max(0, 1 - 0.08 * dt);
+        const grip = air ? 0.5 : Math.min(1, Math.abs(st.speed) / 6) * (1 - 0.45 * Math.min(1, Math.abs(st.speed) / CAR.BOOST_MAX));
+        c.yaw += input.steer * CAR.STEER * grip * dt * (st.speed < -0.5 ? -1 : 1);
+        // прыжок на двигателях; с рулём — кикфлип
+        if (input.hop && !air && st.hopCd <= 0) {
+          st.vy = CAR.HOP; st.ground = false; st.hopCd = CAR.HOP_CD;
+          if (input.steer) { st.flip = CAR.FLIP; st.flipDir = input.steer > 0 ? 1 : -1; ev.flip = true; }
+          ev.hop = true;
+        }
+        st.vy -= CAR.GRAV * dt;
+        c.jet += (0 - c.jet) * Math.min(1, dt * 6);
       }
-      // зависание: держит Space в воздухе — двигатели почти гасят гравитацию, пока есть топливо
-      const hover = air && input.hold && st.fuel > 0 && st.vy < 4;
-      if (hover) st.fuel = Math.max(0, st.fuel - dt);
-      else if (!air) st.fuel = Math.min(CAR.FUEL, st.fuel + dt * 0.8);
-      c.thrust += ((hover ? 1 : ev.hop ? 1 : 0) - c.thrust) * Math.min(1, dt * (ev.hop ? 30 : 8));
-      c.boost += ((input.boost && input.thr > 0 ? 1 : 0) - c.boost) * Math.min(1, dt * 8);
+      c.thrust += ((ev.hop ? 1 : 0) - c.thrust) * Math.min(1, dt * (ev.hop ? 30 : 6));
       if (ev.hop) c.thrust = 1;
+      c.boost += ((input.boost && input.thr > 0 ? 1 : 0) - c.boost) * Math.min(1, dt * 8);
       // движение с проверкой стен (шагами, по осям)
       const move = fwd.clone().multiplyScalar(st.speed * dt);
       const n = Math.max(1, Math.ceil(move.length() / 0.4));
@@ -225,20 +276,24 @@ export function createRoadsters(scene) {
         if (bx && bz) break;
       }
       if (hitWall && Math.abs(st.speed) > 4) { ev.crash = Math.abs(st.speed); st.speed *= -0.3; }
-      c.pos.x = Math.max(-40, Math.min(MAP + 40, c.pos.x));
-      c.pos.z = Math.max(-40, Math.min(MAP + 40, c.pos.z));
-      // вертикаль: гравитация (или зависание), земля, вода (двигатели держат над водой)
-      st.vy -= (hover ? CAR.HOVER_G : CAR.GRAV) * dt;
+      c.pos.x = Math.max(-60, Math.min(MAP + 60, c.pos.x));
+      c.pos.z = Math.max(-60, Math.min(MAP + 60, c.pos.z));
+      // вертикаль: земля и вода (двигатели держат над волнами); в полёте земля — посадочная площадка
       let ny = c.pos.y + st.vy * dt;
       const g = Math.max(structures.ground(c.pos.x, c.pos.z, Math.max(c.pos.y, ny) + 0.3, CAR.R * 0.8), WATER_Y - 0.15);
-      if (ny <= g || (st.ground && st.vy <= 0 && c.pos.y - g < 0.9)) {
+      if (st.fly) {
+        if (ny <= g) { ny = g; st.vy = Math.max(0, st.vy); st.ground = true; } else st.ground = false;
+      } else if (ny <= g || (st.ground && st.vy <= 0 && c.pos.y - g < 0.9)) {
         if (!st.ground && st.vy < -9) ev.land = -st.vy;
         ny = g; st.vy = 0; st.ground = true;
       } else st.ground = false;
       c.pos.y = ny;
-      ev.water = st.ground && c.pos.y < WATER_Y + 0.05;          // едет по воде (двигатели держат над волнами)
-      // наклон по склону и кикфлип
-      if (st.ground) {
+      ev.water = st.ground && c.pos.y < WATER_Y + 0.05;
+      ev.low = st.fly && c.pos.y - g < 4;                      // низко над землёй/водой — пыль и брызги от турбин
+      // наклон: по склону на земле; в полёте — нос вниз при разгоне, крен в повороте; кикфлип/бочка
+      if (st.fly) {
+        c.pitch += ((-input.thr * 0.14 - st.vy * 0.008) - c.pitch) * Math.min(1, dt * 4);
+      } else if (st.ground) {
         const f = 1.6, h0 = world.height(c.pos.x + fwd.x * f, c.pos.z + fwd.z * f), h1 = world.height(c.pos.x - fwd.x * f, c.pos.z - fwd.z * f);
         const side = new THREE.Vector3(-fwd.z, 0, fwd.x), s0 = world.height(c.pos.x + side.x, c.pos.z + side.z), s1 = world.height(c.pos.x - side.x, c.pos.z - side.z);
         const tp = ev.water ? 0 : Math.atan2(h0 - h1, f * 2), tr = ev.water ? 0 : Math.atan2(s0 - s1, 2) * -1;
@@ -250,8 +305,9 @@ export function createRoadsters(scene) {
         const k = 1 - st.flip / CAR.FLIP, e = k * k * (3 - 2 * k);
         c.roll = st.flipDir * Math.PI * 2 * e;
         if (st.flip === 0) c.roll = 0;
-      } else if (!st.ground) c.roll += (input.steer * -0.25 - c.roll) * Math.min(1, dt * 4);
-      c.spin = st.ground ? st.speed : c.spin * 0.98;
+      } else if (st.fly) c.roll += (input.steer * 0.5 - c.roll) * Math.min(1, dt * 4);
+      else if (!st.ground) c.roll += (input.steer * -0.25 - c.roll) * Math.min(1, dt * 4);
+      c.spin = st.ground && !st.fly ? st.speed : c.spin * 0.98;
       return ev;
     },
     blockedAt(x, y, z) {

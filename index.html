@@ -433,6 +433,7 @@
   #carhud .fuel { width: 180px; height: 8px; margin: 6px auto 4px; border-radius: 99px; background: rgba(0,0,0,.4); overflow: hidden; }
   #carhud .fuel i { display: block; height: 100%; background: linear-gradient(90deg, #40e8ff, #b6fbff); box-shadow: 0 0 10px #40e8ff; }
   #carhud em { font-style: normal; font-size: 12px; letter-spacing: .12em; color: #8ff3ff; }
+  #carhud.fly em { color: #fff; text-shadow: 0 0 12px #40e8ff; }
   #carhud.boost b { color: #8ff3ff; text-shadow: 0 0 18px #40e8ff, 0 3px 0 rgba(0,0,0,.35); }
   #prompt { position: fixed; left: 50%; top: 58%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(11,13,18,.78); font-weight: 800; font-size: 14px; }
   #reload { position: fixed; left: 50%; top: 53%; transform: translateX(-50%); font-weight: 800; font-size: 13px; color: #ffad1f; text-shadow: 0 1px 3px #000; }
@@ -833,7 +834,7 @@
 </div>
 <div id="poi"></div>
 <div id="prompt" hidden></div>
-<div id="carhud" hidden><b id="carspd">0</b><span>km/h</span><div class="fuel"><i id="carfuel"></i></div><em>THRUSTERS</em></div>
+<div id="carhud" hidden><b id="carspd">0</b><span>km/h</span><div class="fuel"><i id="carfuel"></i></div><em id="carmode">F — FLY</em></div>
 <div id="reload"></div>
 <div id="csopen" hidden>
   <div class="csbox">
